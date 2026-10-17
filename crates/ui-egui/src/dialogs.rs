@@ -109,7 +109,7 @@ crate::dialog_descriptor::dialog_descriptors! {
             FeatureKind::ConstructionPlane { plane: PlaneRef::Offset { distance, .. } }) {
             offset: String = "0 mm".into() => distance.to_string(),
         } => json!({"offset": offset});
-        AnglePlane("construct.plane.at_angle", "PLANE AT ANGLE", [("Plane", PLANES | PLANAR_FACES, false), ("Axis", AXES, false)],
+        AnglePlane("construct.plane.at_angle", "PLANE AT ANGLE", [("Plane", PLANES | PLANAR_FACES, false), ("Axis", AXES | EDGES, false)],
             FeatureKind::ConstructionPlane { plane: PlaneRef::AtAngle { angle, .. } }) {
             angle: String = "45 deg".into() => angle.to_string(),
         } => json!({"angle": angle});
@@ -1712,6 +1712,8 @@ fn hint(inp: &SelInput) -> &'static str {
     let a = inp.accept;
     if a & PROFILES != 0 {
         "click profiles in the view"
+    } else if (a & (AXES | EDGES)) == (AXES | EDGES) {
+        "click an axis, line or edge"
     } else if a & EDGES != 0 {
         "click edges or faces"
     } else if a & PLANES != 0 {
@@ -3323,7 +3325,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
                 None if d.extra.contains_key("axis") => d.extra.get("axis").cloned().unwrap_or(Value::Null),
                 Some(Sel::Axis { name }) => json!(name),
                 Some(x) => {
-                    let (o, dir) = axis_of(app, x).ok_or("the axis must be an origin axis or a sketch line")?;
+                    let (o, dir) = axis_of(app, x).ok_or("the axis must be an origin axis, a sketch line or a straight edge")?;
                     json!({"origin": pt(o), "dir": pt(dir)})
                 }
                 None => return Err("select an axis".into()),
@@ -3423,7 +3425,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
             let axis = match sels(d, 1).first() {
                 Some(Sel::Axis { name }) => json!(name),
                 Some(x) => {
-                    let (o, dir) = axis_of(app, x).ok_or("the axis must be an origin axis or a sketch line")?;
+                    let (o, dir) = axis_of(app, x).ok_or("the axis must be an origin axis, a sketch line or a straight edge")?;
                     json!({"origin": pt(o), "dir": pt(dir)})
                 }
                 None => d.extra.get("axis").cloned().ok_or("pick an axis")?,
