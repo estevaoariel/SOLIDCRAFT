@@ -109,7 +109,7 @@ crate::dialog_descriptor::dialog_descriptors! {
             FeatureKind::ConstructionPlane { plane: PlaneRef::Offset { distance, .. } }) {
             offset: String = "0 mm".into() => distance.to_string(),
         } => json!({"offset": offset});
-        AnglePlane("construct.plane.at_angle", "PLANE AT ANGLE", [("Plane", PLANES, false), ("Axis", AXES, false)],
+        AnglePlane("construct.plane.at_angle", "PLANE AT ANGLE", [("Plane", PLANES | PLANAR_FACES, false), ("Axis", AXES, false)],
             FeatureKind::ConstructionPlane { plane: PlaneRef::AtAngle { angle, .. } }) {
             angle: String = "45 deg".into() => angle.to_string(),
         } => json!({"angle": angle});
@@ -689,6 +689,7 @@ impl Dialog {
             "construct.plane.along_path" => {
                 Dialog::new(Kind::PathPlane { t: "0.5".into(), sketch: None }, vec![SelInput::new("Path", CURVES | EDGES, false)])
             }
+
             "solid.split_body" => Dialog::new(
                 Kind::Split,
                 vec![SelInput::new("Body to split", BODIES, false), SelInput::new("Splitting tool", PLANES | FACES | AXES, false)],
@@ -3418,10 +3419,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
         }
         Kind::AnglePlane { .. } => {
             need(0, "a plane")?;
-            let base = match sels(d, 0).first() {
-                Some(Sel::Plane { name }) => name.clone(),
-                _ => return Err("pick an origin or construction plane".into()),
-            };
+            let base = plane_arg(app, sels(d, 0).first())?;
             let axis = match sels(d, 1).first() {
                 Some(Sel::Axis { name }) => json!(name),
                 Some(x) => {
