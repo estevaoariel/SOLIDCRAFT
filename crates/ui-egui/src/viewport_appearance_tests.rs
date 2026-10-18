@@ -54,3 +54,18 @@ fn placed_step_body_uses_imported_opacity_until_a_design_look_overrides_it() {
     assert!(remainder.is_empty());
     assert!(vertices.iter().all(|v| v[27] == 102));
 }
+
+#[test]
+fn inspect_menu_toggles_component_colors_without_a_dialog_and_refreshes_scene() {
+    let mut h = crate::scenario::Harness::new();
+    h.frames(3);
+    let original_key = super::scene_key(&h.app);
+    h.step(&json!({"click": {"handle": "panel:SOLID:INSPECT"}})).unwrap();
+    h.frames(2);
+    h.step(&json!({"click": {"handle": "dropdown:inspect.colored_components"}})).unwrap();
+    assert!(h.app.session.colored_components.is_some());
+    assert!(h.app.dialog.is_none());
+    assert_ne!(super::scene_key(&h.app), original_key);
+    h.app.start("inspect.colored_components");
+    assert!(h.app.session.colored_components.is_none());
+}
