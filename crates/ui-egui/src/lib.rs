@@ -159,6 +159,7 @@ mod fillet_spline_handle_tests;
 pub mod manufacture_2d;
 pub mod manufacture_contour;
 pub mod manufacture_drill;
+pub mod manufacture_hole_recognition;
 pub mod manufacture_setup;
 pub mod manufacture_tools;
 pub mod manufacture_workspace;
