@@ -21,7 +21,9 @@
 #![forbid(unsafe_code)]
 
 pub mod additive;
+pub mod job;
 pub mod library;
+pub mod machine_host;
 
 use std::collections::BTreeMap;
 
