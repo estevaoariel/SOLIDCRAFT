@@ -3325,7 +3325,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
                 None if d.extra.contains_key("axis") => d.extra.get("axis").cloned().unwrap_or(Value::Null),
                 Some(Sel::Axis { name }) => json!(name),
                 Some(x) => {
-                    let (o, dir) = axis_of(app, x).ok_or("the axis must be an origin axis, a sketch line or a straight edge")?;
+                    let (o, dir) = axis_of(app, x).ok_or("the axis must be an origin axis or a sketch line")?;
                     json!({"origin": pt(o), "dir": pt(dir)})
                 }
                 None => return Err("select an axis".into()),
@@ -3423,12 +3423,50 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
             need(0, "a plane")?;
             let base = plane_arg(app, sels(d, 0).first())?;
             let axis = match sels(d, 1).first() {
-                Some(Sel::Axis { name }) => json!(name),
+                Some(Sel::Axis { name }) => {
+                    if let Some(pl) = plane_by_name(app, &base) {
+                        let dir = match name.as_str() {
+                            "X" => Vec3::X,
+                            "Y" => Vec3::Y,
+                            "Z" => Vec3::Z,
+                            n => solidcraft_engine::view::construction_axes(&app.session)
+                                .into_iter()
+                                .find(|(_, an, _, _)| an == n)
+                                .map(|(_, _, _, d)| d)
+                                .unwrap_or(Vec3::ZERO),
+                        };
+                        if pl.normal().dot(dir).abs() > 1e-4 {
+                            return Err("the axis must be parallel to the base plane".into());
+                        }
+                    }
+                    json!(name)
+                }
                 Some(x) => {
                     let (o, dir) = axis_of(app, x).ok_or("the axis must be an origin axis, a sketch line or a straight edge")?;
+                    if let Some(pl) = plane_by_name(app, &base) {
+                        if pl.normal().dot(dir).abs() > 1e-4 {
+                            return Err("the axis must be parallel to the base plane".into());
+                        }
+                        if pl.height(o).abs() > 1e-4 {
+                            return Err("the axis must lie in the base plane".into());
+                        }
+                    }
                     json!({"origin": pt(o), "dir": pt(dir)})
                 }
-                None => d.extra.get("axis").cloned().ok_or("pick an axis")?,
+                None => {
+                    let ax = d.extra.get("axis").cloned().ok_or("pick an axis")?;
+                    if let Some(pl) = plane_by_name(app, &base)
+                        && let (Some(o), Some(dir)) = (ax.get("origin").and_then(vec3_of), ax.get("dir").and_then(vec3_of))
+                    {
+                        if pl.normal().dot(dir).abs() > 1e-4 {
+                            return Err("the axis must be parallel to the base plane".into());
+                        }
+                        if pl.height(o).abs() > 1e-4 {
+                            return Err("the axis must lie in the base plane".into());
+                        }
+                    }
+                    ax
+                }
             };
             ("construct.plane.at_angle", json!({"base": base, "axis": axis}))
         }

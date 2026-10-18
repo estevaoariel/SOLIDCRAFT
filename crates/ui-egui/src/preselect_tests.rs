@@ -2291,11 +2291,11 @@ fn plane_at_angle_rotates_about_a_straight_edge() {
         .iter()
         .position(|e| {
             let (a, b) = (e.first().unwrap(), e.last().unwrap());
-            (a.z - 20.0).abs() < 1e-6 && (b.z - 20.0).abs() < 1e-6 && (a.y - 0.0).abs() < 1e-6 && (b.y - 0.0).abs() < 1e-6
+            (a.z - 0.0).abs() < 1e-6 && (b.z - 0.0).abs() < 1e-6 && (a.y - 0.0).abs() < 1e-6 && (b.y - 0.0).abs() < 1e-6
         })
-        .expect("top front edge");
+        .expect("bottom front edge");
 
-    h.app.dialog.as_mut().unwrap().inputs[1].items = vec![Sel::Edge { body: "Box".into(), index: edge_idx, point: Vec3::new(20.0, 0.0, 20.0) }];
+    h.app.dialog.as_mut().unwrap().inputs[1].items = vec![Sel::Edge { body: "Box".into(), index: edge_idx, point: Vec3::new(20.0, 0.0, 0.0) }];
 
     h.step(&json!({"click":{"handle":"dialog:OK"}})).unwrap();
     h.frames(2);
@@ -2304,10 +2304,13 @@ fn plane_at_angle_rotates_about_a_straight_edge() {
     let (_, _, pl) = solidcraft_engine::view::construction_planes(&h.app.session).into_iter().next().expect("the construction plane");
     let half = 1.0_f64 / 2.0_f64.sqrt();
     assert!(pl.origin.x.abs() < 1e-6, "{pl:?}");
-    assert!((pl.origin.y - 20.0 * half).abs() < 1e-6, "{pl:?}");
-    assert!((pl.origin.z - (20.0 - 20.0 * half)).abs() < 1e-6, "{pl:?}");
+    assert!(pl.origin.y.abs() < 1e-6, "{pl:?}");
+    assert!(pl.origin.z.abs() < 1e-6, "{pl:?}");
     assert!((pl.normal().y - (-half)).abs() < 1e-6, "{pl:?}");
     assert!((pl.normal().z - half).abs() < 1e-6, "{pl:?}");
+    // The plane is hinged on the edge: points on the edge line lie on the plane.
+    assert!(pl.height(Vec3::new(0.0, 0.0, 0.0)).abs() < 1e-6);
+    assert!(pl.height(Vec3::new(40.0, 0.0, 0.0)).abs() < 1e-6);
 }
 
 #[test]
@@ -2343,11 +2346,11 @@ fn plane_at_angle_about_edge_reopens_for_edit_and_updates_angle() {
         .iter()
         .position(|e| {
             let (a, b) = (e.first().unwrap(), e.last().unwrap());
-            (a.z - 20.0).abs() < 1e-6 && (b.z - 20.0).abs() < 1e-6 && (a.y - 0.0).abs() < 1e-6 && (b.y - 0.0).abs() < 1e-6
+            (a.z - 0.0).abs() < 1e-6 && (b.z - 0.0).abs() < 1e-6 && (a.y - 0.0).abs() < 1e-6 && (b.y - 0.0).abs() < 1e-6
         })
-        .expect("top front edge");
+        .expect("bottom front edge");
 
-    h.app.dialog.as_mut().unwrap().inputs[1].items = vec![Sel::Edge { body: "Box".into(), index: edge_idx, point: Vec3::new(20.0, 0.0, 20.0) }];
+    h.app.dialog.as_mut().unwrap().inputs[1].items = vec![Sel::Edge { body: "Box".into(), index: edge_idx, point: Vec3::new(20.0, 0.0, 0.0) }];
     h.step(&json!({"click":{"handle":"dialog:OK"}})).unwrap();
     h.frames(2);
 
@@ -2365,15 +2368,66 @@ fn plane_at_angle_about_edge_reopens_for_edit_and_updates_angle() {
     assert_eq!(cmds[0].1["command"], "construct.plane.at_angle");
     let p = &cmds[0].1["params"];
     assert_eq!(p["angle"], "90 deg");
-    assert_eq!(p["axis"]["origin"], json!([40.0, 0.0, 20.0]));
+    assert_eq!(p["axis"]["origin"], json!([40.0, 0.0, 0.0]));
     assert_eq!(p["axis"]["dir"], json!([1.0, 0.0, 0.0]));
 
     h.app.run(&cmds[0].0, cmds[0].1.clone()).unwrap();
     let (_, _, pl) = solidcraft_engine::view::construction_planes(&h.app.session).into_iter().last().expect("the updated construction plane");
-    // At 90 deg rotation of XY around line (40, 0, 20) with dir X:
+    // At 90 deg rotation of XY around line (40, 0, 0) with dir X:
     // normal starts as (0, 0, 1), rot 90 deg around X becomes (0, -1, 0)
     assert!(pl.normal().x.abs() < 1e-6, "{pl:?}");
     assert!((pl.normal().y - (-1.0)).abs() < 1e-6, "{pl:?}");
     assert!(pl.normal().z.abs() < 1e-6, "{pl:?}");
+    assert!(pl.height(Vec3::new(0.0, 0.0, 0.0)).abs() < 1e-6);
+    assert!(pl.height(Vec3::new(40.0, 0.0, 0.0)).abs() < 1e-6);
+}
+
+#[test]
+fn plane_at_angle_refuses_non_parallel_edge_as_axis() {
+    let mut h = crate::scenario::Harness::new();
+    h.app.run("solid.box", json!({"length": 40, "width": 30, "height": 20, "body_name": "Box"})).unwrap();
+    h.app.start("construct.plane.at_angle");
+    h.frames(2);
+
+    h.app.dialog.as_mut().unwrap().inputs[0].items = vec![Sel::Plane { name: "XY".into() }];
+    let mesh = h.app.session.world_state().body("Box").unwrap().mesh();
+    let edge_idx = mesh
+        .edges
+        .iter()
+        .position(|e| {
+            let (a, b) = (e.first().unwrap(), e.last().unwrap());
+            (a.x - 0.0).abs() < 1e-6 && (b.x - 0.0).abs() < 1e-6 && (a.y - 0.0).abs() < 1e-6 && (b.y - 0.0).abs() < 1e-6
+        })
+        .expect("vertical edge");
+
+    h.app.dialog.as_mut().unwrap().inputs[1].items = vec![Sel::Edge { body: "Box".into(), index: edge_idx, point: Vec3::new(0.0, 0.0, 10.0) }];
+
+    let err = apply_commands(&h.app, h.app.dialog.as_ref().unwrap()).unwrap_err();
+    assert!(err.contains("parallel to the base plane"), "{err}");
+}
+
+#[test]
+fn plane_at_angle_refuses_edge_off_base_plane() {
+    let mut h = crate::scenario::Harness::new();
+    h.app.run("solid.box", json!({"length": 40, "width": 30, "height": 20, "body_name": "Box"})).unwrap();
+    h.app.start("construct.plane.at_angle");
+    h.frames(2);
+
+    // XY is at z=0, but the picked edge is at z=20.
+    h.app.dialog.as_mut().unwrap().inputs[0].items = vec![Sel::Plane { name: "XY".into() }];
+    let mesh = h.app.session.world_state().body("Box").unwrap().mesh();
+    let edge_idx = mesh
+        .edges
+        .iter()
+        .position(|e| {
+            let (a, b) = (e.first().unwrap(), e.last().unwrap());
+            (a.z - 20.0).abs() < 1e-6 && (b.z - 20.0).abs() < 1e-6 && (a.y - 0.0).abs() < 1e-6 && (b.y - 0.0).abs() < 1e-6
+        })
+        .expect("top front edge");
+
+    h.app.dialog.as_mut().unwrap().inputs[1].items = vec![Sel::Edge { body: "Box".into(), index: edge_idx, point: Vec3::new(20.0, 0.0, 20.0) }];
+
+    let err = apply_commands(&h.app, h.app.dialog.as_ref().unwrap()).unwrap_err();
+    assert!(err.contains("lie in the base plane"), "{err}");
 }
 }

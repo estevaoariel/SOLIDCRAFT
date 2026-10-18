@@ -3,7 +3,7 @@ use crate::Session;
 use serde_json::{Value, json};
 use solidcraft_doc::construct::ConstructGeom;
 use solidcraft_doc::{Document, FeatureKind, PlaneRef};
-use solidcraft_geom::Plane;
+use solidcraft_geom::{Plane, Vec3};
 
 fn run(s: &mut Session, command: &str, params: Value) -> Value {
     s.execute(command, &params).unwrap_or_else(|e| panic!("{command} {params}: {e}"))
@@ -160,13 +160,14 @@ fn plane_at_angle_rejects_bad_face_picks_without_panicking() {
 fn plane_at_angle_with_offset_axis_origin_rotates_correctly() {
     let mut s = Session::default();
     run(&mut s, "solid.box", json!({"length": 40, "width": 30, "height": 20, "name": "Base"}));
+    run(&mut s, "construct.plane.offset", json!({"base": "XY", "offset": 20, "name": "Lid"}));
 
-    // Rotate about top edge at y = 0, z = 20, along X axis ([1, 0, 0])
+    // Rotate about top front edge at y = 0, z = 20, along X axis ([1, 0, 0])
     run(
         &mut s,
         "construct.plane.at_angle",
         json!({
-            "base": "XY",
+            "base": "Lid",
             "axis": {"origin": [0, 0, 20], "dir": [1, 0, 0]},
             "angle": "45 deg",
             "name": "Slanted"
@@ -175,8 +176,11 @@ fn plane_at_angle_with_offset_axis_origin_rotates_correctly() {
     let slanted = plane(&s, "Slanted");
     let half = 1.0_f64 / 2.0_f64.sqrt();
     assert!(slanted.origin.x.abs() < 1e-9, "{slanted:?}");
-    assert!((slanted.origin.y - 20.0 * half).abs() < 1e-9, "{slanted:?}");
-    assert!((slanted.origin.z - (20.0 - 20.0 * half)).abs() < 1e-9, "{slanted:?}");
+    assert!(slanted.origin.y.abs() < 1e-9, "{slanted:?}");
+    assert!((slanted.origin.z - 20.0).abs() < 1e-9, "{slanted:?}");
     assert!((slanted.normal().y - (-half)).abs() < 1e-9, "{slanted:?}");
     assert!((slanted.normal().z - half).abs() < 1e-9, "{slanted:?}");
+    // The rotated plane passes through the axis line at z = 20:
+    assert!(slanted.height(Vec3::new(0.0, 0.0, 20.0)).abs() < 1e-9);
+    assert!(slanted.height(Vec3::new(40.0, 0.0, 20.0)).abs() < 1e-9);
 }
