@@ -64,3 +64,8 @@ pub fn setup_shows_body(_app: &SolveApp, _name: &str) -> bool {
 pub fn setup_body_key(_app: &SolveApp) -> u64 {
     0
 }
+
+/// Forward WCS origin picks to the setup dialog when open.
+pub fn try_pick_origin(app: &mut SolveApp, proj: &crate::viewport::Proj, p: egui::Pos2) -> bool {
+    crate::manufacture_setup::try_pick_origin(app, proj, p)
+}
