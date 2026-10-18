@@ -164,6 +164,7 @@ pub mod manufacture_hole_recognition;
 pub mod manufacture_multiaxis;
 pub mod manufacture_setup;
 pub mod manufacture_tools;
+pub mod manufacture_turning;
 pub mod manufacture_workspace;
 pub mod mouse_gesture;
 pub(crate) mod navigation;
