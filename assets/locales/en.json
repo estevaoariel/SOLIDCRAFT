@@ -1104,6 +1104,7 @@
   "manage.material_hint": "Select bodies and choose their physical material.",
   "manage.parameters_hint": "Edit expressions and units. Changes apply on Enter or when leaving a field.",
   "manage.rules_hint": "Choose a rule to edit, or create a new rule. Confirm to save the rule.",
+  "manufacture.enter_blocked": "Finish the current operation before entering Manufacture.",
   "measure.at": "At",
   "measure.item": "Item {number}",
   "messages.ago_h": "{n} h ago",
@@ -2265,5 +2266,6 @@
   "update.up_to_date": "SolidCraft is up to date.",
   "update.update_now": "Update now",
   "update.you_have": "You have {version}.",
+  "workspace.manufacture": "Manufacture",
   "↑ ↓ choose · Enter / Tab complete · Esc dismiss": "↑ ↓ choose · Enter / Tab complete · Esc dismiss"
 }

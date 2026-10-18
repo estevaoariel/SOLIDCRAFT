@@ -4247,6 +4247,7 @@ dependencies = [
  "solidcraft-geom",
  "solidcraft-io",
  "solidcraft-kernel",
+ "solidcraft-manufacture",
  "solidcraft-render",
  "solidcraft-sketch",
  "thiserror 2.0.21",

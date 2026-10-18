@@ -1104,6 +1104,7 @@
   "manage.material_hint": "ボディを選択し、物理マテリアルを指定してください。",
   "manage.parameters_hint": "式と単位を編集してください。Enterを押すか、フィールドから移動すると変更が適用されます。",
   "manage.rules_hint": "編集するルールを選ぶか、新規ルールを作成してください。確定するとルールが保存されます。",
+  "manufacture.enter_blocked": "Finish the current operation before entering Manufacture.",
   "measure.at": "位置",
   "measure.item": "項目 {number}",
   "messages.ago_h": "{n} 時間前",
@@ -2265,5 +2266,6 @@
   "update.up_to_date": "SolidCraft は最新です。",
   "update.update_now": "今すぐ更新",
   "update.you_have": "現在のバージョンは {version} です。",
+  "workspace.manufacture": "Manufacture",
   "↑ ↓ choose · Enter / Tab complete · Esc dismiss": "↑ ↓ 選択 · Enter / Tab 補完 · Esc 閉じる"
 }
