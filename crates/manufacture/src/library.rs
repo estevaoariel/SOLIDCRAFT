@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::{Result, invalid};
 
 pub const DEFAULT_CAM_LIBRARY_REMOTE: &str =
-    "https://devops.quasarke.net/wdunn001/solidcraft-cam-libraries.git";
+    "";
 
 pub const MAX_LIBRARY_REMOTES: usize = 32;
 pub const MAX_TEMPLATES: usize = 256;
