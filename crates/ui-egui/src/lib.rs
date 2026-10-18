@@ -160,6 +160,7 @@ pub mod manufacture_2d;
 pub mod manufacture_3d;
 pub mod manufacture_contour;
 pub mod manufacture_drill;
+pub mod manufacture_fabrication;
 pub mod manufacture_hole_recognition;
 pub mod manufacture_inspection;
 pub mod manufacture_multiaxis;
