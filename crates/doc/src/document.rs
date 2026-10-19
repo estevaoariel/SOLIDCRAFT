@@ -1888,6 +1888,9 @@ pub struct Component {
     /// Optional identification colour, separate from normal appearances.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub identification_color: Option<[u8; 3]>,
+    /// Creation sequence used to select an automatic identification colour.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identification_color_index: Option<u64>,
     pub name: String,
     /// Parent component (0 = the root).
     #[serde(default)]
@@ -2417,6 +2420,9 @@ pub struct Document {
     /// Components below the root, as a tree (by parent).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub components: Vec<Component>,
+    /// Next automatic colour sequence number; deletions never rewind it.
+    #[serde(default)]
+    pub next_component_color_index: u64,
     /// Placements of components in their parents (each non-root component has at least one).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub occurrences: Vec<crate::Occurrence>,
@@ -2634,6 +2640,7 @@ impl Document {
             marker: None,
             next_id: 1,
             components: Vec::new(),
+            next_component_color_index: 0,
             occurrences: Vec::new(),
             assembly: Default::default(),
             sheet: Default::default(),
@@ -2911,6 +2918,9 @@ impl Document {
         if self.components.len() >= 10_000 {
             return Err(DocError::Invalid("too many components".into()));
         }
+        self.normalise_component_color_indices()?;
+        let color_index = self.next_component_color_index;
+        let next_color_index = color_index.checked_add(1).ok_or_else(|| DocError::Invalid("component colour sequence exhausted".into()))?;
         let id = self.next_id.max(1);
         self.next_id = id.checked_add(1).ok_or_else(|| DocError::Invalid("too many items in the design".into()))?;
         let name = match name.map(str::trim) {
@@ -2923,7 +2933,8 @@ impl Document {
                 format!("Component{k}")
             }
         };
-        self.components.push(Component { id, name, parent, ..Default::default() });
+        self.components.push(Component { id, name, parent, identification_color_index: Some(color_index), ..Default::default() });
+        self.next_component_color_index = next_color_index;
         self.add_occurrence(id, parent, crate::IDENTITY)?;
         Ok(id)
     }
