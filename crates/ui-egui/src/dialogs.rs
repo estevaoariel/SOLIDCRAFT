@@ -1241,11 +1241,19 @@ fn fillet_edges(s: &Session, sel: &Sel, chain: bool) -> Vec<Sel> {
     picked
 }
 
-/// Profiles of the sketch a feature would use, when there is just one: the active sketch's, else
-/// the last sketch's while no feature builds from it yet. A used profile (a cube's sketch on its
-/// bottom face) is only taken when it is picked.
+/// Profiles of the sketch a feature would use: every profile of a sketch selected in the Browser
+/// (#2984: the last sketch was taken instead), else, when there is just one, the active sketch's,
+/// else the last sketch's while no feature builds from it yet. A used profile (a cube's sketch on
+/// its bottom face) is only taken when it is picked.
 fn default_profiles(s: &Session) -> Vec<Sel> {
     let st = s.world_state();
+    let chosen = s.selection.iter().find_map(|x| match x {
+        Sel::Feature { id } if s.doc.feature(*id).is_some_and(|f| matches!(f.kind, FeatureKind::Sketch { .. })) => Some(*id),
+        _ => None,
+    });
+    if let Some(id) = chosen {
+        return st.sketch(id).map(|ss| (0..ss.profiles.len()).map(|index| Sel::Profile { sketch: id, index }).collect()).unwrap_or_default();
+    }
     let sid = s.active_sketch.or_else(|| {
         s.doc.features.iter().rev().find(|f| matches!(f.kind, FeatureKind::Sketch { .. })).map(|f| f.id).filter(|&id| !profiles_used(s, id))
     });
