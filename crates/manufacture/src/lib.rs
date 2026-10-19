@@ -1130,15 +1130,15 @@ fn validate_feeds(f: &Feeds, path: &str) -> Result<()> {
 // Geometric targets (model-space feature selection for CAM operations)
 // ---------------------------------------------------------------------------
 
-/// Model-space geometric targets that select features in the STEP file for a CAM operation.
+/// Model-space geometric targets that select features on the solid model for a CAM operation.
 ///
-/// The companion adapter resolves each `face_sample_points` entry to the nearest face
-/// (by `Face.Center()` distance in the CadQuery model) and rejects the operation if:
+/// The CAM evaluator resolves each `face_sample_points` entry to the nearest face
+/// (by face-centroid distance in model space) and rejects the operation if:
 /// - the nearest face centre is more than `FACE_SELECT_TOLERANCE_MM` away, or
 /// - a second face is within `FACE_SELECT_TIE_TOLERANCE_MM` of the nearest (ambiguous).
 ///
 /// `drill_points` supplies explicit XY hole-centre coordinates for [`DrillOperation`]; the
-/// adapter selects the nearest cylindrical face to each point.  If both are provided on a
+/// evaluator selects the nearest cylindrical face to each point.  If both are provided on a
 /// DrillOperation, `drill_points` takes precedence.
 ///
 /// # Backwards compatibility
