@@ -135,15 +135,15 @@ impl Sm {
     }
 }
 
-fn new_flange(ty: usize) -> Sm {
+fn new_flange(app: &SolveApp, ty: usize) -> Sm {
     Sm::Flange {
         ty,
-        height: "10 mm".into(),
+        height: crate::dialogs::length_default(&app.session, "10"),
         angle: "90 deg".into(),
         radius: String::new(),
         position: 0,
         flip: false,
-        distance: "20 mm".into(),
+        distance: crate::dialogs::length_default(&app.session, "20"),
         reverse: false,
         rule: 0,
         own: Vec::new(),
@@ -155,7 +155,7 @@ fn new_flange(ty: usize) -> Sm {
 /// The dialog for a sheet metal command.
 pub fn start(app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
     let (sm, inputs) = match id {
-        "sheet.flange" => (new_flange(0), vec![SelInput::new("Profile / Edges", PROFILES | EDGES | CURVES, true)]),
+        "sheet.flange" => (new_flange(app, 0), vec![SelInput::new("Profile / Edges", PROFILES | EDGES | CURVES, true)]),
         "sheet.unfold" => (Sm::Unfold { refold: false }, vec![SelInput::new("Body (last if none)", BODIES, false)]),
         "sheet.refold" => (Sm::Unfold { refold: true }, vec![SelInput::new("Body (last if none)", BODIES, false)]),
         "sheet.convert" => {
@@ -170,7 +170,7 @@ pub fn start(app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
         "sheet.flat_pattern" => (Sm::FlatPattern { data: None, key: None, status: None }, vec![SelInput::new("Body (last if none)", BODIES, false)]),
         _ => Sm::simple_start(id)?,
     };
-    Some((Kind::Sheet(sm), inputs))
+    Some((crate::length_input::defaults(&app.session.doc, Kind::Sheet(sm)), inputs))
 }
 
 /// The design's rules (the default steel rule when it has none).
@@ -295,14 +295,14 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Sm, inputs: &mut [Sel
                     // A new rule starts from the first rule.
                     let base = rules.get(*pick).cloned().unwrap_or_else(|| rules.first().cloned().unwrap_or_else(SheetRule::steel));
                     *values = vec![
-                        base.thickness.clone(),
+                        crate::length_input::stored(&app.session.doc, &base.thickness),
                         base.k_factor.clone(),
-                        base.bend_radius.clone(),
-                        base.relief_width.clone(),
-                        base.relief_depth.clone(),
-                        base.corner_relief.clone(),
-                        base.hem_gap.clone(),
-                        base.gap.clone(),
+                        crate::length_input::stored(&app.session.doc, &base.bend_radius),
+                        crate::length_input::stored(&app.session.doc, &base.relief_width),
+                        crate::length_input::stored(&app.session.doc, &base.relief_depth),
+                        crate::length_input::stored(&app.session.doc, &base.corner_relief),
+                        crate::length_input::stored(&app.session.doc, &base.hem_gap),
+                        crate::length_input::stored(&app.session.doc, &base.gap),
                     ];
                     *relief = RELIEF_SHAPES.iter().position(|s| s.eq_ignore_ascii_case(base.corner_relief_shape.trim())).unwrap_or(0);
                     *active = app.session.doc.sheet_rule(None).name == base.name || *pick >= rules.len();
@@ -596,7 +596,7 @@ pub fn for_feature(app: &SolveApp, kind: &FeatureKind) -> Option<(Kind, Vec<SelI
     let (k, items): (Sm, Vec<Sel>) = match kind {
         FeatureKind::SheetBase { sketch, profiles, rule, flip } => {
             let ps = st.sketch(sketch.0).map(|ss| profile_indices(ss, profiles)).unwrap_or_default();
-            let mut f = new_flange(0);
+            let mut f = new_flange(app, 0);
             if let Sm::Flange { flip: fl, rule: r, .. } = &mut f {
                 *fl = *flip;
                 *r = rule_index(rule);
@@ -604,7 +604,7 @@ pub fn for_feature(app: &SolveApp, kind: &FeatureKind) -> Option<(Kind, Vec<SelI
             (f, ps.into_iter().map(|index| Sel::Profile { sketch: sketch.0, index }).collect())
         }
         FeatureKind::SheetContour { curves, distance, rule, flip, reverse, .. } => {
-            let mut f = new_flange(2);
+            let mut f = new_flange(app, 2);
             if let Sm::Flange { flip: fl, rule: r, distance: d, reverse: rv, .. } = &mut f {
                 *fl = *flip;
                 *r = rule_index(rule);
@@ -638,7 +638,7 @@ pub fn for_feature(app: &SolveApp, kind: &FeatureKind) -> Option<(Kind, Vec<SelI
                 radius: radius.as_deref().map(str::to_string).unwrap_or_default(),
                 position: POSITIONS.iter().position(|p| p == position).unwrap_or(0),
                 flip: *flip,
-                distance: "20 mm".into(),
+                distance: crate::dialogs::length_default(&app.session, "20"),
                 reverse: false,
                 rule: 0,
                 own,

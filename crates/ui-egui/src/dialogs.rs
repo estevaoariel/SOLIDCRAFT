@@ -615,21 +615,21 @@ impl Dialog {
             "sketch.create" => Dialog::new(Kind::Sketch, vec![SelInput::new("Plane", PLANES | PLANAR_FACES, false)]),
             "solid.extrude" => Dialog::new(
                 Kind::Extrude {
-                    distance: "10 mm".into(),
+                    distance: length_default(s, "10"),
                     direction: 0,
                     operation: usize::from(has_bodies),
                     auto_op: true,
                     smart: Default::default(),
-                    distance2: "10 mm".into(),
+                    distance2: length_default(s, "10"),
                     taper: "0 deg".into(),
                     taper_present: false,
                     to_offset: String::new(),
                     start: String::new(),
                     all: false,
                     thin: false,
-                    wall: "2 mm".into(),
+                    wall: length_default(s, "2"),
                     wall_side: 0,
-                    wall2: "1 mm".into(),
+                    wall2: length_default(s, "1"),
                 },
                 vec![SelInput::new("Profiles", EXTRUDE_ACCEPT, true)],
             ),
@@ -637,11 +637,11 @@ impl Dialog {
                 Kind::Revolve { angle: "360 deg".into(), operation: 0, axis: None },
                 vec![SelInput::new("Profile", PROFILES, true), SelInput::new("Axis", AXES, false)],
             ),
-            "solid.fillet" => Dialog::new(fillet_kind("2 mm", false), vec![SelInput::new("Edges", EDGES | FACES, true)]),
-            "solid.chamfer" => Dialog::new(fillet_kind("1 mm", true), vec![SelInput::new("Edges", EDGES | FACES, true)]),
+            "solid.fillet" => Dialog::new(fillet_kind(&length_default(s, "2"), false), vec![SelInput::new("Edges", EDGES | FACES, true)]),
+            "solid.chamfer" => Dialog::new(fillet_kind(&length_default(s, "1"), true), vec![SelInput::new("Edges", EDGES | FACES, true)]),
             "solid.shell" => {
                 let (kind, inputs) = Kind::simple_start(id)?;
-                let mut d = Dialog::new(kind, inputs);
+                let mut d = Dialog::new(crate::length_input::defaults(&s.doc, kind), inputs);
                 // Faces joined smoothly to the picked ones too.
                 d.extra.insert("tangent_chain".into(), json!(true));
                 d
@@ -650,7 +650,7 @@ impl Dialog {
                 Dialog::new(Kind::Mirror, vec![SelInput::new("Objects", BODIES, true), SelInput::new("Mirror Plane", PLANES | PLANAR_FACES, false)])
             }
             "solid.rib" | "solid.web" => Dialog::new(
-                Kind::Rib { web: id == "solid.web", thickness: "2 mm".into(), depth: String::new(), flip: false, normal: false },
+                Kind::Rib { web: id == "solid.web", thickness: length_default(s, "2"), depth: String::new(), flip: false, normal: false },
                 vec![SelInput::new("Curves", CURVES, true)],
             ),
             "solid.replace_face" => Dialog::new(
@@ -671,10 +671,13 @@ impl Dialog {
             ),
             "solid.remove" => Dialog::new(Kind::Remove, vec![SelInput::new("Bodies", BODIES, true)]),
             "solid.pattern.path" => Dialog::new(
-                Kind::PathPattern { count: "4".into(), spacing: "20 mm".into() },
+                Kind::PathPattern { count: "4".into(), spacing: length_default(s, "20") },
                 vec![SelInput::new("Objects", BODIES, true), SelInput::new("Path", CURVES, true)],
             ),
-            "mesh.convert" => Dialog::new(Kind::MeshConvert { tolerance: "0.05 mm".into() }, vec![SelInput::new("Mesh body", BODIES, false)]),
+            "mesh.convert" => Dialog::new(
+                Kind::MeshConvert { tolerance: crate::length_input::model(&s.doc, 0.05) },
+                vec![SelInput::new("Mesh body", BODIES, false)],
+            ),
             "construct.plane.midplane" => Dialog::new(
                 Kind::Midplane,
                 vec![SelInput::new("First plane", PLANES | PLANAR_FACES, false), SelInput::new("Second plane", PLANES | PLANAR_FACES, false)],
@@ -699,14 +702,14 @@ impl Dialog {
             ),
             "material.assign" => Dialog::new(Kind::Material { index: 1 }, vec![SelInput::new("Bodies", BODIES, true)]),
             "inspect.section" => {
-                Dialog::new(Kind::Section { offset: "0 mm".into(), flip: false }, vec![SelInput::new("Plane", PLANES | PLANAR_FACES, false)])
+                Dialog::new(Kind::Section { offset: length_default(s, "0"), flip: false }, vec![SelInput::new("Plane", PLANES | PLANAR_FACES, false)])
             }
             "inspect.measure" => Dialog::new(
                 Kind::Measure { result: None, of: Vec::new(), show: None },
                 vec![SelInput::new("Items", FACES | EDGES | selection::VERTICES | selection::CURVES | PROFILES, true)],
             ),
             "solid.pattern.rectangular" => Dialog::new(
-                Kind::PatternRect { count: "3".into(), spacing: "20 mm".into(), count2: "1".into(), spacing2: "20 mm".into() },
+                Kind::PatternRect { count: "3".into(), spacing: length_default(s, "20"), count2: "1".into(), spacing2: length_default(s, "20") },
                 vec![
                     SelInput::new("Objects", BODIES, true),
                     SelInput::new("Direction", AXES | EDGES, false),
@@ -731,8 +734,8 @@ impl Dialog {
                     rail2,
                 ]
             }),
-            "solid.move" => Dialog::new(crate::dialogs_move::kind(0), crate::dialogs_move::inputs(0)),
-            "solid.hole" => Dialog::new(hole_defaults(), vec![SelInput::new("Face", HOLE_FACES, true)]),
+            "solid.move" => Dialog::new(crate::dialogs_move::kind(0, &s.doc), crate::dialogs_move::inputs(0)),
+            "solid.hole" => Dialog::new(hole_defaults(s), vec![SelInput::new("Face", HOLE_FACES, true)]),
             "solid.box" => Dialog::new(
                 Kind::Primitive {
                     cmd: "solid.box",
@@ -784,6 +787,7 @@ impl Dialog {
             ),
             _ => {
                 let (kind, inputs) = Kind::simple_start(id)
+                    .map(|(kind, inputs)| (crate::length_input::defaults(&s.doc, kind), inputs))
                     .or_else(|| crate::dialogs_assembly::start(app, id))
                     .or_else(|| crate::dialogs_sheet::start(app, id))
                     .or_else(|| crate::dialogs_surface::start(app, id))
@@ -1815,13 +1819,13 @@ fn object_type_row(d: &mut Dialog, ui: &mut egui::Ui) {
 
 /// Rows above the selection inputs: the pattern type and object type, the Hole placement (one
 /// face point, or sketch points).
-fn placement_row(d: &mut Dialog, ui: &mut egui::Ui) {
+fn placement_row(d: &mut Dialog, ui: &mut egui::Ui, session: &Session) {
     if matches!(d.kind, Kind::Mirror) {
         object_type_row(d, ui);
         return;
     }
     if matches!(d.kind, Kind::Move { .. }) {
-        crate::dialogs_move::type_row(d, ui);
+        crate::dialogs_move::type_row(d, ui, &session.doc);
         return;
     }
     let current = match d.kind {
@@ -1838,7 +1842,12 @@ fn placement_row(d: &mut Dialog, ui: &mut egui::Ui) {
             let objects = d.inputs.first().map(|i| i.items.clone()).unwrap_or_default();
             let (kind, mut inputs) = match ty {
                 0 => (
-                    Kind::PatternRect { count: "3".into(), spacing: "20 mm".into(), count2: "1".into(), spacing2: "20 mm".into() },
+                    Kind::PatternRect {
+                        count: "3".into(),
+                        spacing: length_default(session, "20"),
+                        count2: "1".into(),
+                        spacing2: length_default(session, "20"),
+                    },
                     vec![
                         SelInput::new("Objects", BODIES, true),
                         SelInput::new("Direction", AXES | EDGES, false),
@@ -1850,7 +1859,7 @@ fn placement_row(d: &mut Dialog, ui: &mut egui::Ui) {
                     vec![SelInput::new("Objects", BODIES, true), SelInput::new("Axis", AXES, false)],
                 ),
                 _ => (
-                    Kind::PathPattern { count: "4".into(), spacing: "20 mm".into() },
+                    Kind::PathPattern { count: "4".into(), spacing: length_default(session, "20") },
                     vec![SelInput::new("Objects", BODIES, true), SelInput::new("Path", CURVES, true)],
                 ),
             };
@@ -2210,7 +2219,7 @@ fn auto_operation(app: &SolveApp, d: &mut Dialog) {
         }
     }
     let Kind::Extrude { direction, distance, .. } = &d.kind else { return };
-    let Ok(dist) = app.session.doc.eval(distance, solidcraft_engine::doc::expr::Kind::Length) else { return };
+    let Ok(dist) = crate::length_input::eval(&app.session.doc, distance, ValueKind::Length) else { return };
     let mut side = crate::smart_extrude::side(dist, *direction);
     if !matches!(d.kind, Kind::Extrude { auto_op: true, .. }) {
         return;
@@ -2761,11 +2770,7 @@ fn fillet_kind(size: &str, chamfer: bool) -> Kind {
 /// field shows it as the other dialogs show theirs ("20 mm", "20 in"). OK makes the size the bare
 /// number would.
 pub(crate) fn length_default(s: &Session, number: &str) -> String {
-    match s.doc.with_design_unit(number, ValueKind::Length) {
-        e if e != number => e,
-        // A millimetre design (or one whose units are not a length): bare numbers are mm.
-        _ => format!("{} mm", number.trim()),
-    }
+    crate::length_input::default(&s.doc, number)
 }
 
 /// A feature's length as its edit field shows it. A bare number is kept in millimetres: where the
@@ -2788,14 +2793,14 @@ pub(crate) fn shown_expr(e: &str, kind: ValueKind) -> String {
     if solidcraft_engine::doc::expr::is_bare_number(e) { format!("{} {unit}", e.trim()) } else { e.to_string() }
 }
 
-fn hole_defaults() -> Kind {
+fn hole_defaults(s: &Session) -> Kind {
     Kind::Hole {
-        diameter: "5 mm".into(),
-        depth: "10 mm".into(),
+        diameter: length_default(s, "5"),
+        depth: length_default(s, "10"),
         kind: 0,
-        cb_diameter: "9 mm".into(),
-        cb_depth: "3 mm".into(),
-        cs_diameter: "10 mm".into(),
+        cb_diameter: length_default(s, "9"),
+        cb_depth: length_default(s, "3"),
+        cs_diameter: length_default(s, "10"),
         cs_angle: "90 deg".into(),
         opts: HoleOpts::default(),
     }
@@ -2999,7 +3004,12 @@ pub(crate) fn report_title(d: &Dialog) -> String {
 
 /// The commands OK runs (an edit rebuilds its feature in place); the live preview runs the same.
 pub fn apply_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, String> {
-    let cmds = dialog_commands(app, d)?;
+    let mut normalized = d.clone();
+    for value in crate::length_input::fields(&app.session.doc, &mut normalized.kind) {
+        *value = crate::length_input::expression(&app.session.doc, value, ValueKind::Length);
+    }
+    crate::length_input::extra(&mut normalized.extra, |e| crate::length_input::expression(&app.session.doc, e, ValueKind::Length));
+    let cmds = dialog_commands(app, &normalized)?;
     if let Some((id, _)) = d.editing {
         let (cmd, mut params) = cmds.into_iter().next().ok_or("nothing to apply")?;
         if let Some(feature) = app.session.doc.feature(id) {
@@ -3756,7 +3766,8 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
 /// on `p` across the face), otherwise centred on `p`. Sizes that are expressions stay
 /// expressions, so the box keeps standing on the face when they change.
 fn box_corner(s: &Session, fields: &[(&'static str, String)], p: Vec3, normal: Option<Vec3>) -> Value {
-    let size = |k: &str| fields.iter().find(|f| f.0 == k).map(|f| s.doc.with_design_unit(&f.1, ValueKind::Length)).unwrap_or_default();
+    let size =
+        |k: &str| fields.iter().find(|f| f.0 == k).map(|f| crate::length_input::expression(&s.doc, &f.1, ValueKind::Length)).unwrap_or_default();
     let along = |axis: Vec3| normal.map(|n| n.dot(axis)).filter(|d| d.abs() > 1.0 - 1e-9);
     let coord = |c: f64, size: String, axis: Vec3| {
         // How much of the size lies behind `p`: none (or all) along the face normal, half across it.
@@ -4171,16 +4182,16 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                 operation: op_index(operation),
                 auto_op: false,
                 smart: crate::smart_extrude::Smart { manual_dir: true, ..Default::default() },
-                distance2: extent.distance2.as_deref().map(str::to_string).unwrap_or_else(|| "10 mm".into()),
+                distance2: extent.distance2.as_deref().map(str::to_string).unwrap_or_else(|| length_default(s, "10")),
                 taper: extent.taper.as_deref().map(str::to_string).unwrap_or_else(|| "0 deg".into()),
                 taper_present: extent.taper.is_some(),
                 to_offset: extent.to_offset.as_deref().map(str::to_string).unwrap_or_default(),
                 start: extent.start_offset.as_deref().map(str::to_string).unwrap_or_default(),
                 all: extent.through_all,
                 thin: thin.is_some(),
-                wall: thin.as_ref().map_or_else(|| "2 mm".into(), |t| t.thickness.to_string()),
+                wall: thin.as_ref().map_or_else(|| length_default(s, "2"), |t| t.thickness.to_string()),
                 wall_side: thin.as_ref().map_or(0, |t| WALL_SIDES.iter().position(|w| ThinSide::parse(w) == Some(t.side)).unwrap_or(0)),
-                wall2: thin.as_ref().and_then(|t| t.thickness2.as_deref().map(str::to_string)).unwrap_or_else(|| "1 mm".into()),
+                wall2: thin.as_ref().and_then(|t| t.thickness2.as_deref().map(str::to_string)).unwrap_or_else(|| length_default(s, "1")),
             };
             d.extra.insert("convention".into(), json!(extent.convention));
             // Extent references belong to the extrude's authoring frame, including free
@@ -4358,7 +4369,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
         }
         FeatureKind::Hole { position, at, direction, diameter, depth, hole, points, thread, to } => {
             let mut d = start("solid.hole")?;
-            let mut k = hole_defaults();
+            let mut k = hole_defaults(s);
             if let Kind::Hole { diameter: dia, depth: dep, kind, cb_diameter, cb_depth, cs_diameter, cs_angle, opts } = &mut k {
                 *dia = diameter.to_string();
                 opts.all = depth.is_none();
@@ -4556,7 +4567,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                         count: count1.to_string(),
                         spacing: spacing1.to_string(),
                         count2: count2.as_deref().map(str::to_string).unwrap_or_else(|| "1".into()),
-                        spacing2: spacing2.as_deref().map(str::to_string).unwrap_or_else(|| "20 mm".into()),
+                        spacing2: spacing2.as_deref().map(str::to_string).unwrap_or_else(|| length_default(s, "20")),
                     };
                     // Directions along the origin axes show as those axes; others are kept as is.
                     for (i, (key, dir)) in [("dir1", Some(*dir1)), ("dir2", *dir2)].into_iter().enumerate() {
@@ -4847,6 +4858,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
         FeatureKind::Move { bodies, translate, rotate_axis, angle, copy } => {
             let mut d = start("solid.move")?;
             crate::dialogs_move::for_feature(
+                &s.doc,
                 &mut d,
                 &solidcraft_engine::doc::plain(bodies),
                 translate,
@@ -4865,6 +4877,12 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             d
         }
     };
+    if crate::length_input::unit(&s.doc) != "mm" {
+        for value in crate::length_input::fields(&s.doc, &mut d.kind) {
+            *value = crate::length_input::stored(&s.doc, value);
+        }
+        crate::length_input::extra(&mut d.extra, |e| crate::length_input::stored(&s.doc, e));
+    }
     d.editing = Some((id, marker));
     d.active = 0;
     d.error = None;
