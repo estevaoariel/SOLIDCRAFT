@@ -1,9 +1,12 @@
 //! Per-session, transient CAM job protocol.
 //!
 //! [`CamHost`] owns execution; documents and history never contain these values.
+//! The intended production backend is an in-process, permissively licensed toolpath
+//! engine (see SolidCraft PR #2819 / the `solidcraft-cam` crate): regions in, toolpaths
+//! and G-code out. No GPL/LGPL CAM runtime (including FreeCAD Path) is used.
 //! [`FakeCamHost`] is the deterministic stand-in used in tests: submitted jobs complete
 //! synchronously with empty [`PathSegment`]s so callers can exercise the full command cycle
-//! without a real companion process.
+//! without a live engine.
 
 use std::sync::{Arc, Mutex};
 
@@ -226,7 +229,7 @@ impl CamHandle {
     }
 
     /// Mark the job completed with the given result.
-    /// Public adapter for external [`CamBackend`] implementations (e.g. HTTP companion clients).
+    /// Public adapter for external [`CamBackend`] implementations.
     pub fn adapter_complete(&self, result: CamJobResult) {
         self.complete(result)
     }
@@ -294,7 +297,7 @@ pub struct CamBackendDescriptor {
     pub id: String,
     pub label: String,
     pub availability: Availability,
-    /// Human-readable note (e.g. "companion not running").
+    /// Human-readable note (e.g. "CAM engine unavailable").
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
 }
@@ -354,7 +357,7 @@ impl CamHost {
 /// Every submitted job transitions directly from `Queued` to `Completed`.  The STEP bytes are
 /// read for their SHA-256 hash (provenance) but are not interpreted.  Use this in unit tests
 /// that exercise the full `manufacture.preflight / start / status / result / export` cycle
-/// without a live companion process.
+/// without a live CAM engine.
 #[derive(Clone, Debug, Default)]
 pub struct FakeCamHost;
 
