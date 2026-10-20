@@ -1618,3 +1618,84 @@ fn loft_through_coplanar_sections_is_refused() {
     assert!(e.contains("same plane"), "{e}");
     assert!(s.model.state().bodies.is_empty());
 }
+
+/// A cam groove: a path drawn on a plane tangent to a cylinder is wrapped onto it and cut
+/// into the wall, and the groove follows the parameters it was drawn with.
+#[test]
+fn a_cam_groove_is_cut_into_a_cylindrical_wall() {
+    let mut s = Session::default();
+    run(&mut s, "parameters.add", json!({"name": "groove_depth", "expression": "1 mm"}));
+    run(&mut s, "solid.cylinder", json!({"radius": 10, "height": 20, "body_name": "Sleeve"}));
+    // A sketch on a plane tangent to the wall: its `x` runs around the circumference.
+    run(
+        &mut s,
+        "sketch.create",
+        json!({"plane": {"origin": [0, 10, 10], "x_dir": [-1, 0, 0], "y_dir": [0, 0, 1]}, "name": "Track"}),
+    );
+    run(&mut s, "sketch.line", json!({"points": [[-6, -1], [6, 1]]}));
+    let sketch = s.active_sketch.unwrap();
+    let curve = {
+        let st = s.model.state();
+        st.sketch(sketch).unwrap().sketch.curves[0].id.clone()
+    };
+    run(&mut s, "sketch.finish", json!({}));
+    let before = s.model.state().body("Sleeve").unwrap().body.tessellate_with(1e-4, true).unwrap().measure().volume;
+    run(
+        &mut s,
+        "solid.cam_groove",
+        json!({"sketch": "Track", "path": [curve], "depth": "groove_depth", "width": 4, "name": "Cam Track"}),
+    );
+    let after = s.model.state().body("Sleeve").unwrap().body.tessellate_with(1e-4, true).unwrap().measure().volume;
+    // What the groove takes is the band the path sweeps out, on the surface, times the
+    // depth, less what the wall's curve takes: the band is measured at the surface, and the
+    // groove is cut below it, where the circumference is shorter.
+    let length = 12.0_f64.hypot(2.0);
+    let want = length * 4.0 * 1.0 * (1.0 - 1.0 / (2.0 * 10.0));
+    assert!((before - after - want).abs() < 0.05 * want, "{} vs {want}", before - after);
+    // The feature keeps the wall it was cut into, and its path.
+    let feature = s.doc.find_feature("Cam Track").unwrap();
+    let solidcraft_doc::FeatureKind::CamGroove { face: Some(face), path, depth, .. } = &feature.kind else {
+        panic!("the groove must save its wall: {:?}", feature.kind)
+    };
+    assert_eq!(face.body, "Sleeve");
+    assert_eq!(path.len(), 1);
+    assert_eq!(*depth, "groove_depth");
+    // The design saves and reads again, and the groove follows the parameter.
+    let saved = s.doc.to_json();
+    let mut loaded = Session { doc: solidcraft_doc::Document::from_json(&saved).unwrap().into(), ..Default::default() };
+    loaded.refresh();
+    assert!(loaded.model.results.iter().all(|f| f.error.is_none()), "{:?}", loaded.model.results);
+    let volume = |s: &Session| s.model.state().body("Sleeve").unwrap().body.tessellate_with(1e-4, true).unwrap().measure().volume;
+    assert!((volume(&loaded) - after).abs() < 0.05 * want);
+    run(&mut loaded, "parameters.change", json!({"name": "groove_depth", "expression": "2 mm"}));
+    assert!(loaded.model.results.iter().all(|f| f.error.is_none()), "{:?}", loaded.model.results);
+    let deeper = length * 4.0 * 2.0 * (1.0 - 2.0 / (2.0 * 10.0));
+    assert!((before - volume(&loaded) - deeper).abs() < 0.05 * deeper, "{} vs {deeper}", before - volume(&loaded));
+}
+
+/// A groove needs a wall: a path on a plane that touches no cylinder, or a path that leaves
+/// the wall, is refused.
+#[test]
+fn a_cam_groove_needs_a_cylindrical_wall() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 40, "width": 30, "height": 10, "body_name": "Plate"}));
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "Path"}));
+    run(&mut s, "sketch.line", json!({"points": [[0, 0], [10, 0]]}));
+    let sketch = s.active_sketch.unwrap();
+    let curve = {
+        let st = s.model.state();
+        st.sketch(sketch).unwrap().sketch.curves[0].id.clone()
+    };
+    run(&mut s, "sketch.finish", json!({}));
+    // A plane that stands tangent to no wall: the groove has nowhere to go.
+    let e = s.execute("solid.cam_groove", &json!({"sketch": "Path", "path": [curve], "depth": 1, "width": 2})).unwrap_err().to_string();
+    assert!(e.contains("wall") || e.contains("tangent"), "{e}");
+    // A path with no curve, and a path with one that is not in the sketch.
+    let e = s.execute("solid.cam_groove", &json!({"sketch": "Path", "path": [], "depth": 1, "width": 2})).unwrap_err().to_string();
+    assert!(e.contains("curve ids"), "{e}");
+    let e = s.execute("solid.cam_groove", &json!({"sketch": "Path", "path": ["nope"], "depth": 1, "width": 2})).unwrap_err().to_string();
+    assert!(e.contains("no curve `nope`"), "{e}");
+    // A depth or a width that is not a length.
+    let e = s.execute("solid.cam_groove", &json!({"sketch": "Path", "path": [curve], "depth": -1, "width": 2})).unwrap_err().to_string();
+    assert!(!e.is_empty());
+}

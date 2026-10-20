@@ -41,6 +41,9 @@ mod delete_face;
 mod distance;
 #[cfg(test)]
 mod edge_polyline_tests;
+mod cam_groove;
+#[cfg(test)]
+mod cam_groove_tests;
 mod emboss;
 mod face_params;
 #[cfg(test)]
@@ -154,6 +157,9 @@ mod tspline;
 mod untouched_faces_tests;
 pub mod watch;
 mod whole_face;
+mod wrap;
+#[cfg(test)]
+mod wrap_tests;
 
 pub use blend::{ChamferSide, chamfer, chamfer_sides, fillet, fillet_each, fillet_g2, fillet_g2_corners, fillet_max, fillet_max_each};
 pub use blend_corner::fillet_radii;
@@ -175,6 +181,7 @@ pub use continuity::{
 pub use corner_g2::{corner_g2_patch, seam_error};
 pub use delete_face::delete_faces;
 pub use distance::{BodyDistance, DistanceShape, body_distance};
+pub use cam_groove::{GrooveTool, cam_groove};
 pub use emboss::{cylinder_emboss_anchor, emboss_cylinder, emboss_cylinder_at, has_cylinder_emboss_wall, infer_cylinder_emboss};
 pub use fair::{
     FairCurve, FairNet, FairOptions, FairReport, MAX_FAIR_ITERATIONS, MAX_FAIR_POINTS, fair_bspline_curve, fair_bspline_surface, fair_curve,
@@ -222,6 +229,7 @@ pub use topo::{CylinderFace, cylinder_end_at, cylinder_face, cylinder_face_at};
 pub use topo::{TopoCounts, merged_topology, seam_flags};
 pub use tspline::tspline_sheet;
 pub use whole_face::{WholeFace, cut_takes_only_the_face, cut_tool, face_prism, matching_face};
+pub use wrap::{CylFrame, Development, WallSpan, WrappedPath, cylindrical_wall_at, cylinder_spans, develop, tangent_wall, wall_anchor, wrap_path};
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum KernelError {

@@ -762,6 +762,7 @@
   "cmd.solid_align": "Align",
   "cmd.solid_boundary_fill": "Boundary Fill",
   "cmd.solid_bounding_solid": "Bounding Solid",
+  "cmd.solid_cam_groove": "Cam Groove",
   "cmd.solid_emboss": "Emboss",
   "cmd.solid_move": "Move/Copy",
   "cmd.solid_offset_face": "Offset Face",
