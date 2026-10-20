@@ -1933,7 +1933,8 @@ fn input_rows_range(d: &mut Dialog, ui: &mut egui::Ui, s: &Session, range: std::
     let mut remove = None;
     let shell_count = d.shell_faces(s).map(|faces| faces.len());
     for (i, inp) in d.inputs.iter().enumerate().skip(range.start).take(range.end.saturating_sub(range.start)) {
-        let stored_reference = feature_pattern_reference_key(d, i).and_then(|key| d.extra.get(key)).filter(|_| inp.items.is_empty());
+        let alignment = crate::dialogs_assembly::stored_alignment(&d.kind, i);
+        let stored_reference = feature_pattern_reference_key(d, i).and_then(|key| d.extra.get(key)).or(alignment.as_ref()).filter(|_| inp.items.is_empty());
         form_row(ui, inp.label, |ui| {
             ui.horizontal(|ui| {
                 let active = i == d.active;
@@ -1941,7 +1942,9 @@ fn input_rows_range(d: &mut Dialog, ui: &mut egui::Ui, s: &Session, range: std::
                 let custom_axis = i == 1 && inp.items.is_empty() && stored_revolve_axis(&d.kind).is_some();
                 let filled = !inp.items.is_empty() || custom_axis || stored_reference.is_some();
                 let text = if filled {
-                    RichText::new(if custom_axis || stored_reference.is_some() {
+                    RichText::new(if let Some(face) = alignment.as_ref().and_then(|v| v.get("face")).and_then(Value::as_str).filter(|_| inp.items.is_empty()) {
+                        face.to_string()
+                    } else if custom_axis || stored_reference.is_some() {
                         crate::i18n::tr("dialog.custom_axis").into()
                     } else if !inp.multi {
                         inp.items.first().map(|item| selection_label(s, item)).unwrap_or_default()
@@ -2013,6 +2016,7 @@ fn input_rows_range(d: &mut Dialog, ui: &mut egui::Ui, s: &Session, range: std::
         d.active = i;
     }
     if let Some(i) = clear {
+        crate::dialogs_assembly::clear_alignment(&mut d.kind, i);
         if let Some(key) = feature_pattern_reference_key(d, i) {
             d.extra.remove(key);
         }
