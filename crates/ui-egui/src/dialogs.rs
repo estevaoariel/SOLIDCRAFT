@@ -2863,6 +2863,18 @@ fn plane_by_name(app: &SolveApp, name: &str) -> Option<solidcraft_engine::geom::
     })
 }
 
+/// The base plane of a construct command that takes a plane or a picked planar face:
+/// its origin and normal in world space.
+fn base_plane(app: &SolveApp, base: &Value) -> Option<(Vec3, Vec3)> {
+    if let Some(name) = base.as_str() {
+        let pl = plane_by_name(app, name)?;
+        return Some((pl.origin, pl.normal()));
+    }
+    let body = base.get("body")?.as_str()?;
+    let index = base.get("index")?.as_u64()? as usize;
+    planar_face(&app.session, body, index)
+}
+
 /// Animate the camera to look straight at the active sketch plane.
 pub fn look_at_sketch(app: &mut SolveApp) {
     look_at_sketch_from(app, false);
@@ -3424,7 +3436,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
             let base = plane_arg(app, sels(d, 0).first())?;
             let axis = match sels(d, 1).first() {
                 Some(Sel::Axis { name }) => {
-                    if let Some(pl) = plane_by_name(app, &base) {
+                    if let Some((_, normal)) = base_plane(app, &base) {
                         let dir = match name.as_str() {
                             "X" => Vec3::X,
                             "Y" => Vec3::Y,
@@ -3435,7 +3447,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
                                 .map(|(_, _, _, d)| d)
                                 .unwrap_or(Vec3::ZERO),
                         };
-                        if pl.normal().dot(dir).abs() > 1e-4 {
+                        if normal.dot(dir).abs() > 1e-4 {
                             return Err("the axis must be parallel to the base plane".into());
                         }
                     }
@@ -3443,11 +3455,11 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
                 }
                 Some(x) => {
                     let (o, dir) = axis_of(app, x).ok_or("the axis must be an origin axis, a sketch line or a straight edge")?;
-                    if let Some(pl) = plane_by_name(app, &base) {
-                        if pl.normal().dot(dir).abs() > 1e-4 {
+                    if let Some((origin, normal)) = base_plane(app, &base) {
+                        if normal.dot(dir).abs() > 1e-4 {
                             return Err("the axis must be parallel to the base plane".into());
                         }
-                        if pl.height(o).abs() > 1e-4 {
+                        if normal.dot(o - origin).abs() > 1e-4 {
                             return Err("the axis must lie in the base plane".into());
                         }
                     }
@@ -3455,13 +3467,13 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
                 }
                 None => {
                     let ax = d.extra.get("axis").cloned().ok_or("pick an axis")?;
-                    if let Some(pl) = plane_by_name(app, &base)
+                    if let Some((origin, normal)) = base_plane(app, &base)
                         && let (Some(o), Some(dir)) = (ax.get("origin").and_then(vec3_of), ax.get("dir").and_then(vec3_of))
                     {
-                        if pl.normal().dot(dir).abs() > 1e-4 {
+                        if normal.dot(dir).abs() > 1e-4 {
                             return Err("the axis must be parallel to the base plane".into());
                         }
-                        if pl.height(o).abs() > 1e-4 {
+                        if normal.dot(o - origin).abs() > 1e-4 {
                             return Err("the axis must lie in the base plane".into());
                         }
                     }

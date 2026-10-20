@@ -2331,7 +2331,6 @@ fn plane_at_angle_refuses_curved_edge_as_axis() {
     assert!(err.contains("straight edge"), "{err}");
 }
 
-
 #[test]
 fn plane_at_angle_about_edge_reopens_for_edit_and_updates_angle() {
     let mut h = crate::scenario::Harness::new();
@@ -2430,4 +2429,48 @@ fn plane_at_angle_refuses_edge_off_base_plane() {
     let err = apply_commands(&h.app, h.app.dialog.as_ref().unwrap()).unwrap_err();
     assert!(err.contains("lie in the base plane"), "{err}");
 }
+
+#[test]
+fn plane_at_angle_about_an_edge_on_a_picked_face_plane() {
+    let mut h = crate::scenario::Harness::new();
+    h.app.run("solid.box", json!({"length": 40, "width": 30, "height": 20, "body_name": "Box"})).unwrap();
+    h.app.start("construct.plane.at_angle");
+    h.frames(2);
+
+    // The base plane is the box's top face, picked in the view.
+    let top = {
+        let world = h.app.session.world_state();
+        let body = world.body("Box").unwrap();
+        body.body
+            .faces(0.01)
+            .unwrap()
+            .into_iter()
+            .find(|face| face.plane_normal.is_some_and(|normal| normal.z > 0.99) && (face.centroid.z - 20.0).abs() < 1e-8)
+            .map(|face| Sel::Face { body: "Box".into(), index: face.index, point: face.centroid })
+            .expect("the top face")
+    };
+    h.app.dialog.as_mut().unwrap().inputs[0].items = vec![top];
+
+    // The axis is the top front edge, which lies in that face.
+    let mesh = h.app.session.world_state().body("Box").unwrap().mesh();
+    let edge_idx = mesh
+        .edges
+        .iter()
+        .position(|e| {
+            let (a, b) = (e.first().unwrap(), e.last().unwrap());
+            (a.z - 20.0).abs() < 1e-6 && (b.z - 20.0).abs() < 1e-6 && (a.y - 0.0).abs() < 1e-6 && (b.y - 0.0).abs() < 1e-6
+        })
+        .expect("top front edge");
+    h.app.dialog.as_mut().unwrap().inputs[1].items = vec![Sel::Edge { body: "Box".into(), index: edge_idx, point: Vec3::new(20.0, 0.0, 20.0) }];
+
+    h.step(&json!({"click":{"handle":"dialog:OK"}})).unwrap();
+    h.frames(2);
+    assert!(h.app.dialog.is_none(), "{:?}", h.app.dialog.as_ref().and_then(|d| d.error.clone()));
+
+    let (_, _, pl) = solidcraft_engine::view::construction_planes(&h.app.session).into_iter().next().expect("the construction plane");
+    // Hinged on the edge: the plane passes through it.
+    assert!(pl.height(Vec3::new(20.0, 0.0, 20.0)).abs() < 1e-6, "{pl:?}");
+    let half = 1.0_f64 / 2.0_f64.sqrt();
+    assert!((pl.normal().y - (-half)).abs() < 1e-6, "{pl:?}");
+    assert!((pl.normal().z - half).abs() < 1e-6, "{pl:?}");
 }
