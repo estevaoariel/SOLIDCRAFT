@@ -575,7 +575,7 @@
   "cmd.explode_step_add": "添加爆炸步骤",
   "cmd.explode_step_delete": "删除爆炸步骤",
   "cmd.explode_step_edit": "编辑爆炸步骤",
-  "cmd.explode_step_reorder": "重排爆炸步骤",
+  "cmd.explode_step_reorder": "重新排列爆炸步骤",
   "cmd.expr_evaluate": "计算表达式",
   "cmd.face_delete": "删除面",
   "cmd.file_export": "导出",

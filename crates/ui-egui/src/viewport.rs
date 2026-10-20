@@ -919,6 +919,10 @@ pub(crate) fn build_scene(app: &SolveApp) -> GpuScene {
             }
         }
     }
+    // The trail lines of the exploded view on show: reference geometry, drawn dashed.
+    for (a, b) in solidcraft_engine::view::explode_trails(s) {
+        sc.dashed_line(a.to_f32(), b.to_f32(), c4(tk.construction_geom), 1.6);
+    }
 
     sc
 }
@@ -3809,6 +3813,7 @@ pub(crate) fn scene_palette(dark: bool, mode: crate::theme::ColorVision) -> soli
         sketch_lost: rgb(t.sketch_lost),
         sketch_construction: rgb(t.sketch_construction),
         sketch_centerline: rgb(t.sketch_centerline),
+        trail: rgb(t.construction_geom),
         axes: t.triad.map(rgb),
         cap: rgb(t.section_cap),
         analysis: t.analysis,

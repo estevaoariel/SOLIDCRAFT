@@ -86,18 +86,50 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("motion.delete", "Delete Motion Study", delete_study).icon("delete").params("study"),
     CommandSpec::new("explode.create", "Exploded View", explode_create).at("SOLID", "ASSEMBLE").icon("explode").params(
         "name?; scale? (automatic: each occurrence pushed away from the assembly's centre by scale × its offset, default 1); \
-         moves?: [{occurrence, translate: [x,y,z]}] (instead of automatic)",
+         moves?: [{occurrence, translate: [x,y,z]}] (instead of automatic); trail_lines?: bool (default true — a dashed line \
+         from every moved occurrence back to where it is assembled); easing?: linear|ease_in|ease_out|ease_in_out (default ease_in_out)",
+    ),
+    CommandSpec::new("explode.edit", "Edit Exploded View", explode_edit).icon("edit").params(
+        "view: id|name; name?; trail_lines?: bool; easing?: linear|ease_in|ease_out|ease_in_out",
+    ),
+    CommandSpec::new("explode.step_add", "Add Exploded Step", explode_step_add).icon("new").params(
+        "view: id|name; name? (default Step N); moves?: [{occurrence, translate: [x,y,z]}] (empty: a step that moves nothing); \
+         duration_ms?: 0…600000 (default 500)",
+    ),
+    CommandSpec::new("explode.step_edit", "Edit Exploded Step", explode_step_edit).icon("edit").params(
+        "view: id|name; step: index or id; name?; moves?: [{occurrence, translate: [x,y,z]}] (they replace the step's moves); \
+         duration_ms?: 0…600000",
+    ),
+    CommandSpec::new("explode.step_delete", "Delete Exploded Step", explode_step_delete).icon("delete").params("view: id|name; step: index or id"),
+    CommandSpec::new("explode.step_reorder", "Reorder Exploded Steps", explode_step_reorder).icon("move").params(
+        "view: id|name; from: index; to: index (both 0-based; `to` past the end appends)",
     ),
     CommandSpec::new("explode.show", "Show Exploded View", explode_show)
         .icon("explode")
         .noundo()
-        .params("view: id|name (or none: back to the assembled placement) — shown only; the design keeps its placements"),
-    CommandSpec::new("explode.list", "List Exploded Views", explode_list).icon("list").noundo(),
+        .params(
+            "view: id|name (or none: back to the assembled placement); step?: index (0-based, default the last step); progress?: 0…1 \
+             (default 1 — how far into that step the pose is); time?: ms into the whole sequence (it wins over step and progress) \
+             → view, name, step, progress, time_ms — shown only; the design keeps its placements",
+        ),
+    CommandSpec::new("explode.list", "List Exploded Views", explode_list)
+        .icon("list")
+        .noundo()
+        .params(
+            "→ views: [{id, name, steps: [{id, name, moves: [[occurrence, [x,y,z]]], duration_ms}], trail_lines, easing}] \
+             (a step's duration_ms of 0 means 500)",
+        ),
     CommandSpec::new("explode.delete", "Delete Exploded View", explode_delete).icon("delete").params("view"),
 ];
 
 const MAX_ITEMS: usize = 10_000;
 
+/// How many steps an exploded view can hold: a step's id is the view's id and its place in the
+/// view, so a view's steps stay within their own thousand.
+const MAX_STEPS: usize = 1000;
+
+/// The longest a step can take when the view plays (milliseconds).
+const MAX_STEP_MS: u64 = 600_000;
 fn occurrences(s: &Session, p: &Value, cmd: &str) -> Result<Vec<u64>> {
     let list = p.get("occurrences").and_then(Value::as_array).ok_or_else(|| bad(cmd, "`occurrences` must list occurrences"))?;
     if list.len() > MAX_ITEMS {
@@ -965,25 +997,144 @@ fn centres(s: &Session) -> Vec<(u64, Vec3)> {
     out
 }
 
+/// The easing a view plays with, from its name.
+fn ease_kind(p: &Value, cmd: &str) -> Result<Option<EaseKind>> {
+    match p.get("easing") {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(x)) => match x.as_str() {
+            "linear" => Ok(Some(EaseKind::Linear)),
+            "ease_in" => Ok(Some(EaseKind::EaseIn)),
+            "ease_out" => Ok(Some(EaseKind::EaseOut)),
+            "ease_in_out" => Ok(Some(EaseKind::EaseInOut)),
+            _ => Err(bad(cmd, "`easing` must be linear, ease_in, ease_out or ease_in_out")),
+        },
+        Some(_) => Err(bad(cmd, "`easing` must be a name")),
+    }
+}
+
+/// Whether a view draws its trail lines, from the parameter.
+fn trail_flag(p: &Value, cmd: &str) -> Result<Option<bool>> {
+    match p.get("trail_lines") {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Bool(b)) => Ok(Some(*b)),
+        Some(_) => Err(bad(cmd, "`trail_lines` must be true or false")),
+    }
+}
+
+/// The moves a step holds: [{occurrence, translate: [x, y, z]}].
+fn step_moves(s: &Session, p: &Value, cmd: &str) -> Result<Vec<(u64, Vec3)>> {
+    let Some(Value::Array(list)) = p.get("moves") else {
+        return Err(bad(cmd, "`moves` must be a list"));
+    };
+    if list.len() > MAX_ITEMS {
+        return Err(bad(cmd, "too many moves"));
+    }
+    list.iter()
+        .map(|m| {
+            let o = occurrence_id(s, m.get("occurrence"), cmd)?;
+            if o == 0 {
+                return Err(bad(cmd, "the root is not an occurrence"));
+            }
+            let t = m.get("translate").and_then(vec3).filter(|v| v.len() < 1e7).ok_or_else(|| bad(cmd, "each move needs `translate`: [x, y, z]"))?;
+            Ok((o, t))
+        })
+        .collect()
+}
+
+/// How long a step takes when the view plays (0 means the default).
+fn step_ms(step: &ExplodeStep) -> u64 {
+    if step.duration_ms == 0 { u64::from(DEFAULT_STEP_MS) } else { u64::from(step.duration_ms) }
+}
+
+/// How long a step lasts, as the caller gives it (0…600000 milliseconds; 0 means the default).
+fn duration(p: &Value, cmd: &str) -> Result<u32> {
+    match p.get("duration_ms") {
+        None | Some(Value::Null) => Ok(DEFAULT_STEP_MS),
+        Some(v) => {
+            let n = v.as_f64().filter(|n| n.is_finite()).ok_or_else(|| bad(cmd, "`duration_ms` must be a number"))?;
+            if !(0.0..=MAX_STEP_MS as f64).contains(&n) {
+                return Err(bad(cmd, format!("`duration_ms` must be 0…{MAX_STEP_MS}")));
+            }
+            Ok(n.round() as u32)
+        }
+    }
+}
+
+/// The step a command names: its place in the view, or its id.
+fn step_index(view: &ExplodedView, v: &Value, cmd: &str) -> Result<usize> {
+    let Some(n) = v.as_u64().and_then(|n| usize::try_from(n).ok()) else {
+        return Err(bad(cmd, "`step` must be its index or its id"));
+    };
+    if n < view.steps.len() {
+        return Ok(n);
+    }
+    view.steps.iter().position(|s| s.id == n as u64).ok_or_else(|| bad(cmd, format!("no step {n} in the view {}", view.name)))
+}
+
+/// The id a new step takes: the view's id and a place in it that is free.
+fn next_step_id(view: &ExplodedView) -> u64 {
+    (0..MAX_STEPS as u64)
+        .map(|i| step_id(view.id, i))
+        .find(|id| !view.steps.iter().any(|s| s.id == *id))
+        .unwrap_or_else(|| step_id(view.id, view.steps.len() as u64))
+}
+
+/// The pose of a view at a step and a progress: how far each occurrence is moved. A step's own
+/// moves replace one another per occurrence; the steps add up to each other.
+fn pose(view: &ExplodedView, step: usize, progress: f64) -> std::collections::BTreeMap<u64, Vec3> {
+    let eased = view.easing.apply(progress);
+    let mut out: std::collections::BTreeMap<u64, Vec3> = Default::default();
+    for (i, st) in view.steps.iter().enumerate() {
+        if i > step {
+            break;
+        }
+        let f = if i == step { eased } else { 1.0 };
+        if f == 0.0 {
+            continue;
+        }
+        let mut own: std::collections::BTreeMap<u64, Vec3> = Default::default();
+        for (o, t) in &st.moves {
+            own.insert(*o, *t);
+        }
+        for (o, t) in own {
+            *out.entry(o).or_default() += t * f;
+        }
+    }
+    out
+}
+
+/// The time into the sequence where a step starts.
+fn start_of(view: &ExplodedView, step: usize) -> f64 {
+    view.steps.iter().take(step).map(|st| step_ms(st) as f64).sum()
+}
+
+/// The time the whole sequence lasts.
+fn total_of(view: &ExplodedView) -> f64 {
+    view.steps.iter().map(|st| step_ms(st) as f64).sum()
+}
+
+/// Where a time into the sequence lands: the step, the progress in it and the time itself. The
+/// time is held inside the sequence; a step of no length is skipped.
+fn pose_at_time(view: &ExplodedView, time_ms: f64) -> (usize, f64, f64) {
+    let t = time_ms.clamp(0.0, total_of(view));
+    if view.steps.is_empty() {
+        return (0, 1.0, t);
+    }
+    let mut start = 0.0;
+    for (i, st) in view.steps.iter().enumerate() {
+        let d = step_ms(st) as f64;
+        if t < start + d {
+            return (i, ((t - start) / d).clamp(0.0, 1.0), t);
+        }
+        start += d;
+    }
+    (view.steps.len() - 1, 1.0, t)
+}
+
 fn explode_create(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "explode.create";
     let moves: Vec<(u64, Vec3)> = match p.get("moves") {
-        Some(Value::Array(list)) => {
-            if list.len() > MAX_ITEMS {
-                return Err(bad(cmd, "too many moves"));
-            }
-            list.iter()
-                .map(|m| {
-                    let o = occurrence_id(s, m.get("occurrence"), cmd)?;
-                    let t = m
-                        .get("translate")
-                        .and_then(vec3)
-                        .filter(|v| v.len() < 1e7)
-                        .ok_or_else(|| bad(cmd, "each move needs `translate`: [x, y, z]"))?;
-                    Ok((o, t))
-                })
-                .collect::<Result<_>>()?
-        }
+        Some(Value::Array(_)) => step_moves(s, p, cmd)?,
         Some(_) => return Err(bad(cmd, "`moves` must be a list")),
         None => {
             let scale = match p.get("scale") {
@@ -998,6 +1149,8 @@ fn explode_create(s: &mut Session, p: &Value) -> Result<Value> {
             c.iter().map(|(o, p)| (*o, (*p - mid) * scale)).collect()
         }
     };
+    let trail_lines = trail_flag(p, cmd)?.unwrap_or(true);
+    let easing = ease_kind(p, cmd)?.unwrap_or_default();
     if s.doc.assembly.exploded.len() >= MAX_ITEMS {
         return Err(bad(cmd, "too many exploded views"));
     }
@@ -1005,8 +1158,105 @@ fn explode_create(s: &mut Session, p: &Value) -> Result<Value> {
     let name = str_(p, "name").map(str::to_string).unwrap_or_else(|| format!("Exploded View{}", s.doc.assembly.exploded.len() + 1));
     // The whole explosion is one step; the steps of a view are added to one another.
     let step = ExplodeStep { id: step_id(id, 0), name: "Explode".into(), moves: moves.clone(), duration_ms: DEFAULT_STEP_MS };
-    s.doc_mut().assembly.exploded.push(ExplodedView { id, name: name.clone(), steps: vec![step], trail_lines: true, easing: EaseKind::default() });
+    s.doc_mut().assembly.exploded.push(ExplodedView { id, name: name.clone(), steps: vec![step], trail_lines, easing });
     Ok(json!({"view": id, "name": name, "moves": moves.iter().map(|(o, t)| json!({"occurrence": o, "translate": t})).collect::<Vec<_>>()}))
+}
+
+fn explode_edit(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "explode.edit";
+    let i = view_index(s, p, cmd)?;
+    let trail_lines = trail_flag(p, cmd)?;
+    let easing = ease_kind(p, cmd)?;
+    let name = str_(p, "name").map(str::trim).filter(|n| !n.is_empty()).map(str::to_string);
+    let Some(v) = s.doc_mut().assembly.exploded.get_mut(i) else { return Err(bad(cmd, "view")) };
+    if let Some(n) = name {
+        v.name = n;
+    }
+    if let Some(t) = trail_lines {
+        v.trail_lines = t;
+    }
+    if let Some(e) = easing {
+        v.easing = e;
+    }
+    Ok(json!({"view": v.id, "name": v.name}))
+}
+
+fn explode_step_add(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "explode.step_add";
+    let i = view_index(s, p, cmd)?;
+    let moves = match p.get("moves") {
+        Some(Value::Array(_)) => step_moves(s, p, cmd)?,
+        Some(_) => return Err(bad(cmd, "`moves` must be a list")),
+        None => Vec::new(),
+    };
+    let duration_ms = duration(p, cmd)?;
+    let name = str_(p, "name").map(str::trim).filter(|n| !n.is_empty()).map(str::to_string);
+    let Some(v) = s.doc_mut().assembly.exploded.get_mut(i) else { return Err(bad(cmd, "view")) };
+    if v.steps.len() >= MAX_STEPS {
+        return Err(bad(cmd, format!("a view can hold at most {MAX_STEPS} steps")));
+    }
+    let index = v.steps.len();
+    let step = ExplodeStep { id: next_step_id(v), name: name.unwrap_or_else(|| format!("Step {}", index + 1)), moves, duration_ms };
+    v.steps.push(step.clone());
+    Ok(json!({"view": v.id, "step": index, "id": step.id, "name": step.name, "duration_ms": step.duration_ms}))
+}
+
+fn explode_step_edit(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "explode.step_edit";
+    let i = view_index(s, p, cmd)?;
+    let moves = match p.get("moves") {
+        Some(Value::Array(_)) => Some(step_moves(s, p, cmd)?),
+        Some(_) => return Err(bad(cmd, "`moves` must be a list")),
+        None => None,
+    };
+    let duration_ms = match p.get("duration_ms") {
+        None | Some(Value::Null) => None,
+        Some(_) => Some(duration(p, cmd)?),
+    };
+    let name = str_(p, "name").map(str::trim).filter(|n| !n.is_empty()).map(str::to_string);
+    let Some(v) = s.doc_mut().assembly.exploded.get_mut(i) else { return Err(bad(cmd, "view")) };
+    let Some(step) = p.get("step") else { return Err(bad(cmd, "`step` must be its index or its id")) };
+    let index = step_index(v, step, cmd)?;
+    let st = &mut v.steps[index];
+    // A step's moves replace its own, they do not merge with them.
+    if let Some(m) = moves {
+        st.moves = m;
+    }
+    if let Some(d) = duration_ms {
+        st.duration_ms = d;
+    }
+    if let Some(n) = name {
+        st.name = n;
+    }
+    Ok(json!({"view": v.id, "step": index, "id": st.id, "name": st.name, "duration_ms": st.duration_ms}))
+}
+
+fn explode_step_delete(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "explode.step_delete";
+    let i = view_index(s, p, cmd)?;
+    let Some(v) = s.doc_mut().assembly.exploded.get_mut(i) else { return Err(bad(cmd, "view")) };
+    let Some(step) = p.get("step") else { return Err(bad(cmd, "`step` must be its index or its id")) };
+    let index = step_index(v, step, cmd)?;
+    let removed = v.steps.remove(index);
+    Ok(json!({"view": v.id, "deleted": removed.name, "steps": v.steps.len()}))
+}
+
+fn explode_step_reorder(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "explode.step_reorder";
+    let i = view_index(s, p, cmd)?;
+    let index = |k: &str| {
+        p.get(k).and_then(Value::as_u64).and_then(|n| usize::try_from(n).ok()).ok_or_else(|| bad(cmd, format!("`{k}` must be a step index")))
+    };
+    let (from, to) = (index("from")?, index("to")?);
+    let Some(v) = s.doc_mut().assembly.exploded.get_mut(i) else { return Err(bad(cmd, "view")) };
+    if from >= v.steps.len() {
+        return Err(bad(cmd, format!("no step {from} in the view {}", v.name)));
+    }
+    let step = v.steps.remove(from);
+    // A `to` past the end appends the step.
+    let to = to.min(v.steps.len());
+    v.steps.insert(to, step);
+    Ok(json!({"view": v.id, "from": from, "to": to, "steps": v.steps.iter().map(|s| s.id).collect::<Vec<_>>()}))
 }
 
 fn explode_show(s: &mut Session, p: &Value) -> Result<Value> {
@@ -1019,32 +1269,48 @@ fn explode_show(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let i = view_index(s, p, cmd)?;
     let v = s.doc.assembly.exploded.get(i).cloned().ok_or_else(|| bad(cmd, "view"))?;
+    // Where in the sequence the pose is: a time says it outright, a step and a progress place it
+    // in the sequence.
+    let (step, progress, time_ms) = match p.get("time") {
+        Some(Value::Null) | None => {
+            let step = match p.get("step") {
+                Some(Value::Null) | None => v.steps.len().saturating_sub(1),
+                Some(x) => step_index(&v, x, cmd)?,
+            };
+            let progress = match p.get("progress") {
+                Some(Value::Null) | None => 1.0,
+                Some(x) => {
+                    let t = x.as_f64().filter(|t| t.is_finite()).ok_or_else(|| bad(cmd, "`progress` must be a number"))?;
+                    if !(0.0..=1.0).contains(&t) {
+                        return Err(bad(cmd, "`progress` must be 0…1"));
+                    }
+                    t
+                }
+            };
+            let time = v.steps.get(step).map(|st| start_of(&v, step) + progress * step_ms(st) as f64).unwrap_or(0.0);
+            (step, progress, time)
+        }
+        Some(x) => {
+            let t = x.as_f64().filter(|t| t.is_finite()).ok_or_else(|| bad(cmd, "`time` must be a number of milliseconds"))?;
+            pose_at_time(&v, t)
+        }
+    };
     s.pending_moves.clear();
-    // The whole view is shown: every step's moves add up to the pose. A step's own moves
-    // replace one another per occurrence, as a flat list of moves did.
-    let mut moves: std::collections::BTreeMap<u64, Vec3> = Default::default();
-    for step in &v.steps {
-        let mut step_moves: std::collections::BTreeMap<u64, Vec3> = Default::default();
-        for (o, t) in &step.moves {
-            step_moves.insert(*o, *t);
-        }
-        for (o, t) in step_moves {
-            *moves.entry(o).or_default() += t;
-        }
-    }
-    for (o, t) in &moves {
-        let Some(occ) = s.doc.occurrences.iter().find(|x| x.id == *o) else { continue };
+    // The pose: the steps up to that one, and the step itself as far as its progress says.
+    for (o, t) in pose(&v, step, progress) {
+        let Some(occ) = s.doc.occurrences.iter().find(|x| x.id == o) else { continue };
         let mut m = occ.transform;
         if let Some(r) = m.get_mut(3) {
             r[0] += t.x;
             r[1] += t.y;
             r[2] += t.z;
         }
-        s.pending_moves.insert(*o, m);
+        s.pending_moves.insert(o, m);
     }
     s.exploded_view = Some(v.id);
     s.revision += 1;
-    Ok(json!({"view": v.id, "name": v.name}))
+    let shown = v.steps.get(step).map(|_| json!(step));
+    Ok(json!({"view": v.id, "name": v.name, "step": shown, "progress": progress, "time_ms": time_ms.round() as u64}))
 }
 
 fn explode_list(s: &mut Session, _p: &Value) -> Result<Value> {

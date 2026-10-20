@@ -22,6 +22,7 @@ const MARK: Palette = Palette {
     sketch_lost: Rgb(37, 38, 39),
     sketch_construction: Rgb(40, 41, 42),
     sketch_centerline: Rgb(43, 44, 45),
+    trail: Rgb(58, 59, 60),
     axes: [Rgb(46, 47, 48), Rgb(49, 50, 51), Rgb(52, 53, 54)],
     cap: Rgb(55, 56, 57),
     analysis: solidcraft_render::AnalysisColors {
@@ -55,6 +56,7 @@ fn the_default_palette_is_the_colour_table() {
         (colors::SKETCH_PROJECTED, colors::SKETCH_LOST, colors::SKETCH_CONSTRUCTION, colors::SKETCH_CENTERLINE)
     );
     assert_eq!((p.axes, p.cap), ([colors::AXIS_X, colors::AXIS_Y, colors::AXIS_Z], colors::SECTION_CAP));
+    assert_eq!(p.trail, colors::TRAIL);
     assert_eq!(p.analysis, solidcraft_render::AnalysisColors::DEFAULT);
 }
 
