@@ -55,6 +55,9 @@ the eased part of step `k`'s own move:
 offset(o) = Σ_{j < k} move_j(o) + ease(p) · move_k(o)
 ```
 
+Every move of an occurrence adds up — two moves for the same occurrence in one step are both
+applied, as they were when a view held one flat list of moves.
+
 `ease` is the view's easing: `t` for linear, `t²` for ease in, `1-(1-t)²` for ease out and the
 smoothstep `t²(3-2t)` for ease in and out. A view with no steps shows the assembled placement.
 
@@ -62,6 +65,11 @@ Showing a view writes the occurrence's placement to the session's pending moves 
 transform with the translation added — and remembers which view is on show. Undo and redo keep
 the view and the moves together. Showing `none` puts the occurrences back exactly where they
 were.
+
+While a view is on show, the design is not the exploded one, so the commands that would write the
+exploded placement into it refuse: `component.capture_position` and a sketch on a part of the
+explosion both ask for the view to be put away first. A move of an occurrence, a revert of it or
+the deletion of the view itself forgets the view on show, because its pose is no longer there.
 
 ## The trail lines
 
