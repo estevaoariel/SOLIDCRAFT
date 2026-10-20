@@ -8,21 +8,22 @@ pub(crate) struct Reveal {
     pub path: Vec<u64>,
 }
 
-/// Reveal the actual creating feature without changing the active component or history marker.
-pub(crate) fn reveal(app: &mut SolveApp, id: u64, body: &str) {
+/// Open the Features folder that lists this feature and scroll to its row, without changing the
+/// active component or history marker. With a body, the folder is the one of the placement that
+/// body belongs to; without one, the first placement of the feature's component.
+pub(crate) fn reveal(app: &mut SolveApp, id: u64, body: Option<&str>) {
     let Some(feature) = app.session.doc.feature(id) else { return };
     let component = feature.component;
     let state = app.session.model.state();
     let world = app.session.world_state();
-    let Some(selected) = world.body(body) else { return };
-    let source = selected.definition_name();
-    let Some((_, path, _)) = app
-        .session
-        .doc
-        .placements()
-        .into_iter()
-        .find(|(owner, path, _)| *owner == component && app.session.doc.world_body_name(&state, source, component, path) == body)
-    else {
+    let source = body.and_then(|body| world.body(body)).map(|selected| selected.definition_name());
+    let Some((_, path, _)) = app.session.doc.placements().into_iter().find(|(owner, path, _)| {
+        *owner == component
+            && match (body, source) {
+                (Some(body), Some(source)) => app.session.doc.world_body_name(&state, source, component, path) == body,
+                _ => true,
+            }
+    }) else {
         return;
     };
     app.ui.show_browser = true;
@@ -33,9 +34,9 @@ pub(crate) fn reveal(app: &mut SolveApp, id: u64, body: &str) {
         app.tree.collapsed.remove(&occurrence_key(&path[..depth]));
     }
     let scope = if path.is_empty() { format!("c{component}") } else { occurrence_key(&path) };
+    app.tree.collapsed.remove(&scope);
     app.tree.expanded.insert(format!("{scope}/features"));
     app.tree.reveal_feature = Some(Reveal { id, path });
-    let _ = app.run("select.set", json!({"items":[Sel::Feature { id }]}));
 }
 
 pub(super) fn rows(app: &mut SolveApp, ui: &mut egui::Ui, component: u64, path: &[u64], depth: usize, acts: &mut Actions) {
@@ -149,7 +150,7 @@ mod tests {
         let labels: Vec<_> = drawn_rows().into_iter().map(|(label, ..)| label).collect();
         assert_eq!(labels.iter().filter(|label| *label == "Profile").count(), 1, "{labels:?}");
         assert!(labels.contains(&name), "{labels:?}");
-        find(&mut h.app, extrude, "Plate");
+        find_in_timeline(&mut h.app, extrude, "Plate");
         h.frames(2);
         assert!(h.app.tree.reveal_feature.is_none(), "the creator row was drawn and scrolled to");
         let at = h.call("ui.at", json!({"handle":format!("row:browser-feature:c0:{extrude}")}));
@@ -158,20 +159,20 @@ mod tests {
         assert_eq!(h.app.session.undo.len(), undo);
     }
 
-    fn find(app: &mut SolveApp, feature: u64, body: &str) {
+    fn find_in_timeline(app: &mut SolveApp, feature: u64, body: &str) {
         let state = app.session.world_state();
         let model_body = state.body(body).unwrap();
         let names = solidcraft_engine::doc::naming::face_names(model_body);
         let index = names.iter().position(|name| name.starts_with(&format!("F{feature}:"))).unwrap();
         app.session.selection = vec![Sel::Face { body: body.into(), index, point: solidcraft_engine::geom::Vec3::ZERO }];
-        let item = crate::context_menu::items(app, &Target::Viewport).into_iter().find(|item| item.id == "ui.findBrowser").unwrap();
+        let item = crate::context_menu::items(app, &Target::Viewport).into_iter().find(|item| item.id == "ui.findTimeline").unwrap();
         assert!(item.enabled);
         crate::context_menu::run_item(app, &item, pos2(0.0, 0.0));
         assert_eq!(app.session.selection, [Sel::Feature { id: feature }]);
     }
 
     #[test]
-    fn browser_feature_reveal_opens_the_picked_placement_and_survives_reopen() {
+    fn find_in_timeline_opens_the_picked_placements_features_folder_and_survives_reopen() {
         let mut h = Harness::new();
         let assembly = h.app.run("component.create", json!({"name":"Assembly"})).unwrap();
         let component = h.app.run("component.create", json!({"name":"Part"})).unwrap();
@@ -191,7 +192,7 @@ mod tests {
         h.app.preferences.timeline_left_browser_collapsed = true;
         let undo = h.app.session.undo.len();
         for id in [base, hole, fillet] {
-            find(&mut h.app, id, &world_body);
+            find_in_timeline(&mut h.app, id, &world_body);
             assert_eq!(h.app.tree.reveal_feature.as_ref().unwrap().path, path);
             assert!(!h.app.tree.collapsed.contains("c0"));
             assert!(!h.app.tree.collapsed.contains(&occurrence_key(&path)));
@@ -207,18 +208,37 @@ mod tests {
     }
 
     #[test]
-    fn browser_feature_body_only_and_stale_targets_keep_their_meaning() {
+    fn find_in_timeline_from_a_root_body_opens_the_root_features_folder() {
+        let mut h = Harness::new();
+        let base = h.app.run("solid.box", json!({"length":10,"width":10,"height":10,"body_name":"Plate"})).unwrap()["feature"].as_u64().unwrap();
+        h.frames(2);
+        assert!(
+            h.call("ui.at", json!({"handle":format!("row:browser-feature:c0:{base}")}))["ok"].as_bool() != Some(true),
+            "the folder starts closed"
+        );
+        let item =
+            crate::context_menu::items(&h.app, &Target::Body { name: "Plate".into() }).into_iter().find(|item| item.id == "ui.findTimeline").unwrap();
+        crate::context_menu::run_item(&mut h.app, &item, pos2(0.0, 0.0));
+        assert!(h.app.tree.expanded.contains("c0/features"));
+        h.frames(2);
+        let at = h.call("ui.at", json!({"handle":format!("row:browser-feature:c0:{base}")}));
+        assert!(at["ok"].as_bool().unwrap_or(false), "{at}");
+        assert_eq!(h.app.session.selection, [Sel::Feature { id: base }]);
+    }
+
+    #[test]
+    fn browser_find_from_a_body_or_its_face_reveals_the_body() {
         let mut h = Harness::new();
         h.app.run("solid.box", json!({"length":10,"width":10,"height":10,"body_name":"Plate"})).unwrap();
-        h.app.session.selection = vec![Sel::Body { name: "Plate".into() }];
-        let item = crate::context_menu::items(&h.app, &Target::Viewport).into_iter().find(|item| item.id == "ui.findBrowser").unwrap();
-        crate::context_menu::run_item(&mut h.app, &item, pos2(0.0, 0.0));
-        assert_eq!(h.app.tree.reveal.as_deref(), Some("Plate"));
-        assert!(h.app.tree.reveal_feature.is_none());
-        let before = h.app.session.selection.clone();
-        reveal(&mut h.app, u64::MAX, "Plate");
-        reveal(&mut h.app, 1, "Missing");
-        assert_eq!(h.app.session.selection, before);
+        for pick in [Sel::Body { name: "Plate".into() }, Sel::Face { body: "Plate".into(), index: 0, point: solidcraft_engine::geom::Vec3::ZERO }] {
+            h.app.tree.reveal = None;
+            h.app.session.selection = vec![pick.clone()];
+            let item = crate::context_menu::items(&h.app, &Target::Viewport).into_iter().find(|item| item.id == "ui.findBrowser").unwrap();
+            assert!(item.enabled, "{pick:?}");
+            crate::context_menu::run_item(&mut h.app, &item, pos2(0.0, 0.0));
+            assert_eq!(h.app.tree.reveal.as_deref(), Some("Plate"), "{pick:?}");
+            assert_eq!(h.app.session.selection, [Sel::Body { name: "Plate".into() }], "{pick:?}");
+        }
     }
 
     #[test]
@@ -243,7 +263,7 @@ mod tests {
         let owner = state.body(&name).unwrap().feature;
         assert_ne!(owner, base);
         h.app.session.selection = vec![Sel::Face { body: name, index: 0, point: solidcraft_engine::geom::Vec3::ZERO }];
-        for id in ["ui.findBrowser", "ui.findTimeline", "ui.editFeature"] {
+        for id in ["ui.findTimeline", "ui.editFeature"] {
             let item = crate::context_menu::items(&h.app, &Target::Viewport).into_iter().find(|item| item.id == id).unwrap();
             assert!(!item.enabled || item.params.as_ref().unwrap()["feature"] == json!(owner), "{id}: {item:?}");
         }
