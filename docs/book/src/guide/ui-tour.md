@@ -30,6 +30,10 @@
   preset in Preferences switches to SolidWorks, Inventor, Alias, Blender, Tinkercad, OpenSCAD or Touchpad style). On a
   trackpad, pinch zooms and two-finger scroll pans (Navigation › Two-finger scroll pans;
   off: scroll zooms like the wheel); mouse wheels zoom and the thumb wheel pans sideways.
+  With the **Fusion** preset and two-finger pan enabled, hold **Shift** while scrolling with
+  two fingers to orbit freely instead of panning. No click is needed. Releasing Shift returns
+  to panning, even during the same gesture. Shift does not snap this gesture to standard views;
+  orbit gestures do nothing on flat 2D pages. Other presets keep their existing scroll behaviour.
   Shift+middle orbits freely
   in the default and Inventor presets. In every preset, Ctrl+left drag (Cmd on macOS) that starts
   on empty space orbits; a Ctrl+click still adds to the selection. Shift+right-drag snaps to the nearest standard or

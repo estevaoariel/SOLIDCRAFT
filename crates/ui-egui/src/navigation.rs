@@ -49,6 +49,7 @@ pub(crate) struct RawWheel {
     point_zoom: f32,
     /// Bracketed two-finger scroll in points (pans when panning is on).
     pan: egui::Vec2,
+    shift_pan: egui::Vec2,
     /// Bare horizontal input in points (thumb wheel: always pans sideways).
     mouse_pan: egui::Vec2,
 }
@@ -72,7 +73,7 @@ pub(crate) fn route_wheel_vertical(points: egui::Vec2, modifiers: egui::Modifier
 /// moves inside one pan, bare `Move` input is a mouse (vertical zooms,
 /// horizontal pans). Only point input brackets; line/page input always zooms.
 pub(crate) fn immediate_wheel(input: &egui::InputState, options: egui::InputOptions, page_height: f32, gesture: &mut bool) -> RawWheel {
-    let mut out = RawWheel { zoom: 0.0, point_zoom: 0.0, pan: egui::Vec2::ZERO, mouse_pan: egui::Vec2::ZERO };
+    let mut out = RawWheel { zoom: 0.0, point_zoom: 0.0, pan: egui::Vec2::ZERO, shift_pan: egui::Vec2::ZERO, mouse_pan: egui::Vec2::ZERO };
     for event in &input.events {
         let egui::Event::MouseWheel { unit, delta, modifiers, phase } = event else { continue };
         if modifiers.matches_any(options.zoom_modifier) {
@@ -100,7 +101,13 @@ pub(crate) fn immediate_wheel(input: &egui::InputState, options: egui::InputOpti
             egui::MouseWheelUnit::Page => *delta * page_height,
         };
         if point && *gesture {
-            out.pan += points;
+            if modifiers.shift && !modifiers.ctrl && !modifiers.command && !modifiers.alt {
+                if points.is_finite() {
+                    out.shift_pan += points.clamp(vec2(-1e4, -1e4), vec2(1e4, 1e4));
+                }
+            } else {
+                out.pan += points;
+            }
             // Legacy path only (ignored while panning is on).
             out.point_zoom += route_wheel_vertical(points, *modifiers, options);
         } else if point {
@@ -353,7 +360,8 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
     let options = ui.ctx().options(|o| o.input_options);
     let page_height = ui.ctx().viewport_rect().height();
     let raw = ui.input(|i| immediate_wheel(i, options, page_height, &mut app.viewport.trackpad_gesture));
-    if trackpad_pan && raw.pan != egui::Vec2::ZERO {
+    let trackpad_orbit = trackpad_pan && app.preferences.nav == "fusion";
+    if trackpad_pan && (raw.pan != egui::Vec2::ZERO || raw.shift_pan != egui::Vec2::ZERO) {
         // Swallow egui's smoothing tail while the trackpad runs (a wheel-only
         // tail ends the moment trackpad input starts; mixed input is rare).
         app.viewport.trackpad_until_idle = true;
@@ -363,7 +371,8 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
         // (its End was lost); a stuck flag would pan future mouse input.
         app.viewport.trackpad_gesture = false;
     }
-    let mut pan = if trackpad_pan { raw.pan } else { egui::Vec2::ZERO } + raw.mouse_pan;
+    let mut pan =
+        if trackpad_pan { raw.pan + if trackpad_orbit { egui::Vec2::ZERO } else { raw.shift_pan } } else { egui::Vec2::ZERO } + raw.mouse_pan;
     pan.x *= crate::prefs::pan_sign_x(app);
     let scroll = if app.viewport.wheel_zoom_raw_until_idle || (trackpad_pan && app.viewport.trackpad_until_idle) {
         raw.zoom + if trackpad_pan { 0.0 } else { raw.point_zoom }
@@ -413,6 +422,12 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
             app.cancel_view_animation();
             app.cam.pan(f64::from(pan.x), f64::from(pan.y), h);
         }
+    }
+    if inside && caps.orbit && trackpad_orbit && raw.shift_pan != egui::Vec2::ZERO {
+        app.cancel_view_animation();
+        app.viewport.orbit_snap = None;
+        app.viewport.orbit_free = None;
+        orbit(app, rect, f64::from(raw.shift_pan.x), f64::from(raw.shift_pan.y), hover);
     }
     // A left press with the preset's keys (Alias: Shift+Alt) navigates until the button is let
     // go (kept through the release frame, so the end of the drag doesn't select either).
@@ -532,7 +547,7 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
             }
         }
     }
-    if !dragging && motion.is_none() {
+    if !dragging && motion.is_none() && !(trackpad_orbit && app.viewport.trackpad_gesture) {
         app.viewport.orbit_pivot = None;
         app.viewport.orbit_from = None;
     }
@@ -1130,6 +1145,21 @@ mod tests {
                 }
             }
             assert!(panned, "{preset}: some binding pans");
+            frame(&mut app, Modifiers::NONE, vec![Event::PointerMoved(at)]);
+            for modifiers in [Modifiers::NONE, Modifiers::SHIFT] {
+                let before = app.cam;
+                for phase in [egui::TouchPhase::Start, egui::TouchPhase::Move, egui::TouchPhase::End] {
+                    frame(
+                        &mut app,
+                        modifiers,
+                        vec![Event::MouseWheel { unit: egui::MouseWheelUnit::Point, delta: vec2(20.0, -10.0), modifiers, phase }],
+                    );
+                }
+                assert_eq!(app.cam.back(), before.back(), "{preset}: trackpad turned a flat page");
+                if preset == "fusion" && modifiers.shift {
+                    assert_eq!(app.cam, before, "orbit gestures must do nothing on a flat page");
+                }
+            }
             let before = app.cam;
             let wheel = Event::MouseWheel {
                 unit: egui::MouseWheelUnit::Line,

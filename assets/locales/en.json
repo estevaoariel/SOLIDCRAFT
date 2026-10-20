@@ -2074,7 +2074,7 @@
   "ui.top": "Top",
   "ui.torus": "Torus",
   "ui.total_angle": "Total angle",
-  "ui.trackpad_pan_tip": "Trackpad gestures pan (off: they zoom like the wheel); mouse wheel zooms, thumb wheel pans sideways, pinch always zooms",
+  "ui.trackpad_pan_tip": "Two-finger scroll pans; in Fusion, Shift + two fingers orbits. Off: scroll zooms. Mouse wheel and pinch zoom; thumb wheel pans sideways.",
   "ui.trim": "Trim",
   "ui.twist": "Twist",
   "ui.two_finger_scroll_pans": "Two-finger scroll pans",
