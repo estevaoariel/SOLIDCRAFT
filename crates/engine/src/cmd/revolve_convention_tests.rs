@@ -307,3 +307,20 @@ fn curved_targets_keep_only_the_material_before_the_post_for_both_axis_signs() {
         }
     }
 }
+
+/// A construction axis picked as the revolve axis comes as its name (#2885) and is used where it
+/// is, also once the design is saved and opened again.
+#[test]
+fn revolve_about_a_construction_axis() {
+    let mut s = Session::default();
+    run(&mut s, "construct.axis.two_points", json!({"a": {"point": [30, 0, 0]}, "b": {"point": [30, 10, 0]}, "name": "Axis1"}));
+    run(&mut s, "sketch.create", json!({"name":"Profile","plane":"XY"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0":[40,0],"p1":[42,10]}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.revolve", json!({"sketch":"Profile","axis":"Axis1","body_name":"Ring"}));
+    let volume = |s: &Session| s.model.state().bodies.iter().map(|mb| solidcraft_kernel::measure(&mb.body).unwrap().volume).sum::<f64>();
+    let expected = 2.0 * PI * 11.0 * 20.0;
+    assert!((volume(&s) - expected).abs() < 1e-3 * expected, "{} vs {expected}", volume(&s));
+    let reopened = Session::new(Document::from_json(&s.doc.to_json()).unwrap());
+    assert!((volume(&reopened) - expected).abs() < 1e-3 * expected, "{} vs {expected}", volume(&reopened));
+}

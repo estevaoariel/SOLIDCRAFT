@@ -3082,7 +3082,15 @@ fn blend_target(state: &ModelState, body: &Option<crate::BodyName>, edges: &[Vec
     })
 }
 
-pub(crate) fn revolve_axis(ss: &SolvedSketch, axis: &AxisRef) -> Result<(Vec2, Vec2)> {
+pub(crate) fn revolve_axis(ss: &SolvedSketch, axis: &AxisRef, st: &ModelState) -> Result<(Vec2, Vec2)> {
+    let in_plane = |origin: Vec3, dir: Vec3| {
+        let pl = &ss.plane;
+        let d = dir.normalized().ok_or_else(|| DocError::Invalid("revolve axis has no direction".into()))?;
+        if d.dot(pl.normal()).abs() > 1e-9 || pl.height(origin).abs() > 1e-6 {
+            return Err(DocError::Invalid("the revolve axis does not lie in the sketch plane".into()));
+        }
+        Ok((pl.to_local(origin), Vec2::new(d.dot(pl.x), d.dot(pl.y))))
+    };
     match axis {
         AxisRef::SketchLine { curve } => {
             let ci = ss.sketch.curve_index(curve).ok_or_else(|| DocError::Unknown(format!("sketch line `{curve}`")))?;
@@ -3112,14 +3120,20 @@ pub(crate) fn revolve_axis(ss: &SolvedSketch, axis: &AxisRef) -> Result<(Vec2, V
             }
             Ok((pl.to_local(Vec3::ZERO), Vec2::new(d.dot(pl.x), d.dot(pl.y))))
         }
-        AxisRef::Line { origin, dir } => {
-            let pl = &ss.plane;
-            let d = dir.normalized().ok_or_else(|| DocError::Invalid("revolve axis has no direction".into()))?;
-            if d.dot(pl.normal()).abs() > 1e-9 || pl.height(origin.0).abs() > 1e-6 {
-                return Err(DocError::Invalid("the revolve axis does not lie in the sketch plane".into()));
-            }
-            Ok((pl.to_local(origin.0), Vec2::new(d.dot(pl.x), d.dot(pl.y))))
+        AxisRef::Line { origin, dir } => in_plane(origin.0, dir.0),
+        AxisRef::Construction { name } => {
+            let (origin, dir) = construction_axis(st, name)?;
+            in_plane(origin, dir)
         }
+    }
+}
+
+/// A construction axis of the timeline so far, as evaluated: a point on it and its direction.
+pub(crate) fn construction_axis(st: &ModelState, name: &str) -> Result<(Vec3, Vec3)> {
+    match st.construct.iter().find(|c| c.name == name).map(|c| &c.geom) {
+        Some(crate::construct::ConstructGeom::Axis { origin, dir }) => Ok((*origin, *dir)),
+        Some(_) => Err(DocError::Invalid(format!("`{name}` is not a construction axis"))),
+        None => Err(DocError::Unknown(format!("construction axis `{name}` (it must come earlier in the timeline)"))),
     }
 }
 
@@ -4157,7 +4171,7 @@ fn feature_tools_with_constructor(
                 f.component,
             )?;
             let regions = solidcraft_sketch::merge_regions(&select_profiles(&ss, profiles)?);
-            let (o, d) = revolve_axis(&ss, axis)?;
+            let (o, d) = revolve_axis(&ss, axis, st)?;
             // To Object is in this feature's component frame: the model as seen from there.
             let tst = if to.is_some() { state_in_frame(doc, st, f.component) } else { std::borrow::Cow::Borrowed(st) };
             // Where the tool meets its targets is measured where they are shown (#3383).
@@ -4941,7 +4955,11 @@ fn pattern_transforms(doc: &Document, vals: &BTreeMap<String, Value>, st: &Model
                 out.push(m);
             }
         }
-        crate::PatternKind::Circular { origin, axis, count: c, angle, alignment, reversed } => {
+        crate::PatternKind::Circular { origin, axis, count: c, angle, alignment, reversed, axis_feature } => {
+            let (origin, axis) = match axis_feature {
+                Some(name) => construction_axis(st, name)?,
+                None => (origin.0, axis.0),
+            };
             let n = count(c)?;
             let total = val(vals, angle, Kind::Angle)?;
             let full = (total.abs() - std::f64::consts::TAU).abs() < 1e-9;
@@ -4953,7 +4971,7 @@ fn pattern_transforms(doc: &Document, vals: &BTreeMap<String, Value>, st: &Model
                 0.0
             };
             for i in 1..n {
-                out.push(rotation(origin.0, axis.0, step * alignment.multiplier(i, *reversed)));
+                out.push(rotation(origin, axis, step * alignment.multiplier(i, *reversed)));
             }
         }
     }
