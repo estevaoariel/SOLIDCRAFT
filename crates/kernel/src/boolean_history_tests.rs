@@ -524,3 +524,38 @@ fn stacked_pieces_of_one_cylinder_keep_their_walls() {
         }
     }
 }
+
+#[test]
+fn partial_height_cylinder_intersection_keeps_both_cap_origins() {
+    let a = crate::cylinder(Vec3::new(0., 0., -6.), Vec3::Z, 2., 12.).unwrap();
+    let b = crate::cylinder(Vec3::new(0., 0., -5.25), Vec3::Z, 2., 12.).unwrap();
+    for (a, b) in [(&a, &b), (&b, &a)] {
+        let result = boolean(a, b, BoolOp::Intersect).unwrap().unwrap();
+        let h = verified(&result, &[a, b], 0.01);
+        let origins: BTreeSet<_> = h
+            .faces
+            .iter()
+            .flat_map(|f| &f.origins)
+            .filter_map(|o| match o {
+                FaceOrigin::Face { operand, .. } => Some(*operand),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(origins, BTreeSet::from([0, 1]), "both operand caps must survive");
+        let mesh = result.tessellate_with(1e-5, true).unwrap();
+        assert!((mesh.measure().volume - std::f64::consts::PI * 4. * 11.25).abs() < 0.01);
+        assert!((mesh.bounds().min.z + 5.25).abs() < 1e-7);
+        assert!((mesh.bounds().max.z - 6.).abs() < 1e-7);
+    }
+}
+
+#[test]
+fn reversed_cone_cylinder_intersection_keeps_original_operand_history() {
+    use solidcraft_geom::{Loop2, Plane, Region2, Vec2};
+    let profile = Region2 { outer: Loop2::circle(Vec2::ZERO, 1.5), holes: vec![] };
+    let cone = crate::extrude_tapered(&Plane::XY.offset(-6.), &profile, 12., 1., (1_f64 / 12.).atan()).unwrap();
+    let cylinder = crate::cylinder(Vec3::new(1.5, 0., -6.), Vec3::Z, 2., 12.).unwrap();
+    let result = boolean(&cone, &cylinder, BoolOp::Intersect).unwrap().unwrap();
+    verified(&result, &[&cone, &cylinder], 0.02);
+    assert!(result.validity().is_empty());
+}

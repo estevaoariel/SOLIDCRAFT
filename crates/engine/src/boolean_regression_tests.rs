@@ -1223,3 +1223,86 @@ fn extrude_cut_into_a_rounded_block_top() {
     let v = before - volume(&cut, "Body1");
     assert!((v - taken).abs() < 0.05, "took {v}, expected {taken}");
 }
+
+/// #3456 analogue: same feature/sketch/profile, depth and curved-face counts.
+/// The missing original design is not inferred from its final command alone.
+#[test]
+fn drilled_taper_redefine_retains_all_bodies_and_reopens() {
+    let mut s = replay(include_str!("../../../examples/regressions/drilled_taper_cap_cut.json"));
+    let integral = |z: f64| {
+        let k = 5_f64.to_radians().tan();
+        std::f64::consts::PI * (400. * z + 20. * k * z * z + k * k * z * z * z / 3. - 36. * z)
+    };
+    let check = |s: &Session, pieces: usize, expected: f64| {
+        assert!(s.model.results.iter().all(|r| r.error.is_none()), "{:?}", s.model.results);
+        assert!(s.model.results.iter().all(|r| r.boolean_diagnostics.warning().is_none()));
+        let state = s.model.state();
+        assert_eq!(state.bodies.len(), pieces + 1);
+        assert!((volume(s, "Unchanged") - 125.).abs() < 1e-8);
+        let bodies: Vec<_> = state.bodies.iter().filter(|b| b.name != "Unchanged").collect();
+        assert_eq!(bodies.len(), pieces);
+        let mut actual = 0.;
+        for body in bodies {
+            assert!(body.body.validity().is_empty(), "{:?}", body.body.validity());
+            assert_eq!(body.body.lumps().unwrap().len(), 1);
+            let mesh = body.body.tessellate_with(1e-6, true).unwrap();
+            actual += mesh.measure().volume;
+            assert!(!mesh.contains(solidcraft_geom::Vec3::new(0., 0., 1.)), "through bore filled");
+        }
+        assert!((actual - expected).abs() < 0.2, "{actual} vs {expected}");
+    };
+    check(&s, 1, integral(2.));
+    let reopened = Session::new(solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap());
+    check(&reopened, 1, integral(2.));
+    s.execute(
+        "timeline.redefine",
+        &json!({"feature":17,"command":"solid.extrude","params":{
+            "sketch":16,"profiles":[1],"distance":"-50","start_offset":"-25","direction":"positive","operation":"cut","targets":["Target"]
+        }}),
+    )
+    .unwrap();
+    check(&s, 2, integral(25.) + integral(100.) - integral(75.));
+    let reopened = Session::new(solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap());
+    check(&reopened, 2, integral(25.) + integral(100.) - integral(75.));
+}
+
+#[test]
+fn partial_height_cylinder_intersection_replays_and_reopens() {
+    let s = replay(include_str!("../../../examples/regressions/partial_height_cylinder_intersection.json"));
+    let check = |s: &Session| {
+        assert!(s.model.results.iter().all(|r| r.error.is_none() && r.boolean_diagnostics.warning().is_none()));
+        assert_eq!(s.model.state().bodies.len(), 1);
+        let state = s.model.state();
+        let body = &state.body("Lower").unwrap().body;
+        assert!(body.validity().is_empty());
+        let mesh = body.tessellate_with(1e-5, true).unwrap();
+        assert!((mesh.measure().volume - std::f64::consts::PI * 4. * 11.25).abs() < 0.01);
+        assert!((mesh.bounds().min.z + 5.25).abs() < 1e-7);
+        assert!((mesh.bounds().max.z - 6.).abs() < 1e-7);
+    };
+    check(&s);
+    check(&Session::new(solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap()));
+}
+
+#[test]
+fn chained_thin_annular_intersections_keep_measurable_caps_after_reopen() {
+    let s = replay(include_str!("../../../examples/regressions/thin_pin_bore_intersection.json"));
+    let check = |s: &Session| {
+        assert!(s.model.results.iter().all(|r| r.error.is_none() && r.boolean_diagnostics.warning().is_none()));
+        let state = s.model.state();
+        assert_eq!(state.bodies.len(), 1);
+        let body = &state.body("Pin").unwrap().body;
+        assert!(!body.is_mesh());
+        assert!(body.validity().is_empty());
+        assert_eq!(body.lumps().unwrap().len(), 1);
+        let expected = std::f64::consts::PI * (3.02f64.powi(2) - 9.) * 6.;
+        let mesh = body.tessellate_with(1e-5, true).unwrap();
+        assert!((mesh.measure().volume - expected).abs() < 0.002 * expected);
+        assert!((solidcraft_kernel::measure(body).unwrap().volume - expected).abs() < 0.05 * expected);
+        assert!(mesh.contains(solidcraft_geom::Vec3::new(3.01, 0., 3.)));
+        assert!(!mesh.contains(solidcraft_geom::Vec3::new(0., 0., 3.)));
+        assert!(!mesh.contains(solidcraft_geom::Vec3::new(3.01, 0., 7.)));
+    };
+    check(&s);
+    check(&Session::new(solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap()));
+}

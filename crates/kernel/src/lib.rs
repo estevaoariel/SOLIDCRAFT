@@ -118,6 +118,7 @@ mod prism_measure;
 pub mod profile;
 pub mod provenance;
 mod record;
+mod round_cap_cut;
 mod seam_faces;
 mod sew;
 mod smooth_edges;
