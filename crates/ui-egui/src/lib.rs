@@ -267,9 +267,7 @@ pub struct UiState {
     pub show_browser: bool,
     pub show_timeline: bool,
     pub show_grid: bool,
-    pub show_origin: bool,
     pub perspective: bool,
-    pub show_sketches: bool,
     pub palette_open: bool,
     /// Dark theme (the default); a preference kept between runs.
     pub dark: bool,
@@ -283,12 +281,6 @@ pub struct UiState {
     pub ground_shadow: bool,
     /// The world's up axis (Z or Y; #3): the camera, axis view, home view and ground follow it.
     pub up_axis: solidcraft_engine::render::UpAxis,
-    /// Sketches whose closed profiles are not shaded.
-    pub hidden_profiles: Vec<u64>,
-    /// Finished sketches whose dimensions are shown.
-    pub shown_dims: Vec<u64>,
-    /// Bodies locked in the browser (no move or delete).
-    pub locked_bodies: Vec<String>,
     /// The agent cursor: shown, speed, follow camera (#35).
     pub agent_cursor: agent_cursor::Settings,
 }
@@ -302,9 +294,7 @@ impl Default for UiState {
             show_browser: true,
             show_timeline: true,
             show_grid: true,
-            show_origin: true,
             perspective: false,
-            show_sketches: true,
             palette_open: false,
             dark: true,
             pick_off: Vec::new(),
@@ -312,9 +302,6 @@ impl Default for UiState {
             visual_style: 0,
             ground_shadow: true,
             up_axis: Default::default(),
-            hidden_profiles: Vec::new(),
-            shown_dims: Vec::new(),
-            locked_bodies: Vec::new(),
             agent_cursor: Default::default(),
         }
     }
@@ -1172,11 +1159,22 @@ impl SolveApp {
         v
     }
 
+    /// Is the browser's Origin folder shown? The design keeps it once it is toggled; until then
+    /// the Hide Origin by Default preference decides.
+    pub fn origin_shown(&self) -> bool {
+        !self.session.visibility.origin_hidden.unwrap_or(self.preferences.hide_origin)
+    }
+
+    /// Show or hide the browser's Origin folder (saved with the design).
+    pub fn set_origin_shown(&mut self, on: bool) {
+        self.session.visibility.origin_hidden = Some(!on);
+    }
+
     /// Is the origin widget shown? Origin planes and axes are drawn and pickable. While a dialog
     /// picks a plane ([`SolveApp::picking_plane`]) the Origin is always shown, drawn through the
     /// model (a plane inside a body stays visible), even when the browser hides it.
     pub fn origin_visible(&self) -> bool {
-        self.ui.show_origin || self.picking_plane()
+        self.origin_shown() || self.picking_plane()
     }
 
     /// Is Create Sketch open, waiting for its plane?
