@@ -10,6 +10,9 @@
 //!   are left untouched), no recovery offer, the software renderer and CPU meshing.
 //! - **No usable graphics device**: one retry on the software renderer
 //!   (`SOLIDCRAFT_RENDERER=cpu`), then a message box saying what failed and what to try.
+//! - **A GPU that hangs after the window is up** (Windows, [`HangWatch`]): frames that each wait
+//!   out their acquire while the user is there. The app closes, keeping unsaved changes for
+//!   recovery, and starts again: on Vulkan after D3D12 (kept in `graphics.json`), else in safe mode.
 
 use std::path::{Path, PathBuf};
 
@@ -192,6 +195,81 @@ impl HardwareAdapter {
     }
 }
 
+/// Frames in a row that stalled ([`eframe::egui_wgpu::stalled_frames`]: each waited out wgpu's
+/// one-second acquire) after which the GPU is taken as hung.
+pub const STALLED_FRAMES_FOR_RESTART: u32 = 5;
+/// Stalled frames count only this many seconds after the user's input: a hung GPU leaves a white
+/// window the user clicks at, while a switched-off display can hold frames back with nobody there.
+pub const STALL_INPUT_WINDOW_S: f64 = 10.0;
+/// Set on the launch that replaces one whose GPU hung: the hung backend, for the notice.
+pub const HUNG_ENV: &str = "SOLIDCRAFT_GPU_HUNG";
+
+/// Watches for a hung GPU after the window is up (#3321). The failed-start count misses it: frames
+/// still come, a second apart, so the start counts as good.
+#[derive(Debug, Default)]
+pub struct HangWatch {
+    last_input: Option<f64>,
+    hung: bool,
+}
+
+impl HangWatch {
+    /// Per frame, at `now` seconds: whether the user gave input this frame, and the frames in a
+    /// row that stalled. True once, the frame the GPU is taken as hung.
+    pub fn hung(&mut self, now: f64, input: bool, stalled: u32) -> bool {
+        if input {
+            self.last_input = Some(now);
+        }
+        if self.hung || stalled < STALLED_FRAMES_FOR_RESTART {
+            return false;
+        }
+        self.hung = self.last_input.is_some_and(|t| (0.0..=STALL_INPUT_WINDOW_S).contains(&(now - t)));
+        self.hung
+    }
+}
+
+/// How a launch whose GPU hung starts again.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Restart {
+    /// On this backend (`graphics.json`'s `backend`), kept for later launches too.
+    Backend(&'static str),
+    SafeMode,
+}
+
+/// The restart after the GPU hung on `backend` (`cpu`: the software renderer, which has nothing
+/// to fall back to). D3D12 goes to Vulkan, which runs the GPUs whose D3D12 driver hung (#1789);
+/// it isn't probed here, as loading Vulkan's drivers into this process is what crashed once
+/// (`WINDOWS_ORDER`): the new launch finds out, and falls back to software if it has no GPU.
+pub fn after_hang(backend: eframe::wgpu::Backend, cpu: bool) -> Option<Restart> {
+    match backend {
+        _ if cpu => None,
+        eframe::wgpu::Backend::Dx12 => Some(Restart::Backend("vulkan")),
+        _ => Some(Restart::SafeMode),
+    }
+}
+
+/// The notice on the launch after the GPU hung on `hung` (a backend's name): this one is in safe
+/// mode, or on the `backend` preference.
+pub fn hang_note(hung: &str, safe_mode: bool, backend: Option<&str>) -> String {
+    let now = match backend {
+        _ if safe_mode => "in safe mode".to_string(),
+        Some(b) => format!("on {}, which it keeps using (the backend in graphics.json)", api_name(b)),
+        None => "with another renderer".to_string(),
+    };
+    let unsaved = if safe_mode { "the next normal start offers unsaved changes" } else { "unsaved changes are offered for recovery" };
+    format!("The graphics driver stopped responding on {}, so SolidCraft restarted {now}; {unsaved}.", api_name(hung))
+}
+
+/// A backend's name (`Dx12`, `vulkan`, …) as people know the graphics API.
+fn api_name(backend: &str) -> &str {
+    match backend.trim().to_ascii_lowercase().as_str() {
+        "dx12" => "Direct3D 12",
+        "vulkan" => "Vulkan",
+        "gl" => "OpenGL",
+        "metal" => "Metal",
+        _ => backend,
+    }
+}
+
 /// The device feature for a 32-bit float depth buffer with a stencil (reversed depth, #1434).
 pub const FLOAT_DEPTH_STENCIL: eframe::wgpu::Features = eframe::wgpu::Features::DEPTH32FLOAT_STENCIL8;
 
@@ -360,6 +438,35 @@ mod tests {
         assert_eq!(choose_backends(true, false, false, Some("dx12"), never), Some(Backends::DX12));
         assert_eq!(choose_backends(true, true, false, None, never), None);
         assert_eq!(choose_backends(false, false, false, None, never), None);
+    }
+
+    /// After the window was up, D3D12 hung the GPU: frames came a second apart and never showed,
+    /// a white window with no crash (#1789, #3321). Five such frames while the user is there
+    /// restart the app, D3D12 on Vulkan and anything else in safe mode.
+    #[test]
+    fn a_gpu_that_hangs_after_the_window_is_up_restarts_on_another_renderer() {
+        use eframe::wgpu::Backend;
+        let stalled = STALLED_FRAMES_FOR_RESTART;
+        let mut watch = HangWatch::default();
+        assert!(!watch.hung(0.0, true, stalled - 1), "not yet");
+        assert!(watch.hung(5.0, false, stalled), "input 5 s ago");
+        assert!(!watch.hung(6.0, true, stalled + 1), "once");
+        // Nobody at the computer (a display switched off holds frames back too): no restart.
+        let mut away = HangWatch::default();
+        assert!(!away.hung(100.0, false, stalled));
+        assert!(!away.hung(200.0, false, 100));
+        let mut left = HangWatch::default();
+        assert!(!left.hung(0.0, true, 0));
+        assert!(!left.hung(STALL_INPUT_WINDOW_S + 1.0, false, stalled));
+        assert!(left.hung(STALL_INPUT_WINDOW_S + 2.0, true, stalled), "the user is back");
+
+        assert_eq!(after_hang(Backend::Dx12, false), Some(Restart::Backend("vulkan")));
+        assert_eq!(after_hang(Backend::Vulkan, false), Some(Restart::SafeMode));
+        assert_eq!(after_hang(Backend::Gl, false), Some(Restart::SafeMode));
+        assert_eq!(after_hang(Backend::Dx12, true), None, "software: nothing to fall back to");
+        let note = hang_note("Dx12", false, Some("vulkan"));
+        assert!(note.contains("on Direct3D 12") && note.contains("on Vulkan") && note.contains("recovery"), "{note}");
+        assert!(hang_note("Vulkan", true, Some("vulkan")).contains("in safe mode"));
     }
 
     #[test]

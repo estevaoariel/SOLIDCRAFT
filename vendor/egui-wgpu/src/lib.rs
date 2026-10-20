@@ -70,6 +70,33 @@ pub(crate) fn startup_step(step: &'static str, detail: &str) {
     }
 }
 
+/// SolidCraft: a frame whose texture took at least this long to acquire stalled. wgpu waits at
+/// most a second for the swap chain's next image, and D3D12 then goes on as if it had come: a
+/// hung GPU shows as frames that each wait that second and never reach the screen, a white
+/// window with nothing reported (#3321).
+pub const STALLED_ACQUIRE: std::time::Duration = std::time::Duration::from_millis(950);
+
+static STALLED_FRAMES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// SolidCraft: how many frames in a row stalled acquiring their texture ([`STALLED_ACQUIRE`]).
+pub fn stalled_frames() -> u32 {
+    STALLED_FRAMES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The frames in a row that stalled, after one whose texture took `elapsed`.
+fn count_stall(stalled: u32, elapsed: std::time::Duration) -> u32 {
+    if elapsed >= STALLED_ACQUIRE {
+        stalled.saturating_add(1)
+    } else {
+        0
+    }
+}
+
+pub(crate) fn note_acquire(elapsed: std::time::Duration) {
+    let stalled = count_stall(stalled_frames(), elapsed);
+    STALLED_FRAMES.store(stalled, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// An error produced by egui-wgpu.
 #[derive(thiserror::Error, Debug)]
 pub enum WgpuError {
@@ -722,6 +749,20 @@ mod msaa_tests {
         let attempt = retry.attempt(now, || super::supported_surface(None, 8, 8).map(|_| ()));
         assert!(matches!(attempt, super::Attempt::Refused(plan, _) if plan.first), "{attempt:?}");
         assert_eq!(retry.failures(), 1);
+    }
+
+    /// Frames that each waited out wgpu's one-second acquire count up; one on time starts over
+    /// (#3321).
+    #[test]
+    fn frames_that_wait_out_the_acquire_count_as_stalled() {
+        use std::time::Duration;
+        let second = Duration::from_millis(1000);
+        let stalled = (0..3).fold(0, |n, _| super::count_stall(n, second));
+        assert_eq!(stalled, 3);
+        assert_eq!(super::count_stall(stalled, Duration::from_millis(16)), 0);
+        // A slow frame isn't a stall: the image came before the timeout.
+        assert_eq!(super::count_stall(0, Duration::from_millis(400)), 0);
+        assert_eq!(super::count_stall(u32::MAX, second), u32::MAX);
     }
 }
 

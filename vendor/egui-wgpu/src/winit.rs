@@ -712,7 +712,10 @@ impl Painter {
                 crate::startup_step(crate::STEP_FIRST_PRESENT, "");
             }
             let output_frame = surface_state.surface.get_current_texture();
-            vsync_sec += start.elapsed().as_secs_f32();
+            let elapsed = start.elapsed();
+            vsync_sec += elapsed.as_secs_f32();
+            // SolidCraft: frames that wait out the acquire are a hung GPU (#3321).
+            crate::note_acquire(elapsed);
             output_frame
         };
 

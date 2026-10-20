@@ -81,6 +81,10 @@ without one. Earlier versions started Vulkan, Direct3D 12 and OpenGL together an
 Vulkan. On a computer whose only graphics is AMD's integrated GPU (Ryzen laptops and desktops
 without a graphics card), SolidCraft starts Vulkan instead: Direct3D 12 hung those drivers a
 few seconds after the window opened, and the screen went black until Windows reset the driver.
+If the graphics driver stops responding while SolidCraft is open (the window stays white or
+black and every click takes a second), SolidCraft notices after a few seconds, closes, and
+starts again: on Vulkan if it was using Direct3D 12 (it keeps using Vulkan, as `"backend":
+"vulkan"` in `graphics.json`), otherwise in safe mode. Unsaved changes are offered for recovery.
 To choose the graphics API yourself, in any version, open a Command Prompt and start
 SolidCraft from it:
 
