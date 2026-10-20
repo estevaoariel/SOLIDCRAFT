@@ -709,3 +709,37 @@ fn centre_circle_clicked_through_a_line_end_stays_on_it() {
         sk.constraints
     );
 }
+
+/// A circle centred where two lines cross: the cursor snaps to the crossing and the centre made
+/// there stays on both lines (#2290).
+#[test]
+fn a_circle_centre_snaps_to_where_two_lines_cross() {
+    use solidcraft_engine::sketch::ConstraintKind;
+    let mut h = crate::scenario::Harness::new();
+    h.app.run("sketch.create", json!({"plane": "XY"})).unwrap();
+    h.app.run("sketch.line", json!({"points": [[-20, 3], [20, 3]], "ids": ["h"]})).unwrap();
+    h.app.run("sketch.line", json!({"points": [[7, -20], [7, 20]], "ids": ["v"]})).unwrap();
+    h.settle();
+    let sid = h.app.session.active_sketch.unwrap();
+    h.step(&json!({"start": "sketch.circle.center"})).unwrap();
+    h.step(&json!({"move": {"world": [7.2, 3.15, 0]}})).unwrap();
+    let hover = h.app.tool.as_ref().unwrap().hover.clone().unwrap();
+    assert!(hover.1.as_deref().is_some_and(|s| s.starts_with("cross:")), "{hover:?}");
+    h.step(&json!({"click": {"world": [7.2, 3.15, 0]}})).unwrap();
+    h.step(&json!({"click": {"world": [12, 3.5, 0]}})).unwrap();
+    let st = h.app.session.world_state();
+    let sk = &st.sketch(sid).unwrap().sketch;
+    let (centre, circle) = sk
+        .curves
+        .iter()
+        .find_map(|c| if let CurveKind::Circle { c: centre, .. } = c.kind { Some((centre, c)) } else { None })
+        .unwrap_or_else(|| panic!("no circle: {:?}", h.app.status));
+    assert!(sk.point(centre).unwrap().dist(solidcraft_engine::geom::Vec2::new(7.0, 3.0)) < 1e-9, "{circle:?} at {:?}", sk.point(centre));
+    for line in ["h", "v"] {
+        let l = sk.curve_index(line).unwrap();
+        assert!(
+            sk.constraints.iter().any(|c| matches!(c.kind, ConstraintKind::PointOnCurve { p, c } if p == centre && c == l)),
+            "the centre is not held on {line}"
+        );
+    }
+}
