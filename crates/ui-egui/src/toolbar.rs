@@ -1426,7 +1426,8 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                             }
                             for c in cmds {
                                 let info = c.info(&app.session);
-                                let response = crate::ui_kit::command_menu_button(ui, c.id, info.label, info.icon, c.shortcut.unwrap_or(""), info.enabled);
+                                let response =
+                                    crate::ui_kit::command_menu_button(ui, c.id, info.label, info.icon, c.shortcut.unwrap_or(""), info.enabled);
                                 crate::scenario::publish_handle(&format!("toolbar:{}", c.id), response.rect.center());
                                 if response.clicked() {
                                     app.start(c.id);
