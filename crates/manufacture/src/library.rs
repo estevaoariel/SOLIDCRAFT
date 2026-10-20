@@ -7,8 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Result, invalid};
 
-pub const DEFAULT_CAM_LIBRARY_REMOTE: &str =
-    "";
+pub const DEFAULT_CAM_LIBRARY_REMOTE: &str = "";
 
 pub const MAX_LIBRARY_REMOTES: usize = 32;
 pub const MAX_TEMPLATES: usize = 256;
@@ -22,8 +21,7 @@ pub enum LibraryKind {
 }
 
 impl LibraryKind {
-    pub const ALL: &'static [LibraryKind] =
-        &[LibraryKind::Post, LibraryKind::Machine, LibraryKind::Template];
+    pub const ALL: &'static [LibraryKind] = &[LibraryKind::Post, LibraryKind::Machine, LibraryKind::Template];
 
     pub fn label(self) -> &'static str {
         match self {
