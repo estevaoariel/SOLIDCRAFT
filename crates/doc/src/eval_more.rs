@@ -84,11 +84,8 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
             if !targets.is_empty() && (targets.len() != 1 || targets.first() != Some(&face.body)) {
                 return Err(DocError::Invalid("a cam groove must keep its selected target body".into()));
             }
-            let i = st
-                .bodies
-                .iter()
-                .position(|b| b.name == face.body)
-                .ok_or_else(|| DocError::Unknown(format!("cam groove body `{}`", face.body)))?;
+            let i =
+                st.bodies.iter().position(|b| b.name == face.body).ok_or_else(|| DocError::Unknown(format!("cam groove body `{}`", face.body)))?;
             let mb = st.bodies.get(i).cloned().ok_or_else(|| DocError::Invalid("cam groove body".into()))?;
             let body_frame = face.body_frame(doc, &mb)?;
             let inverse = crate::mat_inverse(&body_frame).ok_or_else(|| DocError::Invalid("invalid cylinder body frame".into()))?;

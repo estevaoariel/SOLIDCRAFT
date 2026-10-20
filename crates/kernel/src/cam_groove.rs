@@ -105,15 +105,7 @@ fn tool_frame(frame: &CylFrame, tangent: Vec3) -> Result<(Vec3, Vec3)> {
 /// `face` is the cylindrical wall the path runs on, `plane` the (tangent) plane the path is
 /// drawn on and `segs` the path in that plane's own coordinates. The groove is `depth` deep
 /// and `width` wide.
-pub fn cam_groove(
-    body: &Body,
-    face: usize,
-    plane: &Plane,
-    segs: &[Seg2],
-    depth: f64,
-    width: f64,
-    tool: GrooveTool,
-) -> Result<Body> {
+pub fn cam_groove(body: &Body, face: usize, plane: &Plane, segs: &[Seg2], depth: f64, width: f64, tool: GrooveTool) -> Result<Body> {
     body.require_brep("a cam groove")?;
     if !depth.is_finite() || depth <= 0.0 || depth > 1e6 {
         return Err(fail("the depth must be a positive length"));
@@ -181,10 +173,7 @@ fn plane_touch(plane: &Plane, body: &Body, face: usize) -> Result<Vec3> {
 fn groove_tool(dev: &Development, points: &[Vec3], depth: f64, width: f64, tool: GrooveTool) -> Result<Body> {
     let frame = dev.frame;
     let start = points[0];
-    let tangent = points
-        .get(1)
-        .and_then(|p| (*p - start).normalized())
-        .ok_or_else(|| fail("the path has no direction"))?;
+    let tangent = points.get(1).and_then(|p| (*p - start).normalized()).ok_or_else(|| fail("the path has no direction"))?;
     let (across, _) = tool_frame(&frame, tangent)?;
     // The profile's plane: square to the path, its width across the path on the surface and
     // its depth into the wall. The sweep carries the plane's `x` (the width) to the direction
@@ -360,15 +349,7 @@ mod tests {
     fn hostile_sizes_are_refused() {
         let (body, plane) = sleeve();
         let segs = [Seg2::Line { a: Vec2::new(0.0, 8.0), b: Vec2::new(0.0, 12.0) }];
-        for (d, w) in [
-            (0.0, 4.0),
-            (-1.0, 4.0),
-            (1.0, 0.0),
-            (1.0, -4.0),
-            (f64::NAN, 4.0),
-            (1.0, f64::INFINITY),
-            (20.0, 4.0),
-        ] {
+        for (d, w) in [(0.0, 4.0), (-1.0, 4.0), (1.0, 0.0), (1.0, -4.0), (f64::NAN, 4.0), (1.0, f64::INFINITY), (20.0, 4.0)] {
             assert!(cam_groove(&body, wall(&body), &plane, &segs, d, w, GrooveTool::Rectangular).is_err(), "{d} {w}");
         }
         // A round bottom needs room for its own radius.

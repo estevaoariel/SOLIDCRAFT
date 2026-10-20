@@ -102,10 +102,7 @@ pub struct Development {
 impl Development {
     /// The developed coordinates of a point in the plane.
     pub fn of(&self, p: Vec2) -> Vec2 {
-        Vec2::new(
-            self.s0 + self.ex.x * p.x + self.ey.x * p.y,
-            self.z0 + self.ex.y * p.x + self.ey.y * p.y,
-        )
+        Vec2::new(self.s0 + self.ex.x * p.x + self.ey.x * p.y, self.z0 + self.ex.y * p.x + self.ey.y * p.y)
     }
 
     /// Whether the map keeps lengths. It does when the plane stands square to the cylinder's
@@ -135,16 +132,12 @@ pub fn develop(frame: &CylFrame, plane: &Plane) -> Result<Development> {
         return Err(fail("the sketch plane has no normal"));
     }
     if n.dot(frame.axis).abs() > 1e-7 {
-        return Err(fail(
-            "the sketch plane must stand tangent to the cylinder: its normal must be square to the cylinder's axis",
-        ));
+        return Err(fail("the sketch plane must stand tangent to the cylinder: its normal must be square to the cylinder's axis"));
     }
     let w = plane.origin - frame.origin;
     let signed = w.dot(n);
     if (signed.abs() - frame.radius).abs() > frame.radius * 1e-6 + 1e-9 {
-        return Err(fail(
-            "the sketch plane must stand tangent to the cylinder: it has to touch it, one radius from the axis",
-        ));
+        return Err(fail("the sketch plane must stand tangent to the cylinder: it has to touch it, one radius from the axis"));
     }
     // The plane's origin lies on the outside of the cylinder when it is on the far side of the
     // axis from the plane's normal.

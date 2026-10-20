@@ -341,19 +341,13 @@ fn picked_wall(s: &Session, value: &Value, targets: &mut Vec<String>, sketch: u6
     let point = format!("[{}, {}, {}]", local.x, local.y, local.z);
     match (candidates.as_slice(), nearest) {
         ([], Some((d, body))) => {
-            return Err(bad(
-                cmd,
-                format!("`face` {point} lies on no face: the nearest, on `{body}`, is {d:.3} mm away; give a point on the wall"),
-            ));
+            return Err(bad(cmd, format!("`face` {point} lies on no face: the nearest, on `{body}`, is {d:.3} mm away; give a point on the wall")));
         }
         ([], None) => return Err(bad(cmd, format!("`face` {point} lies on no face of the target bodies"))),
         ([_], _) => {}
         (more, _) => {
             let names: Vec<&str> = more.iter().map(|(b, _)| b.name.as_str()).collect();
-            return Err(bad(
-                cmd,
-                format!("`face` {point} lies on faces of {} bodies ({}): name one in `targets`", names.len(), names.join(", ")),
-            ));
+            return Err(bad(cmd, format!("`face` {point} lies on faces of {} bodies ({}): name one in `targets`", names.len(), names.join(", "))));
         }
     }
     let (selected, index) = candidates.first().copied().ok_or_else(|| bad(cmd, "no target face"))?;

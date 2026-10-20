@@ -28,6 +28,9 @@ mod boundary;
 mod boundary_network;
 mod bridge;
 mod build;
+mod cam_groove;
+#[cfg(test)]
+mod cam_groove_tests;
 mod candidate_reach;
 #[cfg(test)]
 mod chamfer_sides_curved_tests;
@@ -41,9 +44,6 @@ mod delete_face;
 mod distance;
 #[cfg(test)]
 mod edge_polyline_tests;
-mod cam_groove;
-#[cfg(test)]
-mod cam_groove_tests;
 mod emboss;
 mod face_params;
 #[cfg(test)]
@@ -173,6 +173,7 @@ pub use build::{
     PathSeg, box_solid, canonical_revolve_axis, cylinder, extrude, extrude_tapered, extrude_tapered_between, extrude_whole_sides, loft, loft_regions,
     loft_with_rails, path_polyline, revolve, revolve_whole, sphere, sweep, sweep_with, torus,
 };
+pub use cam_groove::{GrooveTool, cam_groove};
 pub use clearance::{Clearance, Occupancy};
 pub use coaxial_overlap::{CoaxialOverlap, coaxial_candidate, coaxial_overlap};
 pub use continuity::{
@@ -181,7 +182,6 @@ pub use continuity::{
 pub use corner_g2::{corner_g2_patch, seam_error};
 pub use delete_face::delete_faces;
 pub use distance::{BodyDistance, DistanceShape, body_distance};
-pub use cam_groove::{GrooveTool, cam_groove};
 pub use emboss::{cylinder_emboss_anchor, emboss_cylinder, emboss_cylinder_at, has_cylinder_emboss_wall, infer_cylinder_emboss};
 pub use fair::{
     FairCurve, FairNet, FairOptions, FairReport, MAX_FAIR_ITERATIONS, MAX_FAIR_POINTS, fair_bspline_curve, fair_bspline_surface, fair_curve,
@@ -229,7 +229,7 @@ pub use topo::{CylinderFace, cylinder_end_at, cylinder_face, cylinder_face_at};
 pub use topo::{TopoCounts, merged_topology, seam_flags};
 pub use tspline::tspline_sheet;
 pub use whole_face::{WholeFace, cut_takes_only_the_face, cut_tool, face_prism, matching_face};
-pub use wrap::{CylFrame, Development, WallSpan, WrappedPath, cylindrical_wall_at, cylinder_spans, develop, tangent_wall, wall_anchor, wrap_path};
+pub use wrap::{CylFrame, Development, WallSpan, WrappedPath, cylinder_spans, cylindrical_wall_at, develop, tangent_wall, wall_anchor, wrap_path};
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum KernelError {
@@ -282,6 +282,7 @@ pub fn guard<T>(what: &str, f: impl FnOnce() -> Result<T>) -> Result<T> {
 
 #[cfg(test)]
 mod tests;
+
 
 #[cfg(test)]
 mod trimmed_face_mesh_tests;
