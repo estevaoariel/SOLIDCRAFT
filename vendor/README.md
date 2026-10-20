@@ -60,6 +60,7 @@ Changes:
 ## truck-geometry 0.5.0 (Apache-2.0, © RICOS Co. Ltd., https://github.com/ricosjp/truck)
 
 Changes:
+- `nurbs/bspsurface.rs` and `nurbs/bspcurve.rs`: omit exactly zero basis coefficients from point and derivative sums. Long fillet strips evaluate only controls with nonzero support, retaining their original summation order.
 - `decorators/intersection_curve.rs`: `IntersectionCurve::parameter_division` divides as
   `algo::curve::parameter_division` does (the same split points, in the same order), but each
   point's projection onto the two surfaces starts from the parameters of the point that begins

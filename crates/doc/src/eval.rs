@@ -6271,6 +6271,9 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
             } else {
                 resolve_edges(&mb.body, &crate::plain(edges), &f.edge_refs, warning)?
             };
+            if matches!(f.kind, FeatureKind::Fillet { .. }) {
+                kernel::check_fillet_edges(&mb.body, &edges)?;
+            }
             st.blend_edges.insert(f.id, edges.clone());
             let input = mb.traced();
             // A G2 corner is built by the corner construction alone, for a constant radius: any
