@@ -27,7 +27,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("sketch.wrap", "Wrap Sketch", sketch_wrap)
         .icon("inspect")
         .noundo()
-        .params("sketch?: id|name (default the active sketch); body?: the body with the wall; face?: world point [x,y,z] on a cylindrical wall (the nearest one to the point)"),
+        .params("sketch?: id|name (default the active sketch); face: world point [x,y,z] on a cylindrical wall; body?: the body with the wall (the wall the point is on)"),
 
     CommandSpec::new("material.assign", "Physical Material", physical_material)
         .at("SOLID", "MODIFY")
