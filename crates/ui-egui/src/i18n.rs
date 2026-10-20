@@ -56,6 +56,7 @@ impl Catalog {
 }
 
 static ENGLISH: Catalog = Catalog::new("en", "English", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/en.json")));
+static ARABIC: Catalog = Catalog::new("ar", "العربية", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/ar.json")));
 static CZECH: Catalog = Catalog::new("cs", "Čeština", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/cs.json")));
 static DANISH: Catalog = Catalog::new("da", "Dansk", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/da.json")));
 static GERMAN: Catalog = Catalog::new("de", "Deutsch", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/de.json")));
@@ -91,6 +92,7 @@ static CHINESE_TRADITIONAL: Catalog =
 #[rustfmt::skip]
 pub const LOCALES: &[&Catalog] = &[
     &ENGLISH,
+    &ARABIC,
     &CZECH,
     &DANISH,
     &GERMAN,
@@ -331,13 +333,13 @@ mod tests {
         ENGLISH.messages().values().map(String::as_str).collect()
     }
 
-    /// Catalogs delivered complete. English is the source catalog; Czech, Italian, Japanese and Chinese
+    /// Catalogs delivered complete. English is the source catalog; Arabic, Czech, Italian, Japanese and Chinese
     /// are complete. German, Korean, Malay, Russian, French and Ukrainian
     /// are partial (German and Korean predate the coverage guards; Russian, French and Ukrainian
     /// are kept partial so a new label doesn't need more translations), so their gaps fall back
     /// to English and are reported by `cargo xtask i18n` without failing the build, while
     /// nothing in the complete catalogs may regress.
-    const COMPLETE: &[&str] = &["he", "ja", "zh"];
+    const COMPLETE: &[&str] = &["ar", "he", "ja", "zh"];
 
     /// `text()` falls back to English silently, so a message a complete locale never received is
     /// shown in English inside an otherwise translated UI, with nothing in the build to say so.
@@ -786,6 +788,33 @@ mod tests {
     /// Hebrew is stored in reading order; egui reverses each run of Hebrew letters but places
     /// the runs of a line left to right, so every message comes back with its words, numbers,
     /// units and placeholders in display order and brackets mirrored (#3457).
+    /// Arabic goes through the same right-to-left path as Hebrew: its words, numbers, units and
+    /// placeholders come back in display order, and each Arabic word's letters stay in reading
+    /// order for the shaper, which joins and reverses them.
+    #[test]
+    fn arabic_catalog_is_registered_and_comes_back_in_display_order() {
+        let ar = Locale::for_language("ar");
+        assert!(is_supported("ar"));
+        assert_eq!(ar.name(), "العربية");
+        assert_eq!(ar.display_name(), "العربية");
+        assert_eq!(ar.text("ui.preferences"), "التفضيلات");
+        assert_eq!(ar.label("Extrude"), "بثق");
+        // Two words: the second is drawn first, on the left.
+        assert_eq!(ar.text("ui.new_design"), "جديد تصميم");
+        assert_eq!(ar.dynamic("Units: mm"), "mm :الوحدات");
+        assert_eq!(ar.dynamic("Sketch1"), "1 رسم");
+        let saved = ar.format("document.save_changes", &[("name", "Bracket")]);
+        assert!(saved.starts_with("؟Bracket "), "{saved}");
+        let english: Messages = serde_json::from_str(ENGLISH.source).unwrap();
+        for id in english.keys() {
+            let text = ar.text(id);
+            assert!(
+                !text.chars().any(|c| matches!(c, '\u{200E}' | '\u{200F}' | '\u{061C}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')),
+                "{id}: {text:?}"
+            );
+        }
+    }
+
     #[test]
     fn hebrew_catalog_is_registered_and_comes_back_in_display_order() {
         let he = Locale::for_language("he");

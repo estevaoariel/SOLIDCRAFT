@@ -1,6 +1,6 @@
 # UI localization
 
-SolidCraft embeds its translations and works offline. English, Czech, Danish, German, English (UK), Spanish, French, Galician, Hebrew, Italian,
+SolidCraft embeds its translations and works offline. English, Arabic, Czech, Danish, German, English (UK), Spanish, French, Galician, Hebrew, Italian,
 Japanese, Korean, Malay, Polish, Brazilian Portuguese, Russian, Turkish, Ukrainian and Chinese are currently registered in `crates/ui-egui/src/i18n.rs`. Adding a language requires an
 embedded catalog and one registration there; the preferences selector and validation use the same
 registry.
@@ -117,6 +117,14 @@ right-to-left text mirrored, and the letters of each Hebrew run left in reading 
 shaper to reverse. Each line is its own paragraph and takes its direction from its first strong
 letter, so English fallback text is unchanged. `hebrew_messages_land_on_screen_in_display_order`
 lays messages out with a real Hebrew font and checks where the glyphs land.
+
+Arabic takes the same path. Its letters join, which the shaper does from the font's own tables, so
+each Arabic word is one run: the Arabic font comes after the Latin interface font, which keeps the
+spaces, digits and Latin text, and it is the first fallback for an Arabic UI (Segoe UI, Tahoma or
+Arial on Windows; SF Arabic, Geeza Pro, Damascus or Tahoma on macOS; Noto Sans or Naskh Arabic,
+KACST One or DejaVu Sans on Linux; `NotoSansArabic-Regular.ttf` in `CRAFT_FONTS_DIR`). Write Arabic
+messages with Western digits, which keep their left-to-right order inside the sentence.
+`arabic_messages_land_on_screen_in_display_order` checks the word order on screen.
 
 Placeholders are kept whole where they stand, so `format` substitutes values into the
 display-order text and a value keeps the order it has: a number, a file name, a label that is

@@ -148,6 +148,11 @@ pub const THAI_FALLBACK: &str = "thai_fallback";
 /// Name of the Hebrew fallback entry in [`egui::FontDefinitions`], last (#3457).
 pub const HEBREW_FALLBACK: &str = "hebrew_fallback";
 
+/// Name of the Arabic fallback entry in [`egui::FontDefinitions`]: first of the fallbacks for an
+/// Arabic UI, last otherwise. It stays after the Latin interface font, which keeps drawing spaces,
+/// digits and Latin text, so each Arabic word is one shaped run (see [`crate::bidi`]).
+pub const ARABIC_FALLBACK: &str = "arabic_fallback";
+
 /// egui's built-in monospace face, also the last fallback of every sans family (#2955).
 pub const SYMBOL_FALLBACK: &str = "Hack";
 
@@ -504,6 +509,33 @@ const HEBREW_FONT_CANDIDATES: &[&str] = &[
     "/usr/share/fonts/dejavu/DejaVuSans.ttf",
 ];
 
+/// Arabic fonts with the joining forms the shaper uses. egui's built-in faces have no Arabic.
+#[cfg(not(target_arch = "wasm32"))]
+const ARABIC_FONT_CANDIDATES: &[&str] = &[
+    // Windows: Segoe UI, Tahoma, Arial
+    "C:\\Windows\\Fonts\\segoeui.ttf",
+    "C:\\Windows\\Fonts\\tahoma.ttf",
+    "C:\\Windows\\Fonts\\arial.ttf",
+    // macOS: SF Arabic (11 and later), Geeza Pro, Damascus, Tahoma
+    "/System/Library/Fonts/SFArabic.ttf",
+    "/System/Library/Fonts/GeezaPro.ttc",
+    "/System/Library/Fonts/Supplemental/GeezaPro.ttc",
+    "/System/Library/Fonts/Supplemental/Damascus.ttc",
+    "/System/Library/Fonts/Supplemental/Tahoma.ttf",
+    // Linux: Noto Sans Arabic, Noto Naskh Arabic, KACST One, DejaVu Sans
+    "/usr/share/fonts/noto/NotoSansArabic-Regular.ttf",
+    "/usr/share/fonts/truetype/noto/NotoSansArabic-Regular.ttf",
+    "/usr/share/fonts/google-noto/NotoSansArabic-Regular.ttf",
+    "/usr/share/fonts/google-noto-vf/NotoSansArabic[wght].ttf",
+    "/usr/share/fonts/opentype/noto/NotoSansArabic-Regular.ttf",
+    "/usr/share/fonts/truetype/noto/NotoNaskhArabic-Regular.ttf",
+    "/usr/share/fonts/noto/NotoNaskhArabic-Regular.ttf",
+    "/usr/share/fonts/truetype/kacst-one/KacstOne.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/TTF/DejaVuSans.ttf",
+    "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+];
+
 /// Fonts covering simplified Chinese, appended after the CJK fallback so Chinese renders even
 /// when the CJK font found is a Japanese one without simplified characters (Hiragino Gothic,
 /// Meiryo, Yu Gothic).
@@ -671,12 +703,15 @@ fn find_system_cjk_font() -> Option<Vec<u8>> {
 /// epaint centres each face's own line height in the row, so glyphs from two faces of very
 /// different height (Meiryo ≈ 2.0 em, Microsoft YaHei ≈ 1.4 em) sit at different heights
 /// inside one word. One face for the whole word keeps them on one baseline.
-/// Thai and Hebrew come last whatever the language: no other face draws them.
-pub fn fallback_order(language: &str) -> [&'static str; 5] {
+/// Thai, Hebrew and Arabic come last whatever the language: no other face draws them. Arabic
+/// goes first for `ar` instead: a CJK font such as Arial Unicode also has Arabic letters, without
+/// the shaping data that joins them.
+pub fn fallback_order(language: &str) -> [&'static str; 6] {
     match language {
-        "zh" | "zh-TW" => [CHINESE_FALLBACK, CJK_FALLBACK, HANGUL_FALLBACK, THAI_FALLBACK, HEBREW_FALLBACK],
-        "ko" => [HANGUL_FALLBACK, CJK_FALLBACK, CHINESE_FALLBACK, THAI_FALLBACK, HEBREW_FALLBACK],
-        _ => [CJK_FALLBACK, CHINESE_FALLBACK, HANGUL_FALLBACK, THAI_FALLBACK, HEBREW_FALLBACK],
+        "zh" | "zh-TW" => [CHINESE_FALLBACK, CJK_FALLBACK, HANGUL_FALLBACK, THAI_FALLBACK, HEBREW_FALLBACK, ARABIC_FALLBACK],
+        "ko" => [HANGUL_FALLBACK, CJK_FALLBACK, CHINESE_FALLBACK, THAI_FALLBACK, HEBREW_FALLBACK, ARABIC_FALLBACK],
+        "ar" => [ARABIC_FALLBACK, CJK_FALLBACK, CHINESE_FALLBACK, HANGUL_FALLBACK, THAI_FALLBACK, HEBREW_FALLBACK],
+        _ => [CJK_FALLBACK, CHINESE_FALLBACK, HANGUL_FALLBACK, THAI_FALLBACK, HEBREW_FALLBACK, ARABIC_FALLBACK],
     }
 }
 
@@ -698,6 +733,7 @@ struct SystemFonts {
     hangul: Option<Vec<u8>>,
     thai: Option<Vec<u8>>,
     hebrew: Option<Vec<u8>>,
+    arabic: Option<Vec<u8>>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -711,7 +747,8 @@ fn system_fallbacks() -> &'static SystemFonts {
         let hangul = HANGUL_FONT_CANDIDATES.iter().find_map(|path| try_read_font(std::path::Path::new(path)));
         let thai = THAI_FONT_CANDIDATES.iter().find_map(|path| try_read_font(std::path::Path::new(path)));
         let hebrew = HEBREW_FONT_CANDIDATES.iter().find_map(|path| try_read_font(std::path::Path::new(path)).filter(|bytes| covers(bytes, 'א')));
-        SystemFonts { cjk, chinese, hangul, thai, hebrew }
+        let arabic = arabic_font();
+        SystemFonts { cjk, chinese, hangul, thai, hebrew, arabic }
     })
 }
 
@@ -752,9 +789,9 @@ pub fn setup_fonts_without_waiting(ctx: &egui::Context, language: &str, ui_font:
 
 #[cfg(not(target_arch = "wasm32"))]
 fn install_fonts(ctx: &egui::Context, language: &str, ui_font: &str, system: Option<&SystemFonts>) {
-    let (cjk, chinese, hangul, thai, hebrew) = match system {
-        Some(f) => (f.cjk.clone(), f.chinese.clone(), f.hangul.clone(), f.thai.clone(), f.hebrew.clone()),
-        None => (None, None, None, None, None),
+    let (cjk, chinese, hangul, thai, hebrew, arabic) = match system {
+        Some(f) => (f.cjk.clone(), f.chinese.clone(), f.hangul.clone(), f.thai.clone(), f.hebrew.clone(), f.arabic.clone()),
+        None => (None, None, None, None, None, None),
     };
     let mut fonts = base_font_definitions();
     if let Some(font) = self::ui_font(ui_font) {
@@ -767,7 +804,8 @@ fn install_fonts(ctx: &egui::Context, language: &str, ui_font: &str, system: Opt
             CHINESE_FALLBACK => chinese.clone(),
             HANGUL_FALLBACK => hangul.clone(),
             THAI_FALLBACK => thai.clone(),
-            _ => hebrew.clone(),
+            HEBREW_FALLBACK => hebrew.clone(),
+            _ => arabic.clone(),
         };
         if let Some(bytes) = bytes
             && let Some(with_fallback) = with_fallback(fonts.clone(), name, bytes)
@@ -778,7 +816,8 @@ fn install_fonts(ctx: &egui::Context, language: &str, ui_font: &str, system: Opt
     if needs_cjk_font(language) {
         // Select the first installed face in language order (a duplicate Chinese face may
         // already be installed as CJK_FALLBACK). Keep explicit interface choices ahead of it.
-        if let Some(primary) = order.into_iter().find(|name| ![THAI_FALLBACK, HEBREW_FALLBACK].contains(name) && fonts.font_data.contains_key(*name))
+        if let Some(primary) =
+            order.into_iter().find(|name| ![THAI_FALLBACK, HEBREW_FALLBACK, ARABIC_FALLBACK].contains(name) && fonts.font_data.contains_key(*name))
         {
             promote_font_to_front(&mut fonts, primary);
         }
@@ -860,6 +899,16 @@ fn chinese_font_dirs() -> Vec<std::path::PathBuf> {
 #[cfg(not(target_arch = "wasm32"))]
 fn find_chinese_font_in(dirs: &[std::path::PathBuf]) -> Option<Vec<u8>> {
     dirs.iter().find_map(|dir| scan_dir_for_font_where(dir, 3, is_chinese_font_name, draws_simplified_chinese))
+}
+
+/// The first Arabic font in `CRAFT_FONTS_DIR` (`NotoSansArabic-Regular.ttf`) or the candidate
+/// paths that draws Arabic.
+#[cfg(not(target_arch = "wasm32"))]
+fn arabic_font() -> Option<Vec<u8>> {
+    let pack = std::env::var("CRAFT_FONTS_DIR").ok().map(|dir| std::path::PathBuf::from(dir).join("NotoSansArabic-Regular.ttf"));
+    pack.into_iter()
+        .chain(ARABIC_FONT_CANDIDATES.iter().map(std::path::PathBuf::from))
+        .find_map(|path| try_read_font(&path).filter(|bytes| covers(bytes, 'ب')))
 }
 
 /// Web installs the bundled faces synchronously; Japanese is fetched by the shell on demand.
@@ -1115,13 +1164,14 @@ mod tests {
 
     #[test]
     fn a_chinese_ui_puts_the_chinese_face_before_the_japanese_one() {
-        assert_eq!(fallback_order("zh"), [CHINESE_FALLBACK, CJK_FALLBACK, HANGUL_FALLBACK, THAI_FALLBACK, HEBREW_FALLBACK]);
+        assert_eq!(fallback_order("zh"), [CHINESE_FALLBACK, CJK_FALLBACK, HANGUL_FALLBACK, THAI_FALLBACK, HEBREW_FALLBACK, ARABIC_FALLBACK]);
         assert_eq!(fallback_order("zh-TW"), fallback_order("zh"));
-        assert_eq!(fallback_order("ko"), [HANGUL_FALLBACK, CJK_FALLBACK, CHINESE_FALLBACK, THAI_FALLBACK, HEBREW_FALLBACK]);
+        assert_eq!(fallback_order("ko"), [HANGUL_FALLBACK, CJK_FALLBACK, CHINESE_FALLBACK, THAI_FALLBACK, HEBREW_FALLBACK, ARABIC_FALLBACK]);
+        assert_eq!(fallback_order("ar")[0], ARABIC_FALLBACK);
         for lang in ["en", "ja", "de", "he"] {
             assert_eq!(
                 fallback_order(lang),
-                [CJK_FALLBACK, CHINESE_FALLBACK, HANGUL_FALLBACK, THAI_FALLBACK, HEBREW_FALLBACK],
+                [CJK_FALLBACK, CHINESE_FALLBACK, HANGUL_FALLBACK, THAI_FALLBACK, HEBREW_FALLBACK, ARABIC_FALLBACK],
                 "{lang} keeps the Japanese font first"
             );
         }
@@ -1133,7 +1183,7 @@ mod tests {
         for family in all_families() {
             let list = &fonts.families[&family];
             assert_eq!(list.first(), defaults.families[&family].first(), "the Latin UI font stays first");
-            assert_eq!(&list[list.len() - 5..], [CHINESE_FALLBACK, CJK_FALLBACK, HANGUL_FALLBACK, THAI_FALLBACK, HEBREW_FALLBACK]);
+            assert_eq!(&list[list.len() - 6..], [CHINESE_FALLBACK, CJK_FALLBACK, HANGUL_FALLBACK, THAI_FALLBACK, HEBREW_FALLBACK, ARABIC_FALLBACK]);
         }
     }
 
@@ -1213,6 +1263,47 @@ mod tests {
                 logical.chars().filter(|c| !c.is_whitespace()).count(),
                 "{id}"
             );
+        }
+    }
+
+    /// The Arabic interface: lay messages out with a real Arabic font and read the glyphs left to
+    /// right, as they land on screen. The words come out in display order and each word is shaped
+    /// whole (joined forms, so fewer visible glyphs is fine, but never a stray letter order).
+    #[test]
+    fn arabic_messages_land_on_screen_in_display_order() {
+        let Some(bytes) = arabic_font() else { return };
+        let ctx = egui::Context::default();
+        ctx.set_fonts(with_symbol_fallback(with_fallback(egui::FontDefinitions::default(), ARABIC_FALLBACK, bytes).unwrap()));
+        ctx.run_ui(egui::RawInput::default(), |_| {}).textures_delta.clear();
+        // Each space-separated word as the set of its characters (the shaper orders and joins a
+        // word's glyphs, and a glyph's character comes from its cluster), placed by its leftmost
+        // glyph, left to right.
+        let words_left_to_right = |drawn: &str| {
+            let galley = ctx.fonts_mut(|f| f.layout_no_wrap(drawn.to_owned(), egui::FontId::proportional(14.0), egui::Color32::WHITE));
+            let mut words: Vec<(f32, Vec<char>)> = vec![(f32::MAX, Vec::new())];
+            for glyph in galley.rows.iter().flat_map(|row| row.row.glyphs.iter()) {
+                if glyph.chr == ' ' {
+                    words.push((f32::MAX, Vec::new()));
+                } else if let Some((x, word)) = words.last_mut() {
+                    *x = x.min(glyph.pos.x);
+                    word.push(glyph.chr);
+                }
+            }
+            words.retain(|(_, word)| !word.is_empty());
+            words.sort_by(|a, b| a.0.total_cmp(&b.0));
+            words.into_iter().map(|(_, word)| char_set(word)).collect::<Vec<_>>()
+        };
+        fn char_set(mut chars: Vec<char>) -> Vec<char> {
+            chars.sort_unstable();
+            chars.dedup();
+            chars
+        }
+        // Read right to left, the screen shows the sentence's words in reading order.
+        for text in ["حفظ باسم", "تحليل خطوط المعامِل", "إعادة تعيين الكل", "تصدير STEP"] {
+            let mut read = words_left_to_right(&crate::bidi::visual(text));
+            read.reverse();
+            let expected: Vec<Vec<char>> = text.split(' ').map(|word| char_set(word.chars().collect())).collect();
+            assert_eq!(read, expected, "{text}");
         }
     }
 
