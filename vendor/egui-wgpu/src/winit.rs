@@ -133,14 +133,15 @@ impl Painter {
         let width = surface_state.width;
         let height = surface_state.height;
 
-        // SolidCraft: an unsupported surface is logged, not a panic.
-        let Some(default_config) = surface_state
-            .surface
-            .get_default_config(&render_state.adapter, width, height)
-        else {
-            log::error!("The surface isn't supported by this adapter");
-            return Ok(());
-        };
+        // SolidCraft: an unsupported surface is a refused configure, not a panic, and not taken
+        // as configured either (#3321, [`crate::unsupported_surface`]).
+        let default_config = crate::supported_surface(
+            surface_state
+                .surface
+                .get_default_config(&render_state.adapter, width, height),
+            width,
+            height,
+        )?;
         let mut surf_config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: render_state.target_format,

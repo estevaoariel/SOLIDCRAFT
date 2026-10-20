@@ -710,6 +710,43 @@ mod msaa_tests {
         assert_eq!(super::msaa_counts(F::MULTISAMPLE_X4, None), [1]);
         assert_eq!(super::clamp_msaa_samples(&[], 8), 1);
     }
+
+    /// A surface the adapter has no configuration for is refused, not configured (#3321): taken
+    /// as configured, the next frame panicked on "Surface is not configured for presentation".
+    #[test]
+    fn an_unsupported_surface_is_a_refused_configure() {
+        let error = super::supported_surface(None, 1920, 1080).err();
+        assert!(matches!(&error, Some(wgpu::Error::Validation { description, .. }) if description.contains("1920x1080")));
+        let mut retry = super::ConfigureRetry::default();
+        let now = web_time::Instant::now();
+        let attempt = retry.attempt(now, || super::supported_surface(None, 8, 8).map(|_| ()));
+        assert!(matches!(attempt, super::Attempt::Refused(plan, _) if plan.first), "{attempt:?}");
+        assert_eq!(retry.failures(), 1);
+    }
+}
+
+/// SolidCraft: the configuration the adapter offers for a `width` x `height` surface, or the
+/// error for a surface it offers none for ([`unsupported_surface`]).
+pub fn supported_surface(
+    default_config: Option<wgpu::SurfaceConfiguration>,
+    width: u32,
+    height: u32,
+) -> Result<wgpu::SurfaceConfiguration, wgpu::Error> {
+    default_config.ok_or_else(|| unsupported_surface(width, height))
+}
+
+/// SolidCraft: the error for a surface the adapter offers no configuration for. It used to be
+/// logged and taken as configured, so the next frame acquired a texture from a surface that was
+/// never configured and the device's error handler panicked ("Surface is not configured for
+/// presentation", #1789, #2806): after the driver resets a lost GPU, the surface recreated for it
+/// has no configuration on that adapter (#3321). As an error, the configure is refused, the frame
+/// skipped, and the retry (every few refusals, a recreate) comes later.
+pub fn unsupported_surface(width: u32, height: u32) -> wgpu::Error {
+    let description = format!("The {width}x{height} surface isn't supported by this adapter");
+    wgpu::Error::Validation {
+        source: Box::new(std::io::Error::other(description.clone())),
+        description,
+    }
 }
 
 /// SolidCraft: run `f` with `device`'s errors captured, and the first error it caused. Uncaptured,

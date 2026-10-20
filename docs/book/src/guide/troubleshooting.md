@@ -78,7 +78,10 @@ old Intel Vulkan driver, `igvk64.dll`, did). Windows' Event Viewer names the dri
 From 0.11.1, SolidCraft on Windows starts Direct3D 12 first and loads no other graphics API
 when Direct3D 12 has a graphics card; Vulkan and then OpenGL are tried only on a computer
 without one. Earlier versions started Vulkan, Direct3D 12 and OpenGL together and preferred
-Vulkan. To choose the graphics API yourself, in any version, open a Command Prompt and start
+Vulkan. On a computer whose only graphics is AMD's integrated GPU (Ryzen laptops and desktops
+without a graphics card), SolidCraft starts Vulkan instead: Direct3D 12 hung those drivers a
+few seconds after the window opened, and the screen went black until Windows reset the driver.
+To choose the graphics API yourself, in any version, open a Command Prompt and start
 SolidCraft from it:
 
 ```
