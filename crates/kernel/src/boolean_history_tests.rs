@@ -87,10 +87,14 @@ fn verified<'a>(r: &'a Body, operands: &[&Body], tol: f64) -> &'a History {
 /// it is an offset of; an edge lies along its origin edges (within `at.moved`). Faces from
 /// nothing are allowed only where `generated` says.
 pub(crate) fn checked<'a>(r: &'a Body, operands: &[&Body], tol: f64, at: Reach, generated: &dyn Fn(usize) -> bool) -> &'a History {
+    checked_with_refinement(r, operands, tol, at, generated, false)
+}
+
+fn checked_with_refinement<'a>(r: &'a Body, operands: &[&Body], tol: f64, at: Reach, generated: &dyn Fn(usize) -> bool, refine: bool) -> &'a History {
     let h = r.history().expect("the operation reports its history");
     h.check(r, operands).unwrap();
-    let rm = r.tessellate(tol).unwrap();
-    let ms: Vec<Mesh> = operands.iter().map(|b| b.tessellate(tol).unwrap()).collect();
+    let rm = r.tessellate_with(tol, refine).unwrap();
+    let ms: Vec<Mesh> = operands.iter().map(|b| b.tessellate_with(tol, refine).unwrap()).collect();
     let near = 4.0 * tol + r.size() * 1e-6;
     let on = |o: &FaceOrigin, p: Vec3| match *o {
         FaceOrigin::Face { operand, face } => to_face(&ms[operand], face, p) < near.max(at.moved),
@@ -593,7 +597,10 @@ fn reducible_round_intersections_keep_exact_face_and_edge_history() {
                 .unwrap_or_else(|e| panic!("taper={taper}/{center:?}/reversed={reversed}: {e}"));
             assert!(result.validity().is_empty());
             assert_eq!(result.lumps().unwrap().len(), 1);
-            let h = verified(&result, &[left, right], 1e-3);
+            // Refine triangle interiors as well as their boundaries: a coarse
+            // triangle's centroid can lie off an exact conic wall by several
+            // chord tolerances even when all its vertices are on the wall.
+            let h = checked_with_refinement(&result, &[left, right], 1e-3, Reach { made: 0., moved: 0. }, &|_| false, true);
             assert!(h.faces.iter().all(|f| f.change != Change::Kept), "every original face is trimmed");
             // Besides the mesh-based lineage check, each curved support must
             // retain the original rational surface exactly (no fitted wall).

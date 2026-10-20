@@ -624,7 +624,7 @@ fn near_tangent_walls_do_not_invent_or_erase_material() {
                     // Use the independent display planner at the stated chord
                     // tolerance rather than relaxing the analytic expectation.
                     let mesh =
-                        crate::guard("near contact reference mesh", || Ok(crate::tess::plan(&result.solid, 1e-7, None)?.0.evaluate())).unwrap();
+                        crate::guard("near contact reference mesh", || Ok(crate::tess::plan(&result.solid, 1e-7, None, None)?.0.evaluate())).unwrap();
                     let got = mesh.measure().volume;
                     assert!((got - expected).abs() < 1e-4, "{tag}: {got} vs {expected}");
                     if gap != 0. {
