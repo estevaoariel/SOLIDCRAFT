@@ -290,7 +290,7 @@ fn cam_groove(s: &mut Session, p: &Value) -> Result<Value> {
         }
         inferred
     };
-    let face = face.ok_or_else(|| bad(cmd, "no cylindrical wall to cut the groove into"))?;
+    let face = face.ok_or_else(|| bad(cmd, "the sketch's plane does not stand tangent to a cylindrical wall: pick the wall to cut"))?;
     add_feature(
         s,
         p,

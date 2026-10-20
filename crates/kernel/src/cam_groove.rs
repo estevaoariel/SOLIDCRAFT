@@ -80,24 +80,35 @@ fn tool_profile(width: f64, depth: f64, tool: GrooveTool, overcut: f64) -> Resul
     Ok(Region2 { outer, holes: vec![] })
 }
 
-/// The cutter's frame at the path's start: the direction across the path on the surface, and
-/// the direction into the wall.
+/// The cutter's frame at the path's start: the direction across the path on the surface, the
+/// direction the sweep turns the profile in, and the wall's outward direction there.
 ///
 /// The width runs across the path, on the surface; the depth runs into the wall, along the
-/// radius. A path that runs along the axis has no across direction on the surface to speak
-/// of, so the width runs around the circumference instead.
-fn tool_frame(frame: &CylFrame, tangent: Vec3) -> Result<(Vec3, Vec3)> {
-    let axial = tangent.dot(frame.axis).abs() > 0.98;
-    let across = if axial {
-        // The path runs along the axis: the surface's other direction is around it.
-        frame.radial.cross(tangent).normalized().ok_or_else(|| fail("the cutter's frame"))?
+/// radius. The directions are taken at the path's *start*, which is not the point where the
+/// sketch's plane touches the wall: a path that runs round the cylinder starts somewhere else,
+/// and the wall's outward direction there is another one. The sweep carries the profile square
+/// to the path and turns it about the path by the direction it is given, so that direction
+/// decides which way the depth points: it is chosen to match the width's direction, so that
+/// the depth goes into the wall whichever way the path was drawn.
+fn tool_frame(frame: &CylFrame, start: Vec3, tangent: Vec3) -> Result<(Vec3, Vec3, Vec3)> {
+    // The wall's outward direction where the path starts.
+    let w = start - frame.origin;
+    let radial = (w - frame.axis * w.dot(frame.axis)).normalized().ok_or_else(|| fail("the cutter's frame"))?;
+    // The direction across the path, on the surface: the radius turned by the tangent. It is
+    // square to the tangent and to the radius, so it lies on the surface.
+    let across = radial.cross(tangent).normalized().ok_or_else(|| fail("the cutter's frame"))?;
+    // The direction the sweep turns the profile in. The axis keeps the turn on the surface as
+    // the path curves; its sign decides which way the profile's depth points, so it is chosen
+    // to match the width's direction. A path along the axis has no axis to turn by, and the
+    // width's own direction takes over.
+    let turn = if tangent.dot(frame.axis).abs() > 0.98 {
+        across
+    } else if frame.axis.dot(across) >= 0.0 {
+        frame.axis
     } else {
-        // The axis's projection across the path: the direction on the surface square to it.
-        (frame.axis - tangent * tangent.dot(frame.axis)).normalized().ok_or_else(|| fail("the cutter's frame"))?
+        -frame.axis
     };
-    // Into the wall: the other way round than the surface's outward normal.
-    let depth = tangent.cross(across).normalized().ok_or_else(|| fail("the cutter's frame"))?;
-    Ok((across, depth))
+    Ok((across, turn, radial))
 }
 
 /// Cuts a groove along a path wrapped onto a cylindrical wall.
@@ -174,17 +185,15 @@ fn groove_tool(dev: &Development, points: &[Vec3], depth: f64, width: f64, tool:
     let frame = dev.frame;
     let start = points[0];
     let tangent = points.get(1).and_then(|p| (*p - start).normalized()).ok_or_else(|| fail("the path has no direction"))?;
-    let (across, _) = tool_frame(&frame, tangent)?;
+    let (across, turn, radial) = tool_frame(&frame, start, tangent)?;
     // The profile's plane: square to the path, its width across the path on the surface and
     // its depth into the wall. The sweep carries the plane's `x` (the width) to the direction
     // across the path and its `y` (the depth) into the wall.
-    let y = tangent.cross(across).normalized().ok_or_else(|| fail("the cutter's plane"))?;
-    let plane = Plane::new(start, across, -y).ok_or_else(|| fail("the cutter's plane"))?;
+    let plane = Plane::new(start, across, -radial).ok_or_else(|| fail("the cutter's plane"))?;
     let overcut = (width * 0.1).max(0.05);
     let region = tool_profile(width, depth, tool, overcut)?;
-    // The sweep's turn about the path is fixed by the direction across it, so that the width
-    // stays on the surface the whole way along.
-    let turn = if tangent.dot(frame.axis).abs() > 0.98 { across } else { frame.axis };
+    // The sweep's turn about the path is fixed by the direction chosen above, so that the width
+    // stays on the surface the whole way along and the depth goes into the wall.
     let ctl = SweepControl { orientation: SweepOrientation::Direction(turn), ..SweepControl::default() };
     guard("cam groove", || sweep_path_with(&plane, &region, points, &ctl))
 }

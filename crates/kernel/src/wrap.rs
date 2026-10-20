@@ -142,13 +142,14 @@ pub fn develop(frame: &CylFrame, plane: &Plane) -> Result<Development> {
     // The plane's origin lies on the outside of the cylinder when it is on the far side of the
     // axis from the plane's normal.
     let outward = if signed < 0.0 { -n } else { n };
-    let tangent = frame.axis.cross(outward).normalized().ok_or_else(|| fail("the cylinder's frame"))?;
+    let axis = frame.axis;
+    let tangent = axis.cross(outward).normalized().ok_or_else(|| fail("the cylinder's frame"))?;
     let dev = Development {
-        frame: CylFrame { radial: outward, tangent, ..*frame },
+        frame: CylFrame { origin: frame.origin, axis, radius: frame.radius, radial: outward, tangent },
         s0: w.dot(tangent),
-        z0: w.dot(frame.axis),
-        ex: Vec2::new(plane.x.dot(tangent), plane.x.dot(frame.axis)),
-        ey: Vec2::new(plane.y.dot(tangent), plane.y.dot(frame.axis)),
+        z0: w.dot(axis),
+        ex: Vec2::new(plane.x.dot(tangent), plane.x.dot(axis)),
+        ey: Vec2::new(plane.y.dot(tangent), plane.y.dot(axis)),
     };
     if !dev.is_isometry() {
         return Err(fail("the sketch plane is not square to the cylinder's axis"));
@@ -179,6 +180,9 @@ pub fn wrap_path(dev: &Development, segs: &[Seg2]) -> Result<WrappedPath> {
     let frame = dev.frame;
     let mut developed = Vec::new();
     let mut length = 0.0;
+    // The surface curves away from the chord by the step's square over eight times the
+    // radius, so the step is kept short enough for that to stay under the tolerance.
+    let max = (8.0 * frame.radius * PATH_TOLERANCE).sqrt().max(1e-6);
     for seg in segs {
         if !seg.start().is_finite() || !seg.end().is_finite() {
             return Err(fail("the path has a bad point"));
@@ -189,12 +193,19 @@ pub fn wrap_path(dev: &Development, segs: &[Seg2]) -> Result<WrappedPath> {
         }
         // The curve's own length, which the wrapping keeps.
         length += seg.length();
+        // How many points the segment would add, counted before any of them is made: a path
+        // long enough to need more than the whole budget is refused, not sampled.
+        let wanted = poly
+            .windows(2)
+            .map(|w| (w[0].dist(w[1]) / max).ceil().max(1.0) as usize)
+            .fold(0usize, |total, n| total.saturating_add(n))
+            .saturating_add(1);
+        if developed.len().saturating_add(wanted) > MAX_PATH_POINTS {
+            return Err(fail("the path is too long to wrap"));
+        }
         for pair in poly.windows(2) {
             let (a, b) = (pair[0], pair[1]);
             let step = a.dist(b);
-            // The surface curves away from the chord by the step's square over eight times the
-            // radius, so the step is kept short enough for that to stay under the tolerance.
-            let max = (8.0 * frame.radius * PATH_TOLERANCE).sqrt().max(1e-6);
             let n = (step / max).ceil().max(1.0);
             for j in 0..(n as usize) {
                 let t = j as f64 / n;
@@ -203,9 +214,6 @@ pub fn wrap_path(dev: &Development, segs: &[Seg2]) -> Result<WrappedPath> {
         }
         if let Some(last) = poly.last() {
             developed.push(dev.of(*last));
-        }
-        if developed.len() > MAX_PATH_POINTS {
-            return Err(fail("the path is too long to wrap"));
         }
     }
     let points: Vec<Vec3> = developed.iter().map(|p| frame.on_surface(p.x, p.y)).collect();

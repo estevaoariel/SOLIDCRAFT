@@ -347,3 +347,34 @@ fn a_groove_on_a_very_small_cylinder_is_cut() -> Result<()> {
     assert!((before - after - expected).abs() < expected * 0.2, "{} vs {expected}", before - after);
     Ok(())
 }
+
+/// The cutter's depth goes into the wall whichever way the path is drawn.
+///
+/// The sweep turns the profile about the path, and the turn decided which way the depth
+/// pointed: on a wall that a relief interrupts, a path drawn the other way round cut a groove
+/// as deep as the cutter's overcut instead of the depth asked for.
+#[test]
+fn a_circumferential_path_is_cut_to_its_depth_however_it_is_drawn() -> Result<()> {
+    let body = relieved(10.0, 20.0)?;
+    let (_, frame) = cylindrical_wall_at(&body, Vec3::new(0.0, 10.0, 4.0))?;
+    let face = face_at(&body, &frame, Vec3::new(0.0, 10.0, 4.0))?;
+    let plane = Plane::new(Vec3::new(0.0, 10.0, 4.0), -Vec3::X, Vec3::Z).ok_or_else(|| setup("the plane"))?;
+    // The path runs around the cylinder, drawn one way and the other.
+    let turn = std::f64::consts::TAU * 10.0;
+    for segs in [
+        [Seg2::Line { a: Vec2::new(-turn / 2.0, -2.0), b: Vec2::new(turn / 2.0, 2.0) }],
+        [Seg2::Line { a: Vec2::new(turn / 2.0, 2.0), b: Vec2::new(-turn / 2.0, -2.0) }],
+    ] {
+        let before = volume(&body)?;
+        let result = cam_groove(&body, face, &plane, &segs, 1.0, 4.0, GrooveTool::Rectangular)?;
+        assert!(result.validity().is_empty(), "{:?}", result.validity());
+        let after = volume(&result)?;
+        println!("segs {segs:?}: removed {}", before - after);
+        assert!(after < before, "{after} vs {before}");
+        let mesh = result.tessellate_with(0.01, true)?;
+        // The groove is a full depth deep, not as deep as the cutter's overcut.
+        assert!(!mesh.contains(Vec3::new(0.0, 9.5, 4.0)), "the groove is not deep enough");
+        assert!(mesh.contains(Vec3::new(0.0, 8.5, 4.0)), "the groove went too deep");
+    }
+    Ok(())
+}

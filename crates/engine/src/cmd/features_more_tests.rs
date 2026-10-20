@@ -1726,3 +1726,45 @@ fn a_sketch_wraps_onto_a_cylindrical_wall() {
     let e = s.execute("sketch.wrap", &json!({"sketch": "Flat", "face": [0, 10, 10]})).unwrap_err().to_string();
     assert!(e.contains("tangent"), "{e}");
 }
+
+/// The point of the feature (#3204): the wall a groove is cut into does not have to be a
+/// complete cylinder. A collar on top of a sleeve interrupts the wall, and the groove is cut
+/// on the piece that is left, without touching the collar.
+#[test]
+fn a_cam_groove_is_cut_on_a_wall_a_collar_interrupts() {
+    let mut s = Session::default();
+    run(&mut s, "solid.cylinder", json!({"radius": 10, "height": 18, "body_name": "Sleeve"}));
+    run(
+        &mut s,
+        "solid.cylinder",
+        json!({"radius": 8, "height": 2, "base": [0, 0, 18], "operation": "join", "body_name": "Collar"}),
+    );
+    let volume = |s: &Session, name: &str| {
+        s.model.state().body(name).unwrap().body.tessellate_with(1e-4, true).unwrap().measure().volume
+    };
+    let sleeve = volume(&s, "Sleeve");
+    let collar = volume(&s, "Collar");
+    run(
+        &mut s,
+        "sketch.create",
+        json!({"plane": {"origin": [0, 10, 9], "x_dir": [-1, 0, 0], "y_dir": [0, 0, 1]}, "name": "Track"}),
+    );
+    run(&mut s, "sketch.line", json!({"points": [[-6, -1], [6, 1]]}));
+    let sketch = s.active_sketch.unwrap();
+    let curve = {
+        let st = s.model.state();
+        st.sketch(sketch).unwrap().sketch.curves[0].id.clone()
+    };
+    run(&mut s, "sketch.finish", json!({}));
+    run(
+        &mut s,
+        "solid.cam_groove",
+        json!({"sketch": "Track", "path": [curve], "depth": 1, "width": 4, "targets": ["Sleeve"], "name": "Cam Track"}),
+    );
+    // The groove is cut, and it is the band the path swept out.
+    let length = 12.0_f64.hypot(2.0);
+    let want = length * 4.0 * 1.0 * (1.0 - 1.0 / (2.0 * 10.0));
+    assert!((sleeve - volume(&s, "Sleeve") - want).abs() < 0.05 * want, "{} vs {want}", sleeve - volume(&s, "Sleeve"));
+    // The collar is left alone.
+    assert!((volume(&s, "Collar") - collar).abs() < 1e-6);
+}
