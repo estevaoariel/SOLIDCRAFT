@@ -422,6 +422,7 @@
   "cmd.edit_checkpoint": "נקודת שמירה",
   "cmd.edit_restore_checkpoint": "שחזור נקודת שמירה",
   "cmd.engine_commands": "רשימת פקודות",
+  "cmd.engine_describe": "תיאור פקודה",
   "cmd.explode_create": "תצוגה מפוצצת",
   "cmd.explode_delete": "מחיקת תצוגה מפוצצת",
   "cmd.explode_list": "רשימת תצוגות מפוצצות",
