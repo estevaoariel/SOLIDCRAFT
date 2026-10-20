@@ -228,7 +228,7 @@ pub fn render(scene: &Scene, cam: &Camera, w: usize, h: usize) -> Canvas {
     }
     // The dashed lines (the trail lines of an exploded view): the same lines, in dashes.
     for l in &scene.dashed {
-        draw_line(&mut c, &slope, l, scene.clip, &project, Some(DASH_PX * SS as f64), sw, sh);
+        draw_line(&mut c, &slope, l, scene.clip, &project, Some(DASH_PERIOD_PX * SS as f64), sw, sh);
     }
     // Downsample.
     let mut out = Canvas::new(w, h);
@@ -254,12 +254,13 @@ pub fn render(scene: &Scene, cam: &Camera, w: usize, h: usize) -> Canvas {
     out
 }
 
-/// The dash of a dashed line: a dash and a gap of the same length, in output pixels (the
-/// viewport's dashes are the same length on screen).
-const DASH_PX: f64 = 12.0;
+/// The dash of a dashed line: one period — a dash and a gap of the same length, together — in
+/// output pixels (the viewport's dashes are the same length on screen).
+const DASH_PERIOD_PX: f64 = 12.0;
 
 /// Draw a line into the canvas: its segments, depth-tested against the model. `dash` is the
-/// length of a dash and of the gap in canvas pixels (None: a solid line).
+/// period of the dash — a dash and a gap of the same length, together — in canvas pixels
+/// (None: a solid line).
 fn draw_line(
     c: &mut Canvas,
     slope: &[f32],

@@ -83,7 +83,8 @@ impl EaseKind {
 pub struct ExplodeStep {
     pub id: u64,
     pub name: String,
-    /// (occurrence, world translation) this step adds to the occurrence's offset.
+    /// (occurrence, translation) this step adds to the occurrence's offset. The translation is in
+    /// the occurrence's parent frame, like the transform it is added to.
     pub moves: Vec<(u64, Vec3)>,
     /// How long the step takes when the view plays (milliseconds). 0 means the default
     /// ([`DEFAULT_STEP_MS`]).
