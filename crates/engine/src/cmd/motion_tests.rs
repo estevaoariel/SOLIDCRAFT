@@ -792,6 +792,83 @@ fn the_trail_lines_join_the_assembled_place_to_the_exploded_one() {
     assert!(crate::view::explode_trails(&s).is_empty());
 }
 
+/// Two moves for one occurrence in one step both apply, as they did when the view held one flat
+/// list of moves.
+#[test]
+fn two_moves_for_one_occurrence_add_up() {
+    let mut s = boxes();
+    let b = occ(&s, "B");
+    run(
+        &mut s,
+        "explode.create",
+        json!({"name": "Apart", "moves": [{"occurrence": "B", "translate": [10, 0, 0]}, {"occurrence": "B", "translate": [0, 20, 0]}]}),
+    );
+    run(&mut s, "explode.show", json!({"view": "Apart"}));
+    let o = offset(&s, b);
+    assert!((o - Vec3::new(10.0, 20.0, 0.0)).len() < 1e-9, "{o:?}");
+    // And a step's own moves add up to the steps before it.
+    run(
+        &mut s,
+        "explode.step_add",
+        json!({"view": "Apart", "moves": [{"occurrence": "B", "translate": [0, 0, 5]}, {"occurrence": "B", "translate": [0, 0, 7]}]}),
+    );
+    run(&mut s, "explode.show", json!({"view": "Apart"}));
+    let o = offset(&s, b);
+    assert!((o - Vec3::new(10.0, 20.0, 12.0)).len() < 1e-9, "{o:?}");
+}
+
+/// A design that carries a move that is not a number is refused, not shown as a broken picture.
+#[test]
+fn a_design_with_a_broken_move_is_refused() {
+    let mut s = boxes();
+    run(&mut s, "explode.create", json!({"name": "Apart", "moves": [{"occurrence": "B", "translate": [1, 0, 0]}]}));
+    // A design file can carry a move that is not a number, or one too big to be a placement.
+    if let Some(view) = s.doc_mut().assembly.exploded.first_mut()
+        && let Some(step) = view.steps.first_mut()
+    {
+        step.moves[0].1 = Vec3::new(f64::NAN, 0.0, 0.0);
+    }
+    let e = s.execute("explode.show", &json!({"view": "Apart"})).unwrap_err().to_string();
+    assert!(e.contains("Apart") && e.contains("step 0"), "{e}");
+    assert!(s.pending_moves.is_empty(), "nothing broken is shown");
+    if let Some(view) = s.doc_mut().assembly.exploded.first_mut()
+        && let Some(step) = view.steps.first_mut()
+    {
+        step.moves[0].1 = Vec3::new(1e8, 0.0, 0.0);
+    }
+    assert!(s.execute("explode.show", &json!({"view": "Apart"})).is_err());
+    assert!(s.pending_moves.is_empty());
+}
+
+/// The view on show is forgotten when its pose goes: a shown move, a revert, a capture or the
+/// view's own deletion.
+#[test]
+fn the_view_on_show_is_forgotten_when_its_pose_goes() {
+    let mut s = boxes();
+    let b = occ(&s, "B");
+    let res = run(&mut s, "explode.create", json!({"name": "Apart", "moves": [{"occurrence": "B", "translate": [0, 0, 50]}]}));
+    let view_id = res["view"].as_u64().unwrap();
+    // A move of its own: the moves shown are not the view's pose any more.
+    run(&mut s, "explode.show", json!({"view": "Apart"}));
+    run(&mut s, "occurrence.move", json!({"occurrence": b, "translate": [1, 0, 0], "capture": false}));
+    assert_eq!(s.exploded_view, None);
+    // A capture would write the exploded placement into the design: it is refused.
+    run(&mut s, "explode.show", json!({"view": "Apart"}));
+    assert!(s.execute("component.capture_position", &json!({})).is_err(), "the exploded pose was captured");
+    assert_eq!(s.exploded_view, Some(view_id), "the view is still on show");
+    assert!(!s.pending_moves.is_empty());
+    // A revert takes the moves shown away: the view is not on show any more.
+    run(&mut s, "component.revert_position", json!({}));
+    assert_eq!(s.exploded_view, None);
+    assert!(s.pending_moves.is_empty());
+    // And the view's own deletion takes its pose with it.
+    run(&mut s, "explode.show", json!({"view": "Apart"}));
+    run(&mut s, "explode.delete", json!({"view": "Apart"}));
+    assert_eq!(s.exploded_view, None);
+    assert!(s.pending_moves.is_empty());
+    assert!(crate::view::explode_trails(&s).is_empty());
+}
+
 /// Showing a view changes nothing in the design, and showing none puts the occurrences back
 /// exactly where they were.
 #[test]

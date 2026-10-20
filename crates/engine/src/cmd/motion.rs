@@ -1079,8 +1079,8 @@ fn next_step_id(view: &ExplodedView) -> u64 {
         .unwrap_or_else(|| step_id(view.id, view.steps.len() as u64))
 }
 
-/// The pose of a view at a step and a progress: how far each occurrence is moved. A step's own
-/// moves replace one another per occurrence; the steps add up to each other.
+/// The pose of a view at a step and a progress: how far each occurrence is moved. Every move of
+/// an occurrence adds up, in a step as well as across the steps.
 fn pose(view: &ExplodedView, step: usize, progress: f64) -> std::collections::BTreeMap<u64, Vec3> {
     let eased = view.easing.apply(progress);
     let mut out: std::collections::BTreeMap<u64, Vec3> = Default::default();
@@ -1094,13 +1094,29 @@ fn pose(view: &ExplodedView, step: usize, progress: f64) -> std::collections::BT
         }
         let mut own: std::collections::BTreeMap<u64, Vec3> = Default::default();
         for (o, t) in &st.moves {
-            own.insert(*o, *t);
+            *own.entry(*o).or_default() += *t;
         }
         for (o, t) in own {
             *out.entry(o).or_default() += t * f;
         }
     }
     out
+}
+
+/// The design's own moves, checked: a translation that is not a finite number, or one too big to
+/// be a placement, would put a broken matrix on screen. A design file is hostile input too.
+fn check_moves(view: &ExplodedView, cmd: &str) -> Result<()> {
+    for (i, step) in view.steps.iter().enumerate() {
+        for (o, t) in &step.moves {
+            if !t.x.is_finite() || !t.y.is_finite() || !t.z.is_finite() || t.len() >= 1e7 {
+                return Err(bad(
+                    cmd,
+                    format!("the view {} moves occurrence {o} in step {i} by a number that is not a usable translation", view.name),
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// The time into the sequence where a step starts.
@@ -1269,6 +1285,8 @@ fn explode_show(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let i = view_index(s, p, cmd)?;
     let v = s.doc.assembly.exploded.get(i).cloned().ok_or_else(|| bad(cmd, "view"))?;
+    // The design's own moves are checked before they are used: they are hostile input too.
+    check_moves(&v, cmd)?;
     // Where in the sequence the pose is: a time says it outright, a step and a progress place it
     // in the sequence.
     let (step, progress, time_ms) = match p.get("time") {
@@ -1305,6 +1323,9 @@ fn explode_show(s: &mut Session, p: &Value) -> Result<Value> {
             r[1] += t.y;
             r[2] += t.z;
         }
+        if !m.iter().flatten().all(|x| x.is_finite()) {
+            return Err(bad(cmd, format!("the view {} places occurrence {o} where it cannot be placed", v.name)));
+        }
         s.pending_moves.insert(o, m);
     }
     s.exploded_view = Some(v.id);
@@ -1320,6 +1341,12 @@ fn explode_list(s: &mut Session, _p: &Value) -> Result<Value> {
 fn explode_delete(s: &mut Session, p: &Value) -> Result<Value> {
     let i = view_index(s, p, "explode.delete")?;
     let v = s.doc_mut().assembly.exploded.remove(i);
+    // The view on show is gone: its pose goes with it.
+    if s.exploded_view == Some(v.id) {
+        s.pending_moves.clear();
+        s.exploded_view = None;
+        s.revision += 1;
+    }
     Ok(json!({"deleted": v.name}))
 }
 

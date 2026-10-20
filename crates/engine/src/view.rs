@@ -356,6 +356,14 @@ pub fn sketch_point_visible(sk: &Sketch, i: usize) -> bool {
     sk.points.get(i).is_some_and(|p| SketchPointVisibility::new(sk).takes(p))
 }
 
+/// The occurrences the exploded view on show moves: its pose belongs to them, and a move of any
+/// other kind (a shown move, a capture, a revert) replaces it.
+pub fn view_moved_occurrences(s: &Session) -> std::collections::BTreeSet<u64> {
+    let Some(id) = s.exploded_view else { return Default::default() };
+    let Some(view) = s.doc.assembly.exploded.iter().find(|v| v.id == id) else { return Default::default() };
+    view.steps.iter().flat_map(|st| st.moves.iter().map(|(o, _)| *o)).collect()
+}
+
 /// The trail lines of the exploded view on show: every moved occurrence's assembled place and
 /// its exploded place, in world space (the origin of its placement, not of a body). Nothing
 /// about them is saved: they are worked out from the design and the moves shown every time the
@@ -369,8 +377,7 @@ pub fn explode_trails(s: &Session) -> Vec<(Vec3, Vec3)> {
     let mut out = Vec::new();
     // The occurrences the view moves: only those get a line, and only while they are moved away
     // from where they are assembled.
-    let moved: std::collections::BTreeSet<u64> = view.steps.iter().flat_map(|st| st.moves.iter().map(|(o, _)| *o)).collect();
-    for moved in moved {
+    for moved in view_moved_occurrences(s) {
         if !s.pending_moves.contains_key(&moved) {
             continue;
         }
