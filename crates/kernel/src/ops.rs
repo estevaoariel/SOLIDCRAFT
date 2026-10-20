@@ -982,6 +982,10 @@ fn boolean_untimed(a: &Body, b: &Body, op: BoolOp) -> Result<Option<Body>> {
         merge(report);
         mapped
     } else {
+        if let Some(Ok(body)) = crate::round_intersection::intersect(a, b) {
+            record(BooleanFallback::new(BooleanStrategy::Piecewise));
+            return Ok(Some(body));
+        }
         first
     }
 }

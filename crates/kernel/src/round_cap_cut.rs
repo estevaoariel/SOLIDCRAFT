@@ -31,6 +31,172 @@ struct Stock {
     walls: Vec<(usize, usize, Vec<Seg2>)>,
 }
 
+/// A convex circular frustum certified from its current caps and complete ruled
+/// walls. No construction metadata or fitted surface normals are trusted.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct RoundStock {
+    pub base: Vec3,
+    pub axis: Vec3,
+    pub height: f64,
+    pub radii: [f64; 2],
+    pub caps: [usize; 2],
+}
+
+impl RoundStock {
+    /// Project a rational circular wall row along its generators onto a plane.
+    /// Central (cone) and parallel (cylinder) projection preserve exact conics.
+    pub(crate) fn section_curve(&self, surface: &mt::Surface, plane: &Plane, a: mt::Point3, b: mt::Point3) -> Option<mt::Curve> {
+        use mt::{Cut, InnerSpace, Invertible, MetricSpace, SearchNearestParameter};
+        let mt::Surface::NurbsSurface(s) = surface else { return None };
+        let net = s.control_points();
+        let (rows, cols) = (net.len(), net.first()?.len());
+        let slope = (self.radii[1] - self.radii[0]) / self.height;
+        for transpose in [false, true] {
+            let (count, length, knots, along) =
+                if transpose { (cols, rows, s.vknot_vec(), s.uknot_vec()) } else { (rows, cols, s.uknot_vec(), s.vknot_vec()) };
+            if length != 2 || along.len() != 4 || count > 4096 {
+                continue;
+            }
+            let at = |i: usize, j: usize| if transpose { net.get(j)?.get(i).copied() } else { net.get(i)?.get(j).copied() };
+            let p = at(0, 0)?;
+            let q = at(0, 1)?;
+            let h0 = (Vec3::new(p.x / p.w, p.y / p.w, p.z / p.w) - self.base).dot(self.axis);
+            let h1 = (Vec3::new(q.x / q.w, q.y / q.w, q.z / q.w) - self.base).dot(self.axis);
+            let r0 = self.radii[0] + slope * h0;
+            let r1 = self.radii[0] + slope * h1;
+            if r0 <= 0. || (h0 - h1).abs() < self.height * 1e-9 {
+                continue;
+            }
+            let ratio = r1 / r0;
+            let c0 = self.base + self.axis * h0;
+            let c1 = self.base + self.axis * h1;
+            // Corresponding end rows obey Q = ratio·P + v·P.w. Thus v
+            // is the common generator apex in homogeneous coordinates; for a
+            // cylinder v.w is zero (parallel projection along its axis).
+            let v = c1 - c0 * ratio;
+            let v = mt::Vector4::new(v.x, v.y, v.z, 1. - ratio);
+            let n = plane.normal();
+            let field = |p: mt::Vector4| n.dot(Vec3::new(p.x, p.y, p.z) - plane.origin * p.w);
+            let fv = field(v);
+            let base_controls = (0..count).map(|i| at(i, 0)).collect::<Option<Vec<_>>>()?;
+            let mut base = mt::Curve::NurbsCurve(mt::NurbsCurve::new(mt::BSplineCurve::try_new(knots.clone(), base_controls).ok()?));
+            let (lo, hi) = base.range_tuple();
+            let parameter = |p: mt::Point3| {
+                let p = Vec3::new(p.x, p.y, p.z);
+                let h = (p - self.base).dot(self.axis);
+                let radius = self.radii[0] + slope * h;
+                if radius <= 0. {
+                    return None;
+                }
+                let center = self.base + self.axis * h;
+                let q = c0 + (p - center) * (r0 / radius);
+                let q = mt::Point3::new(q.x, q.y, q.z);
+                let hint = (0..=32)
+                    .map(|i| lo + (hi - lo) * i as f64 / 32.)
+                    .min_by(|a, b| base.subs(*a).distance2(q).total_cmp(&base.subs(*b).distance2(q)));
+                let mut t = base.search_nearest_parameter(q, hint, 100)?.clamp(lo, hi);
+                // Truck's nearest-point stop is coarse enough to amplify into
+                // micrometres at the end of a steep projected conic. Refine on
+                // the original rational circle before its projective mapping.
+                for _ in 0..16 {
+                    let offset = base.subs(t) - q;
+                    let derivative = base.der(t);
+                    let denominator = derivative.dot(derivative) + offset.dot(base.der2(t));
+                    if !denominator.is_finite() || denominator.abs() < 1e-24 {
+                        return None;
+                    }
+                    let next = (t - offset.dot(derivative) / denominator).clamp(lo, hi);
+                    if !next.is_finite() {
+                        return None;
+                    }
+                    if next == t {
+                        break;
+                    }
+                    t = next;
+                }
+                (base.subs(t).distance(q) <= self.height * 1e-10 + 1e-10).then_some(t)
+            };
+            let (ta, tb) = (parameter(a)?, parameter(b)?);
+            // Trim the circular parameter interval first. A hyperbolic section
+            // can cross infinity outside the retained arc; its retained weights
+            // must stay finite and have one sign.
+            if a.distance(b) > self.height * 1e-9 {
+                let (start, end) = (ta.min(tb), ta.max(tb));
+                if end < hi - 1e-12 {
+                    let _ = base.cut(end);
+                }
+                if start > lo + 1e-12 {
+                    base = base.cut(start);
+                }
+            }
+            let mt::Curve::NurbsCurve(base) = base else { return None };
+            // L(v)·P - L(P)·v lies both on the generator through P and on
+            // L=0. Applying this linear homogeneous map to rational controls
+            // preserves the conic exactly.
+            let controls = base.control_points().iter().map(|p| *p * fv - v * field(*p)).collect::<Vec<_>>();
+            let sign = controls.first()?.w.signum();
+            if sign == 0. || controls.iter().any(|p| ![p.x, p.y, p.z, p.w].iter().all(|v| v.is_finite()) || p.w * sign <= 1e-12 * fv.abs()) {
+                continue;
+            }
+            let controls = controls.into_iter().map(|p| p * sign).collect();
+            let curve = mt::NurbsCurve::new(mt::BSplineCurve::try_new(base.knot_vec().clone(), controls).ok()?);
+            let mut curve = mt::Curve::NurbsCurve(curve);
+            if ta > tb {
+                curve.invert();
+            }
+            let (lo, hi) = curve.range_tuple();
+            if curve.subs(lo).distance(a) > self.height * 1e-9 + 1e-9 || curve.subs(hi).distance(b) > self.height * 1e-9 + 1e-9 {
+                return None;
+            }
+            return Some(curve);
+        }
+        None
+    }
+}
+
+pub(crate) fn convex_round_stock(body: &Body) -> Option<RoundStock> {
+    if body.is_mesh() || body.shell_count() != 1 || body.face_count() > 256 {
+        return None;
+    }
+    crate::guard("convex round stock", || {
+        let recognize = || {
+            let axis = body.solid.face_iter().find_map(|face| {
+                let mt::Surface::Plane(plane) = face.surface() else { return None };
+                let n = plane.normal();
+                let n = Vec3::new(n.x, n.y, n.z).normalized()?;
+                let sign = [n.x, n.y, n.z].into_iter().find(|v| v.abs() > 1e-9)?;
+                Some(if sign < 0. { -n } else { n })
+            })?;
+            let frame = Plane::from_normal(Vec3::ZERO, axis)?;
+            let tol = (body.size() * 1e-9).max(1e-9);
+            let mut work = 2_000_000;
+            let current = stock(body, &frame, tol, &mut work)?;
+            if !current.bottom.holes.is_empty() || !body.validity().is_empty() {
+                return None;
+            }
+            let mut round = RoundStock {
+                base: frame.to_world(current.bottom.outer.center) + axis * current.bottom.height,
+                axis,
+                height: current.top.height - current.bottom.height,
+                radii: [current.bottom.outer.radius, current.top.outer.radius],
+                caps: [current.bottom.index, current.top.index],
+            };
+            // A cone's axis follows increasing radius, independent of how a
+            // rigid placement changes the signs of its world coordinates.
+            if round.radii[1] < round.radii[0] {
+                round.base += round.axis * round.height;
+                round.axis = -round.axis;
+                round.radii.swap(0, 1);
+                round.caps.swap(0, 1);
+            }
+            Some(round)
+        };
+        Ok(recognize())
+    })
+    .ok()
+    .flatten()
+}
+
 /// Whole boundary curves, not a circle fitted through seam vertices.
 fn circle(wire: &mt::Wire, frame: &Plane, tol: f64, work: &mut usize) -> Option<(Circle, f64)> {
     if wire.is_empty() || wire.len() > 32 {

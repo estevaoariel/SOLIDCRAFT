@@ -1306,3 +1306,42 @@ fn chained_thin_annular_intersections_keep_measurable_caps_after_reopen() {
     check(&s);
     check(&Session::new(solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap()));
 }
+
+/// The six formerly refused intersections (three layouts, both operand orders)
+/// must survive command replay and design serialization with the correct solid.
+#[test]
+fn reducible_round_intersections_replay_in_both_orders_and_reopen() {
+    // Cylinder: analytic finite Steinmetz integral, including both end caps.
+    // Parallel frusta: Simpson integration of circular lens sections, 4096 and
+    // 8192 slices both give 83.7052814274469. Oblique frusta: independent
+    // quadratic-ray integration gives 77.3972483 (512²), 77.3972262 (1024²).
+    for (script, expected) in [
+        (include_str!("../../../examples/regressions/oblique_cylinder_intersection.json"), 73.85771361452393),
+        (include_str!("../../../examples/regressions/oblique_frustum_intersection.json"), 77.3972262023362),
+        (include_str!("../../../examples/regressions/parallel_frustum_intersection.json"), 83.70528142744693),
+    ] {
+        for reversed in [false, true] {
+            let mut script: Value = serde_json::from_str(script).unwrap();
+            if reversed {
+                let last = script["commands"].as_array_mut().unwrap().last_mut().unwrap();
+                last["params"]["target"] = json!("Tool");
+                last["params"]["tools"] = json!(["Target"]);
+            }
+            let mut s = Session::default();
+            s.run_script(&script).unwrap();
+            let check = |s: &Session| {
+                assert!(s.model.results.iter().all(|r| r.error.is_none() && r.boolean_diagnostics.warning().is_none()));
+                let state = s.model.state();
+                assert_eq!(state.bodies.len(), 1);
+                let body = &state.bodies[0].body;
+                assert!(!body.is_mesh());
+                assert!(body.validity().is_empty());
+                assert_eq!(body.lumps().unwrap().len(), 1);
+                let volume = body.tessellate_with(1e-5, true).unwrap().measure().volume;
+                assert!((volume - expected).abs() < 0.01, "reversed={reversed}: {volume} vs {expected}");
+            };
+            check(&s);
+            check(&Session::new(solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap()));
+        }
+    }
+}

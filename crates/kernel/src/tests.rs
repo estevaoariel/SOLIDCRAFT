@@ -289,11 +289,8 @@ fn check_axis_result(a: AxisFixture, b: AxisFixture, op: BoolOp, result: Option<
 }
 
 /// Test every ordered primitive pairing, in both operand orders, for one layout.
-/// The explicit refusal cases are existing unsupported curved intersections;
-/// they remain errors, never a fabricated or silently empty intersection.
 fn round_axis_layout(pose: &str, center: Vec3, axis: Vec3) {
     let mut failures = Vec::new();
-    let mut refused = 0;
     for first in AXIS_PRIMITIVES {
         let a = AxisFixture { kind: first, center: Vec3::ZERO, axis: Vec3::Z, scale: 1. };
         let body = a.build();
@@ -307,28 +304,14 @@ fn round_axis_layout(pose: &str, center: Vec3, axis: Vec3) {
                 "reference convergence {first:?}/{second:?}/{pose}: {coarse} vs {expected}"
             );
             let before = step_export(&[&body, &tool], "axis operands").unwrap();
-            let known_refusal = (pose == "oblique" && first == second && matches!(first, AxisPrimitive::Cylinder | AxisPrimitive::Cone))
-                || (pose == "parallel_offset" && first == AxisPrimitive::Cone && second == AxisPrimitive::Cone);
             for reversed in [false, true] {
                 let (l, r, lf, rf) = if reversed { (&tool, &body, b, a) } else { (&body, &tool, a, b) };
                 let tag = format!("{first:?}/{second:?}/{pose}/reversed={reversed}");
                 let start = std::time::Instant::now();
                 let result = boolean(l, r, BoolOp::Intersect);
-                let got = if known_refusal {
-                    assert!(expected > 0., "a refusal case must have a real intersection");
-                    match result {
-                        Err(error) if error.to_string().contains("no result") => {
-                            refused += 1;
-                            assert_eq!(step_export(&[&body, &tool], "axis operands").unwrap(), before, "{tag}: operands changed after failure");
-                            eprintln!("axis {tag}: documented unsupported intersection ({error})");
-                            Ok(())
-                        }
-                        Err(error) => Err(format!("{tag}: unexpected error: {error}")),
-                        Ok(_) => Err(format!("{tag}: now supported; remove the documented refusal and validate its material")),
-                    }
-                } else {
-                    result.map_err(|e| format!("{tag}: {e}")).and_then(|result| check_axis_result(lf, rf, BoolOp::Intersect, result, expected, &tag))
-                };
+                let got =
+                    result.map_err(|e| format!("{tag}: {e}")).and_then(|result| check_axis_result(lf, rf, BoolOp::Intersect, result, expected, &tag));
+                assert_eq!(step_export(&[&body, &tool], "axis operands").unwrap(), before, "{tag}: operands changed");
                 eprintln!("axis {tag}: {got:?} ({:.2}s)", start.elapsed().as_secs_f64());
                 if let Err(e) = got {
                     failures.push(e);
@@ -336,8 +319,48 @@ fn round_axis_layout(pose: &str, center: Vec3, axis: Vec3) {
             }
         }
     }
-    eprintln!("axis layout {pose}: {refused} documented refusals out of 18 cases");
     assert!(failures.is_empty(), "{} failures:\n{}", failures.len(), failures.join("\n"));
+}
+
+#[test]
+fn reducible_round_intersections_are_invariant_under_placement_and_scale() {
+    use truck_modeling::{BoundedCurve, ParametricCurve};
+    for (kind, center, axis) in [
+        (AxisPrimitive::Cylinder, Vec3::ZERO, Vec3::new(1., 1., 2.).normalized().unwrap()),
+        (AxisPrimitive::Cone, Vec3::ZERO, Vec3::new(1., 1., 2.).normalized().unwrap()),
+        (AxisPrimitive::Cone, Vec3::new(1.5, 0., 0.), Vec3::Z),
+    ] {
+        let a = AxisFixture { kind, center: Vec3::ZERO, axis: Vec3::Z, scale: 1. };
+        let b = AxisFixture { kind, center, axis, scale: 1. };
+        let expected = axis_overlap_reference(a, b, 512);
+        for (scale, angle) in [(0.5, 0.37), (2., -0.61)] {
+            let shift = Vec3::new(17., -23., 5.);
+            let turn = Vec3::new(1., 2., 3.);
+            let scaling = |s: f64| [[s, 0., 0., 0.], [0., s, 0., 0.], [0., 0., s, 0.], [0., 0., 0., 1.]];
+            let place = |body: &Body| transform(&transform_matrix(body, scaling(scale)).unwrap(), shift, Vec3::ZERO, turn, angle).unwrap();
+            let (left, right) = (place(&a.build()), place(&b.build()));
+            for reversed in [false, true] {
+                let (l, r) = if reversed { (&right, &left) } else { (&left, &right) };
+                let result = crate::round_intersection::intersect(l, r)
+                    .expect("certified placed stocks")
+                    .unwrap_or_else(|e| panic!("{kind:?}/{center:?}/scale={scale}/angle={angle}/reversed={reversed}: {e}"));
+                let restored = transform_matrix(&transform(&result, -shift, shift, turn, -angle).unwrap(), scaling(1. / scale)).unwrap();
+                for edge in restored.solid.edge_iter() {
+                    let curve = edge.curve();
+                    let (lo, hi) = curve.range_tuple();
+                    for i in 0..=64 {
+                        let p = crate::body::from_p3(curve.subs(lo + (hi - lo) * i as f64 / 64.));
+                        let (ma, mb) = (a.margin(p), b.margin(p));
+                        assert!(
+                            ma >= -2e-7 && mb >= -2e-7 && ma.abs().min(mb.abs()) < 2e-7,
+                            "section misses exact quadric/cap boundary at {p:?}: {ma}, {mb}"
+                        );
+                    }
+                }
+                check_axis_result(a, b, BoolOp::Intersect, Some(restored), expected, "placed round intersection").unwrap();
+            }
+        }
+    }
 }
 
 macro_rules! round_axis_test {

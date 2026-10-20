@@ -119,6 +119,7 @@ pub mod profile;
 pub mod provenance;
 mod record;
 mod round_cap_cut;
+mod round_intersection;
 mod seam_faces;
 mod sew;
 mod smooth_edges;

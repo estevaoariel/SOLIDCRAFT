@@ -559,3 +559,62 @@ fn reversed_cone_cylinder_intersection_keeps_original_operand_history() {
     verified(&result, &[&cone, &cylinder], 0.02);
     assert!(result.validity().is_empty());
 }
+
+#[test]
+fn reducible_round_intersections_keep_exact_face_and_edge_history() {
+    use solidcraft_geom::{Loop2, Plane, Region2, Vec2};
+    for (taper, center, axis) in [
+        (false, Vec3::ZERO, Vec3::new(1., 1., 2.).normalized().unwrap()),
+        (true, Vec3::ZERO, Vec3::new(1., 1., 2.).normalized().unwrap()),
+        (true, Vec3::new(1.5, 0., 0.), Vec3::Z),
+    ] {
+        let build = |center: Vec3, axis: Vec3| {
+            let base = center - axis * 6.;
+            if taper {
+                crate::extrude_tapered(
+                    &Plane::from_normal(base, axis).unwrap(),
+                    &Region2 { outer: Loop2::circle(Vec2::ZERO, 1.5), holes: vec![] },
+                    12.,
+                    1.,
+                    (1. / 12f64).atan(),
+                )
+                .unwrap()
+            } else {
+                crate::cylinder(base, axis, 2., 12.).unwrap()
+            }
+        };
+        let a = build(Vec3::ZERO, Vec3::Z);
+        let b = build(center, axis);
+        let before = crate::step_export(&[&a, &b], "round operands").unwrap();
+        for reversed in [false, true] {
+            let (left, right) = if reversed { (&b, &a) } else { (&a, &b) };
+            let result = crate::round_intersection::intersect(left, right)
+                .expect("certified round pair")
+                .unwrap_or_else(|e| panic!("taper={taper}/{center:?}/reversed={reversed}: {e}"));
+            assert!(result.validity().is_empty());
+            assert_eq!(result.lumps().unwrap().len(), 1);
+            let h = verified(&result, &[left, right], 1e-3);
+            assert!(h.faces.iter().all(|f| f.change != Change::Kept), "every original face is trimmed");
+            // Besides the mesh-based lineage check, each curved support must
+            // retain the original rational surface exactly (no fitted wall).
+            for (f, provenance) in result.solid.face_iter().zip(&h.faces) {
+                let truck_modeling::Surface::NurbsSurface(surface) = f.surface() else { continue };
+                assert!(
+                    provenance.origins.iter().any(|origin| {
+                        let FaceOrigin::Face { operand, face } = *origin else { return false };
+                        let Some(original) = [left, right][operand].solid.face_iter().nth(face) else { return false };
+                        let truck_modeling::Surface::NurbsSurface(original) = original.surface() else { return false };
+                        surface.control_points() == original.control_points()
+                            && surface.uknot_vec() == original.uknot_vec()
+                            && surface.vknot_vec() == original.vknot_vec()
+                    }),
+                    "curved support changed"
+                );
+            }
+            for operand in 0..2 {
+                assert!(h.faces.iter().flat_map(|f| &f.origins).any(|o| matches!(o, FaceOrigin::Face { operand: i, .. } if *i == operand)));
+            }
+            assert_eq!(crate::step_export(&[&a, &b], "round operands").unwrap(), before, "operands changed");
+        }
+    }
+}
