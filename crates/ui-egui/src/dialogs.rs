@@ -1119,6 +1119,11 @@ impl Dialog {
             return crate::sketch_modify_ui::candidate(self, s, h);
         }
         let inp = self.active_input()?;
+        if crate::dialogs_assembly::alignment_side(&self.kind, self.active).is_some()
+            && let Hit::SketchCurve { sketch, id, straight: true, .. } = h
+        {
+            return Some(Sel::ExternalSketchCurve { sketch: *sketch, id: id.clone() });
+        }
         // Features are also picked on the canvas: a face stands for the feature that made it.
         if inp.accept == selection::FEATURES {
             return match h {
@@ -1944,6 +1949,23 @@ fn input_rows_range(d: &mut Dialog, ui: &mut egui::Ui, s: &Session, range: std::
                 let text = if filled {
                     RichText::new(if let Some(face) = alignment.as_ref().and_then(|v| v.get("face")).and_then(Value::as_str).filter(|_| inp.items.is_empty()) {
                         face.to_string()
+                    } else if let Some(reference) = alignment.as_ref().and_then(|v| v.get("reference")).filter(|_| inp.items.is_empty()) {
+                        reference
+                            .get("name")
+                            .or_else(|| reference.get("axis"))
+                            .or_else(|| reference.get("plane"))
+                            .and_then(Value::as_str)
+                            .map(str::to_string)
+                            .unwrap_or_else(|| {
+                                let name = reference
+                                    .get("feature")
+                                    .or_else(|| reference.get("sketch"))
+                                    .and_then(Value::as_u64)
+                                    .and_then(|id| s.doc.feature(id))
+                                    .map(|feature| feature.name.clone())
+                                    .unwrap_or_else(|| "Missing reference".into());
+                                reference.get("curve").and_then(Value::as_str).map_or_else(|| name.clone(), |curve| format!("{name} / {curve}"))
+                            })
                     } else if custom_axis || stored_reference.is_some() {
                         crate::i18n::tr("dialog.custom_axis").into()
                     } else if !inp.multi {
