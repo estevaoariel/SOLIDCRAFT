@@ -368,6 +368,7 @@ fn snap_to_seams(pts: &mut [Vec3], seams: [Option<&mt::Edge>; 2], tolerance: f64
 /// the vertex's section: the curve runs inwards along the edge or out along the extension.
 fn tangent_cap(fit: &Fit, g: &mt::Face, tangent_side: u8, seams: [Option<&mt::Edge>; 2], tolerance: f64) -> Result<(f64, f64, mt::Curve)> {
     use mt::{BoundedCurve, ParametricCurve, ParametricSurface, SearchNearestParameter};
+    let projection = SectionProjection::default();
     let fail = || unsupported("the blend's end on its end face");
     let surf = &fit.surface;
     let (lo, hi) = (fit.range.0.min(fit.range.1), fit.range.0.max(fit.range.1));
@@ -415,7 +416,7 @@ fn tangent_cap(fit: &Fit, g: &mt::Face, tangent_side: u8, seams: [Option<&mt::Ed
     // How far the strip's point (u, v) is outside the end face (negative: inside the body).
     let outside = |u: f64, v: f64| -> Option<f64> {
         let x = from_p3(surf.subs(u, v));
-        let (q, n, _) = project(g, x, None)?;
+        let (q, n, _) = projection.project(g, x, None)?;
         Some((x - q).dot(n))
     };
     // Root of `f` between `lo` and `hi`, `f(lo)` and `f(hi)` of different sign.
@@ -520,56 +521,22 @@ pub(crate) fn project(f: &mt::Face, p: Vec3, hint: Option<(f64, f64)>) -> Option
     Some((q, Vec3::new(n.x, n.y, n.z).normalized()?, uv))
 }
 
-/// Surface data shared by all stations of one rolling-ball build. Truck's cold NURBS
-/// inversion evaluates a 51 × 51 grid on every call; only the query point changes.
-/// Keep those exact samples, then refine from the nearest sample as before.
+/// Oriented surfaces shared by all stations of one rolling-ball build. Cold
+/// inversion shares the modeling dispatcher's bounded spatial sample index with
+/// the other callers of these surfaces, including intersection-edge evaluation.
 #[derive(Default)]
 pub(crate) struct SectionProjection {
-    faces: std::cell::RefCell<HashMap<(mt::FaceID, bool), ProjectionSurface>>,
-}
-
-struct ProjectionSurface {
-    surface: mt::Surface,
-    grid: Option<Vec<((f64, f64), Vec3)>>,
+    faces: std::cell::RefCell<HashMap<(mt::FaceID, bool), mt::Surface>>,
 }
 
 impl SectionProjection {
     pub(crate) fn project(&self, face: &mt::Face, point: Vec3, hint: Option<(f64, f64)>) -> Option<(Vec3, Vec3, (f64, f64))> {
         use mt::{ParametricSurface, ParametricSurface3D, SearchNearestParameter};
-        let mut faces = self.faces.borrow_mut();
-        let prepared =
-            faces.entry((face.id(), face.orientation())).or_insert_with(|| ProjectionSurface { surface: face.oriented_surface(), grid: None });
-        let surface = &prepared.surface;
-        let mut search = |hint: Option<(f64, f64)>| {
-            let hint = hint.or_else(|| {
-                if !matches!(surface, mt::Surface::NurbsSurface(_) | mt::Surface::BSplineSurface(_)) {
-                    return None;
-                }
-                let samples = prepared.grid.get_or_insert_with(|| {
-                    let (Some((u0, u1)), Some((v0, v1))) = surface.try_range_tuple() else { return Vec::new() };
-                    if ![u0, u1, v0, v1].iter().all(|x| x.is_finite()) {
-                        return Vec::new();
-                    }
-                    let mut grid = Vec::with_capacity(51 * 51);
-                    for i in 0..=50 {
-                        for j in 0..=50 {
-                            let a = f64::from(i) / 50.0;
-                            let b = f64::from(j) / 50.0;
-                            let uv = (u0 * (1.0 - a) + u1 * a, v0 * (1.0 - b) + v1 * b);
-                            grid.push((uv, from_p3(surface.subs(uv.0, uv.1))));
-                        }
-                    }
-                    grid
-                });
-                samples
-                    .iter()
-                    .filter(|(_, q)| q.is_finite())
-                    .min_by(|(_, a), (_, b)| (*a - point).len2().total_cmp(&(*b - point).len2()))
-                    .map(|(uv, _)| *uv)
-            });
-            surface.search_nearest_parameter(p3(point), hint, 100)
-        };
-        let uv = search(hint).or_else(|| search(None))?;
+        let mut faces = self.faces.try_borrow_mut().ok()?;
+        let surface = faces.entry((face.id(), face.orientation())).or_insert_with(|| face.oriented_surface());
+        // The modeling dispatcher shares its bounded spatial sample index with
+        // intersection-edge evaluation and meshing as well as section solves.
+        let uv = surface.search_nearest_parameter(p3(point), hint, 100).or_else(|| surface.search_nearest_parameter(p3(point), None, 100))?;
         let q = from_p3(surface.subs(uv.0, uv.1));
         let n = surface.normal(uv.0, uv.1);
         Some((q, Vec3::new(n.x, n.y, n.z).normalized()?, uv))

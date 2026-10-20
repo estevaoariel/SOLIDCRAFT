@@ -1967,7 +1967,7 @@ fn check_fillet_edges_in(body: &Body, points: &[Vec3]) -> Result<()> {
     let all = Body::unique_edges(&body.solid);
     // Picking only needs edge polylines. Do not triangulate the body's faces just
     // to reject a selection (a complex trimmed face can itself be expensive).
-    let rules = crate::tess::size::Rules::new((size * 2e-3).max(1e-3), size, None);
+    let rules = crate::tess::size::Rules::new((size * 2e-3).max(1e-3), size, None, None);
     let polylines: Vec<_> = all.iter().map(|edge| crate::tess::edges::sample_edge(edge, &rules, f64::INFINITY).points).collect();
     let mut checked = std::collections::HashSet::new();
     let mut hints = HashMap::new();
@@ -2038,10 +2038,10 @@ pub fn fillet(body: &Body, edges: &[Vec3], radius: f64) -> Result<Body> {
     // A round that would run past its faces into other geometry or another round (#1080).
     // Checked once built, so a refusal of the build itself stands as it is.
     let size = crate::blend_fit::Size::Round(radius);
-    match fillet_built(body, edges, radius) {
+    crate::boolean_record::with_prepared(body, || match fillet_built(body, edges, radius) {
         Ok(b) => crate::blend_fit::accept(body, b, edges, size),
         Err(e) => Err(crate::blend_fit::explain(body, edges, size, e)),
-    }
+    })
 }
 
 /// [`fillet`], once the radius is known to fit.

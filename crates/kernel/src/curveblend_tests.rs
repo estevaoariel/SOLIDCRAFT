@@ -765,7 +765,7 @@ fn rolling_sections_reuse_the_surface_search_grid() {
         }
         let prepared = projection.faces.borrow();
         assert_eq!(prepared.len(), 1);
-        assert_eq!(prepared.get(&(face.id(), face.orientation())).unwrap().grid.as_ref().unwrap().len(), 51 * 51);
+        assert!(prepared.contains_key(&(face.id(), face.orientation())));
     }
 }
 
@@ -919,4 +919,100 @@ fn a_cylindrical_face_can_round_its_convex_and_concave_edges_together() {
         assert!(crate::tess::boundaries_on_surfaces(&out.solid, out.size() * 1e-4));
         assert!(out.face_count() > body.face_count());
     }
+}
+
+/// The index must select the *same sample*, including ties, as the old scan;
+/// the sample is only a seed for the unchanged exact Newton projection.
+#[test]
+fn spatial_projection_seeds_match_cold_grids_and_preserve_surface_changes() {
+    use mt::{InnerSpace, Invertible, Transformed};
+    let control: Vec<Vec<_>> =
+        (0..4).map(|i| (0..4).map(|j| mt::Point3::new(i as f64 * 2.0, j as f64 * 3.0, 0.13 * (i * j) as f64)).collect()).collect();
+    let spline = mt::BSplineSurface::new((mt::KnotVec::bezier_knot(3), mt::KnotVec::bezier_knot(3)), control.clone());
+    let rational = mt::NurbsSurface::new(mt::BSplineSurface::new(
+        (mt::KnotVec::bezier_knot(3), mt::KnotVec::bezier_knot(3)),
+        control
+            .iter()
+            .enumerate()
+            .map(|(i, row)| {
+                row.iter()
+                    .enumerate()
+                    .map(|(j, p)| {
+                        let w = 1.0 + (i + j) as f64 * 0.17;
+                        mt::Vector4::new(p.x * w, p.y * w, p.z * w, w)
+                    })
+                    .collect()
+            })
+            .collect(),
+    ));
+    let profile = mt::Curve::Line(mt::Line(mt::Point3::new(4.0, 0.0, -2.0), mt::Point3::new(4.0, 0.0, 9.0)));
+    let mut revolved =
+        mt::Processor::new(mt::RevolutedCurve::by_revolution(profile, mt::Point3::new(0.0, 0.0, 0.0), mt::Vector3::new(0.0, 0.0, 1.0)));
+    revolved.transform_by(mt::Matrix4::new(1.2, 0.0, 0.0, 0.0, 0.3, 0.8, 0.0, 0.0, 0.0, 0.0, -1.1, 0.0, 2.0, -3.0, 4.0, 1.0));
+    let mut changed = spline.clone();
+    for p in changed.control_points_mut() {
+        p.x += 2.125;
+        p.z -= 0.75;
+    }
+    let mut surfaces = vec![
+        mt::Surface::BSplineSurface(spline),
+        mt::Surface::NurbsSurface(rational),
+        mt::Surface::RevolutedCurve(revolved),
+        mt::Surface::BSplineSurface(changed),
+    ];
+    // Reversed charts swap the revolved parameter axes; the cache cannot alias
+    // these with the forward surface or with a modified geometry snapshot.
+    surfaces.extend(surfaces.clone().into_iter().map(|mut s| {
+        s.invert();
+        s
+    }));
+    for surface in surfaces.iter().chain(surfaces.iter().rev()) {
+        let (Some(ur), Some(vr)) = surface.try_range_tuple() else { panic!("bounded fixture") };
+        let division = if matches!(surface, mt::Surface::RevolutedCurve(_)) { 100 } else { 50 };
+        for k in 0..12 {
+            let u = ur.0 + (ur.1 - ur.0) * f64::from(k) / 11.0;
+            let v = vr.0 + (vr.1 - vr.0) * f64::from(11 - k) / 11.0;
+            let on = surface.subs(u, v);
+            let n = surface.normal(u, v);
+            let p = on + n * 0.23;
+            let reference = mt::algo::surface::presearch(surface, p, (ur, vr), division);
+            assert_eq!(mt::projection_seed(surface, p), Some(reference));
+            let expected = mt::algo::surface::search_nearest_parameter(surface, p, reference, 100);
+            let actual = surface.search_nearest_parameter(p, None, 100);
+            match (expected, actual) {
+                (Some(a), Some(b)) => assert!((surface.subs(a.0, a.1) - surface.subs(b.0, b.1)).magnitude() < 1e-9),
+                (None, None) => {}
+                other => panic!("projection changed: {other:?}"),
+            }
+        }
+    }
+    // A rank-deficient patch has many identical grid points. Tie handling must
+    // retain the first grid index instead of depending on tree traversal order.
+    let tied = mt::Surface::BSplineSurface(mt::BSplineSurface::new(
+        (mt::KnotVec::bezier_knot(1), mt::KnotVec::bezier_knot(1)),
+        vec![vec![mt::Point3::new(0.0, 0.0, 0.0); 2]; 2],
+    ));
+    assert_eq!(mt::projection_seed(&tied, mt::Point3::new(1.0, 2.0, 3.0)), Some((0.0, 0.0)));
+    assert!(mt::projection_seed(&tied, mt::Point3::new(f64::NAN, 0.0, 0.0)).is_none());
+    let mut invalid = control;
+    invalid[0][0].x = f64::NAN;
+    let invalid = mt::Surface::BSplineSurface(mt::BSplineSurface::new((mt::KnotVec::bezier_knot(3), mt::KnotVec::bezier_knot(3)), invalid));
+    assert!(mt::projection_seed(&invalid, mt::Point3::new(1.0, 2.0, 3.0)).is_none());
+    let oversized = mt::Surface::BSplineSurface(mt::BSplineSurface::new(
+        (mt::KnotVec::bezier_knot(1), mt::KnotVec::uniform_knot(1, 5999)),
+        vec![vec![mt::Point3::new(0.0, 0.0, 0.0); 6000]; 2],
+    ));
+    assert!(mt::projection_seed(&oversized, mt::Point3::new(1.0, 2.0, 3.0)).is_none());
+    std::thread::scope(|scope| {
+        for surface in &surfaces {
+            scope.spawn(move || {
+                let (Some(ur), Some(vr)) = surface.try_range_tuple() else { panic!("bounded fixture") };
+                for k in 0..4 {
+                    let p = mt::Point3::new(f64::from(k), 1.23, -0.73);
+                    let division = if matches!(surface, mt::Surface::RevolutedCurve(_)) { 100 } else { 50 };
+                    assert_eq!(mt::projection_seed(surface, p), Some(mt::algo::surface::presearch(surface, p, (ur, vr), division)));
+                }
+            });
+        }
+    });
 }

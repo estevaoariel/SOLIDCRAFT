@@ -57,6 +57,23 @@ Changes:
   way, and a void dropped every face outside it: a cut beside a sealed void came out empty or
   with the body gone. An OR keeps truck's count.
 
+## truck-modeling 0.6.0 (Apache-2.0, © RICOS Co. Ltd., https://github.com/ricosjp/truck)
+
+Changes:
+- `projection.rs` (new) and `geometry.rs`: share immutable cold-search sample grids
+  through a process-wide LRU cache, bounded to 128 entries and 32 MiB of retained
+  preparation data. Geometry snapshots over 256 KiB and procedural intersection
+  profiles use the original search. Entries own their full geometry and compare it
+  exactly, so modified surfaces, transformed/reversed charts and reused addresses
+  cannot alias stale data. Preparation and queries run outside the cache lock.
+- The spatial index selects exactly the original grid's nearest finite sample,
+  preserving the lowest grid-index tie. Splines retain the 51 × 51 grid, revolutions
+  the 101 × 101 grid. Newton, supplied parameter/range hints, accuracy tolerances
+  and unsupported/failed-preparation fallback remain the upstream algorithms.
+- `lib.rs`/manifest: a dev-only `test-hooks` feature exposes sample selection to
+  kernel equivalence tests, which run in workspace CI. Upstream examples and test
+  targets are omitted; upstream warning-only diagnostics do not fail compilation.
+
 ## truck-geometry 0.5.0 (Apache-2.0, © RICOS Co. Ltd., https://github.com/ricosjp/truck)
 
 Changes:
