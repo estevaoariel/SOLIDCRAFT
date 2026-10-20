@@ -1933,6 +1933,21 @@ pub(crate) fn dialog_pick(app: &mut SolveApp, hit: &Hit, sel: Sel) {
     if app.applying.is_some() {
         return;
     }
+    // Press Pull's first pick of a curved face or an edge reopens it as an offset or a fillet.
+    if let Some(d) = &app.dialog
+        && d.press_pull
+        && d.inputs.first().is_some_and(|i| i.items.is_empty())
+        && match &sel {
+            Sel::Edge { .. } => true,
+            Sel::Face { body, index, .. } => crate::dialogs::planar_face(&app.session, body, *index).is_none(),
+            _ => false,
+        }
+    {
+        crate::dialogs::cancel(app);
+        app.session.selection = vec![sel];
+        app.start("solid.press_pull");
+        return;
+    }
     let Some(mut d) = app.dialog.take() else { return };
     d.pick(&app.session, sel);
     if let crate::dialogs::Kind::PathPlane { sketch, .. } = &mut d.kind {
