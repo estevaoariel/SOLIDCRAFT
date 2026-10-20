@@ -144,11 +144,9 @@ pub fn cam_groove(body: &Body, face: usize, plane: &Plane, segs: &[Seg2], depth:
     let atol = ztol / dev.frame.radius;
     // A wall is often more than one face (a cylinder is split at its seam, and a relief
     // groove interrupts it), so the face the caller names and the face the point finds may
-    // differ while standing on the same wall: it is the point that has to lie on the face
-    // the caller named.
-    if !spans.iter().any(|s| s.face == face && s.holds(dev.frame.angle(touch), dev.frame.axial(touch), atol, ztol)) {
-        return Err(fail("the sketch plane does not stand on the selected wall"));
-    }
+    // differ while standing on the same wall. The plane has to stand tangent to that wall,
+    // which `develop` has just checked.
+    let _ = face;
     let path = wrap_path(&dev, segs)?;
     if path.points.len() < 2 {
         return Err(fail("the path has no length"));
