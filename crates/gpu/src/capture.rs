@@ -350,9 +350,9 @@ fn frame(scene: &Scene, cam: &Camera, [width, height]: [u32; 2], key: u64, acces
 
 /// A scene's meshes and lines as the viewport's model scene: faces in their colours (smooth
 /// normals; a face normal where a vertex has none), lines as wide lines (over everything when
-/// `on_top`), the grid under everything. A body whose appearance is see-through
-/// ([`solidcraft_render::SceneMesh::glass`]) goes into the scene's glass, drawn as the viewport
-/// draws glass: far sides first, then near sides, so what lies inside it shows through.
+/// `on_top`), the dashed lines as dashes, the grid under everything. A body whose appearance is
+/// see-through ([`solidcraft_render::SceneMesh::glass`]) goes into the scene's glass, drawn as the
+/// viewport draws glass: far sides first, then near sides, so what lies inside it shows through.
 pub fn scene_geometry(scene: &Scene) -> GpuScene {
     let mut sc = GpuScene::default();
     for m in &scene.meshes {
@@ -383,6 +383,11 @@ pub fn scene_geometry(scene: &Scene) -> GpuScene {
     for l in &scene.lines {
         for w in l.points.windows(2) {
             sc.line(w[0].to_f32(), w[1].to_f32(), c4(l.color), l.width as f32, l.on_top);
+        }
+    }
+    for l in &scene.dashed {
+        for w in l.points.windows(2) {
+            sc.dashed_line(w[0].to_f32(), w[1].to_f32(), c4(l.color), l.width as f32);
         }
     }
     sc

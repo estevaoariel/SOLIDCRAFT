@@ -4,7 +4,7 @@
 use solidcraft_geom::Vec3;
 
 use crate::Camera;
-use crate::scene::{Rgb, SECTION_CAP, Scene, png};
+use crate::scene::{Rgb, SECTION_CAP, Scene, SceneLine, png};
 
 /// RGBA pixels plus depth.
 pub struct Canvas {
@@ -224,47 +224,11 @@ pub fn render(scene: &Scene, cam: &Camera, w: usize, h: usize) -> Canvas {
         }
     }
     for l in scene.grid.iter().chain(&scene.lines) {
-        let col = l.color.f();
-        let half = (l.width * SS as f64 * 0.5).max(0.5);
-        for seg in l.points.windows(2) {
-            let (Some(&p), Some(&q)) = (seg.first(), seg.get(1)) else { continue };
-            // The section cuts the segment in 3D (screen space is not linear in depth in
-            // perspective views).
-            let Some((p, q)) = clip_segment(p, q, scene.clip) else { continue };
-            let (Some(a), Some(b)) = (project(p), project(q)) else { continue };
-            let len = ((b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2)).sqrt();
-            let steps = (len.ceil() as usize).clamp(1, 20_000);
-            for k in 0..=steps {
-                let t = k as f64 / steps as f64;
-                let (x, y, z) = (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t);
-                let r = half.ceil() as i64;
-                for dy in -r..=r {
-                    for dx in -r..=r {
-                        let (ix, iy) = (x.floor() as i64 + dx, y.floor() as i64 + dy);
-                        if ix < 0 || iy < 0 || ix >= sw as i64 || iy >= sh as i64 {
-                            continue;
-                        }
-                        let d = ((ix as f64 + 0.5 - x).powi(2) + (iy as f64 + 0.5 - y).powi(2)).sqrt();
-                        let cov = (half + 0.5 - d).clamp(0.0, 1.0);
-                        if cov <= 0.0 {
-                            continue;
-                        }
-                        let i = iy as usize * sw + ix as usize;
-                        // A line on a face lies at the face's depth, but the pixel holds the
-                        // face's depth at its centre, `d` away: allow what the face's slope
-                        // spans over that distance, and the rounding. (A fixed allowance in
-                        // screen depth is a share of the scene's depth range, a millimetre or
-                        // more on a large design: close views showed the far side of thin
-                        // sheet, and parts just behind it, through it.)
-                        let visible = l.on_top
-                            || c.depth.get(i).zip(slope.get(i)).is_some_and(|(dd, s)| z <= f64::from(*dd) + f64::from(*s) * d + z.abs() * DEPTH_EPS);
-                        if visible {
-                            c.put(ix as usize, iy as usize, col, cov);
-                        }
-                    }
-                }
-            }
-        }
+        draw_line(&mut c, &slope, l, scene.clip, &project, None, sw, sh);
+    }
+    // The dashed lines (the trail lines of an exploded view): the same lines, in dashes.
+    for l in &scene.dashed {
+        draw_line(&mut c, &slope, l, scene.clip, &project, Some(DASH_PX * SS as f64), sw, sh);
     }
     // Downsample.
     let mut out = Canvas::new(w, h);
@@ -288,6 +252,76 @@ pub fn render(scene: &Scene, cam: &Camera, w: usize, h: usize) -> Canvas {
         }
     }
     out
+}
+
+/// The dash of a dashed line: a dash and a gap of the same length, in output pixels (the
+/// viewport's dashes are the same length on screen).
+const DASH_PX: f64 = 12.0;
+
+/// Draw a line into the canvas: its segments, depth-tested against the model. `dash` is the
+/// length of a dash and of the gap in canvas pixels (None: a solid line).
+fn draw_line(
+    c: &mut Canvas,
+    slope: &[f32],
+    l: &SceneLine,
+    clip: Option<(Vec3, f64)>,
+    project: &dyn Fn(Vec3) -> Option<[f64; 3]>,
+    dash: Option<f64>,
+    sw: usize,
+    sh: usize,
+) {
+    let col = l.color.f();
+    let half = (l.width * SS as f64 * 0.5).max(0.5);
+    for seg in l.points.windows(2) {
+        let (Some(&p), Some(&q)) = (seg.first(), seg.get(1)) else { continue };
+        // The section cuts the segment in 3D (screen space is not linear in depth in
+        // perspective views).
+        let Some((p, q)) = clip_segment(p, q, clip) else { continue };
+        let (Some(a), Some(b)) = (project(p), project(q)) else { continue };
+        let len = ((b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2)).sqrt();
+        let steps = (len.ceil() as usize).clamp(1, 20_000);
+        for k in 0..=steps {
+            let t = k as f64 / steps as f64;
+            // The gap of the dash: the pixels between the dashes are not drawn.
+            if let Some(period) = dash
+                && fract(t * len / period) > 0.5
+            {
+                continue;
+            }
+            let (x, y, z) = (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t);
+            let r = half.ceil() as i64;
+            for dy in -r..=r {
+                for dx in -r..=r {
+                    let (ix, iy) = (x.floor() as i64 + dx, y.floor() as i64 + dy);
+                    if ix < 0 || iy < 0 || ix >= sw as i64 || iy >= sh as i64 {
+                        continue;
+                    }
+                    let d = ((ix as f64 + 0.5 - x).powi(2) + (iy as f64 + 0.5 - y).powi(2)).sqrt();
+                    let cov = (half + 0.5 - d).clamp(0.0, 1.0);
+                    if cov <= 0.0 {
+                        continue;
+                    }
+                    let i = iy as usize * sw + ix as usize;
+                    // A line on a face lies at the face's depth, but the pixel holds the
+                    // face's depth at its centre, `d` away: allow what the face's slope
+                    // spans over that distance, and the rounding. (A fixed allowance in
+                    // screen depth is a share of the scene's depth range, a millimetre or
+                    // more on a large design: close views showed the far side of thin
+                    // sheet, and parts just behind it, through it.)
+                    let visible = l.on_top
+                        || c.depth.get(i).zip(slope.get(i)).is_some_and(|(dd, s)| z <= f64::from(*dd) + f64::from(*s) * d + z.abs() * DEPTH_EPS);
+                    if visible {
+                        c.put(ix as usize, iy as usize, col, cov);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Where `x` falls in its period: 0 at the start of the period, 1 at its end.
+fn fract(x: f64) -> f64 {
+    x - x.floor()
 }
 
 /// The part of segment `p`–`q` the section keeps (where normal·x <= d).
@@ -545,5 +579,40 @@ mod tests {
                 assert_eq!(drawn, whole, "fov {fov}, radius {radius}: parts of the lines on the face are hidden");
             }
         }
+    }
+
+    /// A dashed line is drawn in dashes: along it the pixels come and go, where a solid line
+    /// runs on unbroken. The trail lines of an exploded view are dashed lines.
+    #[test]
+    fn dashed_lines_are_drawn_in_dashes() {
+        let line =
+            || SceneLine { points: vec![Vec3::new(-15.0, 0.0, 0.0), Vec3::new(15.0, 0.0, 0.0)], color: Rgb(255, 0, 0), width: 2.0, on_top: false };
+        let scene_of = |dashed: bool| Scene {
+            meshes: vec![],
+            lines: if dashed { vec![] } else { vec![line()] },
+            dashed: if dashed { vec![line()] } else { vec![] },
+            radius: 20.0,
+            ..Default::default()
+        };
+        let mut cam = Camera { distance: 50.0, ..Default::default() };
+        cam.set_view(StandardView::Front);
+        // The row the line runs along, and where it is drawn.
+        let row = |scene: &Scene| -> Vec<bool> {
+            let c = render(scene, &cam, 64, 64);
+            (0..64)
+                .map(|x| {
+                    let i = (32 * 64 + x) * 4;
+                    c.rgba[i] > 150 && c.rgba[i + 1] < 120 && c.rgba[i + 2] < 120
+                })
+                .collect()
+        };
+        let solid = row(&scene_of(false));
+        let dashed = row(&scene_of(true));
+        let drawn = |r: &[bool]| r.iter().filter(|d| **d).count();
+        assert!(drawn(&solid) > 40, "the solid line is drawn: {solid:?}");
+        assert!(drawn(&dashed) > 10, "the dashed line is drawn: {dashed:?}");
+        assert!(drawn(&dashed) + 10 < drawn(&solid), "the dashed line has gaps: {dashed:?} vs {solid:?}");
+        // The line comes and goes along its length.
+        assert!(dashed.windows(2).any(|w| w[0] != w[1]), "the dashes are apart: {dashed:?}");
     }
 }

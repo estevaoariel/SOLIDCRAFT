@@ -265,6 +265,8 @@ pub struct GpuScene {
     pub glass: Vec<u8>,
     /// Depth-tested lines.
     pub lines: Vec<u8>,
+    /// Dashed depth-tested lines (the trail lines of an exploded view).
+    pub dashed: Vec<u8>,
     /// Lines drawn only where the model hides them (hidden edges).
     pub hidden: Vec<u8>,
     /// Lines drawn over everything (active sketch, highlights).
@@ -412,6 +414,14 @@ impl GpuScene {
         }
         out.extend_from_slice(&c);
         out.extend_from_slice(&width.to_le_bytes());
+    }
+    /// A dashed line, drawn in dashes on screen (the trail lines of an exploded view).
+    pub fn dashed_line(&mut self, a: [f32; 3], b: [f32; 3], c: [u8; 4], width: f32) {
+        for v in a.iter().chain(&b) {
+            self.dashed.extend_from_slice(&v.to_le_bytes());
+        }
+        self.dashed.extend_from_slice(&c);
+        self.dashed.extend_from_slice(&width.to_le_bytes());
     }
 }
 
@@ -808,6 +818,7 @@ struct Batches {
     glass_cpu: Vec<u8>,
     glass_sorted_for: Option<[f32; 3]>,
     lines: Option<Batch>,
+    dashed: Option<Batch>,
     hidden: Option<Batch>,
     overlays: Option<Batch>,
     ghost: Option<Batch>,
@@ -865,6 +876,7 @@ impl Batches {
             self.glass_cpu = sc.glass;
             self.glass_sorted_for = None;
             self.lines = joined(blocks.iter().map(|b| &b.lines), upload(device, "sc_lines", &sc.lines, LINE_SIZE));
+            self.dashed = upload(device, "sc_dashed", &sc.dashed, LINE_SIZE);
             self.hidden = joined(blocks.iter().map(|b| &b.hidden), upload(device, "sc_hidden", &sc.hidden, LINE_SIZE));
             self.overlays = upload(device, "sc_overlay", &sc.overlay, LINE_SIZE);
             self.ghost = upload(device, "sc_ghost", &sc.ghost, TRI_SIZE);
@@ -1073,6 +1085,8 @@ pub struct Renderer {
     ghost: wgpu::RenderPipeline,
     xray: wgpu::RenderPipeline,
     line: wgpu::RenderPipeline,
+    /// Dashed lines (the trail lines of an exploded view): as `line`, but dashed on screen.
+    dashed: wgpu::RenderPipeline,
     /// Lines behind the model (depth test >).
     line_hidden: wgpu::RenderPipeline,
     overlay: wgpu::RenderPipeline,
@@ -1766,6 +1780,7 @@ impl Renderer {
             ghost: pipeline("sc_ghost", "vs_tri", "fs_tri", tri_layout(), pushed(wgpu::CompareFunction::LessEqual, false, GHOST_BIAS), alpha),
             xray: pipeline("sc_xray", "vs_tri", "fs_tri", tri_layout(), depth(wgpu::CompareFunction::Always, false), alpha),
             line: pipeline("sc_lines", "vs_line", "fs_line", line_layout(), depth(wgpu::CompareFunction::LessEqual, false), alpha),
+            dashed: pipeline("sc_dashed", "vs_dash_line", "fs_dash_line", line_layout(), depth(wgpu::CompareFunction::LessEqual, false), alpha),
             line_hidden: pipeline("sc_lines_hidden", "vs_line", "fs_line", line_layout(), depth(wgpu::CompareFunction::Greater, false), alpha),
             overlay: pipeline("sc_overlay", "vs_line", "fs_line_all", line_layout(), depth(wgpu::CompareFunction::Always, false), alpha),
             guide_trans: pipeline("sc_guide_trans", "vs_tri", "fs_tri_all", tri_layout(), depth(wgpu::CompareFunction::LessEqual, false), alpha),
@@ -2112,6 +2127,9 @@ impl Renderer {
         tris(pass, &res.tri_hl, &h.tris);
         lines(pass, &res.line, &m.lines);
         lines(pass, &res.line, &sk.lines);
+        // The trail lines of an exploded view: depth-tested like the other lines, so the model
+        // hides them where they lie behind a body.
+        lines(pass, &res.dashed, &m.dashed);
         lines(pass, &res.line_hidden, &m.hidden);
         lines(pass, &res.line_hidden, &h.hidden);
         lines(pass, &res.line, &pv.lines);
@@ -2467,6 +2485,19 @@ mod tests {
     fn shader_is_valid() {
         let module = naga::front::wgsl::parse_str(super::SHADER).unwrap_or_else(|e| panic!("{}", e.emit_to_string(super::SHADER)));
         naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::empty()).validate(&module).unwrap();
+    }
+
+    /// The dashed lines of a scene reach the GPU scene, in the buffer of their own (the trail
+    /// lines of an exploded view).
+    #[test]
+    fn the_dashed_lines_of_a_scene_reach_the_gpu_scene() {
+        use solidcraft_geom::Vec3;
+        use solidcraft_render::{Rgb, Scene, SceneLine};
+        let line = SceneLine { points: vec![Vec3::ZERO, Vec3::new(1.0, 0.0, 0.0)], color: Rgb(255, 0, 0), width: 1.5, on_top: false };
+        let scene = Scene { dashed: vec![line], ..Default::default() };
+        let gpu = crate::capture::scene_geometry(&scene);
+        assert_eq!(gpu.dashed.len(), super::LINE_SIZE, "one dashed line in the buffer");
+        assert!(gpu.lines.is_empty(), "a dashed line is not a plain line");
     }
 
     /// Derivatives and implicit-lod sampling run only in uniform control flow: browsers' WGSL

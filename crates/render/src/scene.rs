@@ -68,6 +68,8 @@ pub struct SceneLine {
 pub struct Scene {
     pub meshes: Vec<SceneMesh>,
     pub lines: Vec<SceneLine>,
+    /// Dashed lines: the trail lines of an exploded view.
+    pub dashed: Vec<SceneLine>,
     /// The ground grid: drawn under everything (the model hides it; it never hides the model).
     pub grid: Vec<SceneLine>,
     /// Background gradient top → bottom.
