@@ -416,6 +416,27 @@ struct LOut {
     @location(1) wp: vec3<f32>,
 };
 
+/// Clip z of the world point `p` (clip position `c`) moved `px` pixels toward the eye: the front
+/// of a thin cylinder around an edge, so the band drawn along it is not buried by a face next to
+/// the edge seen at a grazing angle. Measured on the screen, it is the same at every zoom.
+fn lifted_z(p: vec3<f32>, c: vec4<f32>, px: f32, half: vec2<f32>) -> f32 {
+    let b = normalize(u.back.xyz);
+    var a = vec3<f32>(0.0, 0.0, 1.0);
+    if (abs(b.z) > 0.9) { a = vec3<f32>(1.0, 0.0, 0.0); }
+    let side = normalize(cross(b, a));
+    let cs = u.vp * vec4<f32>(p + side, 1.0);
+    if (cs.w <= 1e-6) { return c.z; }
+    // Pixels per millimetre across the view at the point's depth.
+    let ppm = length((cs.xy / cs.w - c.xy / c.w) * half);
+    if (ppm < 1e-9) { return c.z; }
+    var toward = b;
+    if (u.eye.w > 0.5) { toward = normalize(u.eye.xyz - p); }
+    let q = u.vp * vec4<f32>(p + toward * (px / ppm), 1.0);
+    if (q.w <= 1e-6) { return c.z; }
+    // The same depth at the original w, so the band stays where it was on the screen.
+    return q.z / q.w * c.w;
+}
+
 @vertex
 fn vs_line(@builtin(vertex_index) vi: u32, @location(0) a: vec3<f32>, @location(1) b: vec3<f32>, @location(2) c: vec4<f32>, @location(3) w: f32) -> LOut {
     var pa = a;
@@ -452,11 +473,18 @@ fn vs_line(@builtin(vertex_index) vi: u32, @location(0) a: vec3<f32>, @location(
     // A line thinner than a pixel is drawn a pixel wide, faded by the width it lacks: a narrower
     // quad covers no pixel centre when it falls between two rows, so without multisampling thin
     // lines (the grid's) came and went as the view zoomed (#2823).
-    let wd = max(w, 1.0);
+    // A negative width marks a lifted highlight (`GpuScene::lifted_line`).
+    let lifted = w < 0.0;
+    let wa = abs(w);
+    let wd = max(wa, 1.0);
     let off = nrm * s * wd * 0.5 + dir * (t * 2.0 - 1.0) * wd * 0.5;
+    var z = base.z;
+    if (lifted && base.w > 1e-6) {
+        z = lifted_z(select(pa, pb, t > 0.5), base, wd * 0.5 + 1.0, half);
+    }
     var o: LOut;
-    o.pos = vec4<f32>(base.xy + off / half * base.w, base.z, base.w);
-    o.c = vec4<f32>(c.rgb, c.a * (w / wd));
+    o.pos = vec4<f32>(base.xy + off / half * base.w, z, base.w);
+    o.c = vec4<f32>(c.rgb, c.a * (wa / wd));
     o.wp = select(pa, pb, t > 0.5);
     return o;
 }

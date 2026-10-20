@@ -1991,7 +1991,7 @@ fn mesh_tris(sc: &mut GpuScene, m: &solidcraft_engine::geom::Mesh, col: [u8; 4],
 fn edge_lines(sc: &mut GpuScene, e: &[Vec3], core: Color32, halo: Color32, w: f32) {
     for (col, width) in [(halo, w + 3.0), (core, w)] {
         for p in e.windows(2) {
-            sc.line(p[0].to_f32(), p[1].to_f32(), c4(col), width, false);
+            sc.lifted_line(p[0].to_f32(), p[1].to_f32(), c4(col), width);
         }
     }
     for p in e.windows(2) {

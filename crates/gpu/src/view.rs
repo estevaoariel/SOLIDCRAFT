@@ -337,6 +337,13 @@ impl GpuScene {
         self.guide_lines.extend_from_slice(&c);
         self.guide_lines.extend_from_slice(&width.to_le_bytes());
     }
+    /// A thick highlight along an edge (a selected or hovered edge with its halo): drawn like a
+    /// thin cylinder around the edge, its depth pulled toward the eye by half its width plus a
+    /// pixel, so a face next to the edge seen at a grazing angle no longer buries part of the
+    /// band (a wedge instead of a line). The width travels negated; `vs_line` reads the sign.
+    pub fn lifted_line(&mut self, a: [f32; 3], b: [f32; 3], c: [u8; 4], width: f32) {
+        self.line(a, b, c, -width.abs(), false);
+    }
     pub fn line(&mut self, a: [f32; 3], b: [f32; 3], c: [u8; 4], width: f32, on_top: bool) {
         let out = if on_top { &mut self.overlay } else { &mut self.lines };
         for v in a.iter().chain(&b) {
