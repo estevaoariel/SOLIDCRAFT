@@ -164,6 +164,8 @@ pub struct Snapshot {
     pub doc: Arc<Document>,
     pub active_sketch: Option<u64>,
     pub pending_moves: std::collections::BTreeMap<u64, solidcraft_doc::Mat>,
+    /// The exploded view on show, with the moves that belong to it.
+    pub exploded_view: Option<u64>,
 }
 
 /// A copy of a session that evaluates commands ahead of it ([`Session::ahead`]).
@@ -264,6 +266,8 @@ pub struct Session {
     pub active_occurrence_path: Option<Vec<u64>>,
     /// Occurrence moves not captured yet (Capture Position keeps them, a recompute drops them).
     pub pending_moves: std::collections::BTreeMap<u64, solidcraft_doc::Mat>,
+    /// The exploded view on show (its id), or none when the assembly is shown as it is.
+    pub exploded_view: Option<u64>,
     world_cache: std::sync::Mutex<Option<WorldCache>>,
     occurrence_visibility_cache: std::sync::Mutex<Option<occurrences::VisibilityCache>>,
     removed_later_cache: std::sync::Mutex<Option<occurrences::RemovedLaterCache>>,
@@ -328,6 +332,7 @@ pub(crate) struct Checkpoint {
     pub doc: Arc<Document>,
     pub active_sketch: Option<u64>,
     pub pending_moves: std::collections::BTreeMap<u64, solidcraft_doc::Mat>,
+    pub exploded_view: Option<u64>,
     pub undo: Vec<Snapshot>,
     pub redo: Vec<Snapshot>,
 }
@@ -425,6 +430,7 @@ impl Session {
             active_component: 0,
             active_occurrence_path: None,
             pending_moves: Default::default(),
+            exploded_view: None,
             world_cache: Default::default(),
             occurrence_visibility_cache: Default::default(),
             removed_later_cache: Default::default(),
@@ -713,6 +719,7 @@ impl Session {
     fn render_only_change(&self, before: &Snapshot) -> bool {
         self.active_sketch == before.active_sketch
             && self.pending_moves == before.pending_moves
+            && self.exploded_view == before.exploded_view
             && (self.doc.differs_only_in_render(&before.doc) || self.doc.differs_only_in_part_properties(&before.doc))
     }
 
@@ -795,6 +802,7 @@ impl Session {
             doc: self.doc.clone(),
             active_sketch: self.active_sketch,
             pending_moves: self.pending_moves.clone(),
+            exploded_view: self.exploded_view,
         };
         let null = Value::Object(Default::default());
         let params = if params.is_null() { &null } else { params };
@@ -834,6 +842,7 @@ impl Session {
             let changed = !Arc::ptr_eq(&self.doc, &before.doc)
                 || self.active_sketch != before.active_sketch
                 || self.pending_moves != before.pending_moves
+                || self.exploded_view != before.exploded_view
                 || spec.id.starts_with("select.");
             crash::command_done(self.crash_journal, changed, &before.doc, after, spec.id, given, failed.map_or(Ok(()), Err));
         }
@@ -860,10 +869,11 @@ impl Session {
                 Ok(v)
             }
             Err(e) => {
-                if changed || self.pending_moves != before.pending_moves {
+                if changed || self.pending_moves != before.pending_moves || self.exploded_view != before.exploded_view {
                     self.doc = before.doc;
                     self.active_sketch = before.active_sketch;
                     self.pending_moves = before.pending_moves;
+                    self.exploded_view = before.exploded_view;
                     self.refresh();
                 }
                 Err(e)
@@ -902,6 +912,7 @@ impl Session {
             active_sketch: self.active_sketch,
             undo: self.undo.clone(),
             pending_moves: self.pending_moves.clone(),
+            exploded_view: self.exploded_view,
             redo: self.redo.clone(),
         });
         if self.checkpoints.len() > MAX_CHECKPOINTS {
@@ -915,17 +926,27 @@ impl Session {
     pub fn restore_checkpoint(&mut self, id: u64) -> Result<()> {
         let i = self.checkpoints.iter().position(|c| c.id == id).ok_or_else(|| EngineError::Other(format!("no checkpoint {id}")))?;
         let Some(c) = self.checkpoints.drain(i..).next() else { return Err(EngineError::Other(format!("no checkpoint {id}"))) };
-        let before =
-            Snapshot { label: String::new(), doc: self.doc.clone(), active_sketch: self.active_sketch, pending_moves: self.pending_moves.clone() };
+        let before = Snapshot {
+            label: String::new(),
+            doc: self.doc.clone(),
+            active_sketch: self.active_sketch,
+            pending_moves: self.pending_moves.clone(),
+            exploded_view: self.exploded_view,
+        };
         self.doc = c.doc;
         self.active_sketch = c.active_sketch;
         self.pending_moves = c.pending_moves;
+        self.exploded_view = c.exploded_view;
         self.undo = c.undo;
         self.redo = c.redo;
         self.selection.clear();
         if self.render_only_change(&before) {
             self.refresh_render(&before.doc);
-        } else if !Arc::ptr_eq(&self.doc, &before.doc) || self.active_sketch != before.active_sketch || self.pending_moves != before.pending_moves {
+        } else if !Arc::ptr_eq(&self.doc, &before.doc)
+            || self.active_sketch != before.active_sketch
+            || self.pending_moves != before.pending_moves
+            || self.exploded_view != before.exploded_view
+        {
             self.refresh();
         }
         Ok(())
@@ -958,6 +979,7 @@ impl Session {
             active_component: self.active_component,
             active_occurrence_path: self.active_occurrence_path.clone(),
             pending_moves: self.pending_moves.clone(),
+            exploded_view: self.exploded_view,
             world_cache: std::sync::Mutex::new(self.world_cache.lock().ok().and_then(|cache| cache.clone())),
             occurrence_visibility_cache: Default::default(),
             removed_later_cache: Default::default(),
@@ -1021,6 +1043,7 @@ impl Session {
         self.active_component = computed.active_component;
         self.active_occurrence_path = computed.active_occurrence_path;
         self.pending_moves = computed.pending_moves;
+        self.exploded_view = computed.exploded_view;
         // Joints the computation hid (an import's rigid group) stay hidden.
         for j in computed.visibility.hidden_joints {
             if !self.visibility.hidden_joints.contains(&j) {
@@ -1168,6 +1191,8 @@ mod derived_units_tests;
 mod display_mesh_tests;
 #[cfg(test)]
 mod exact_tool_tests;
+#[cfg(test)]
+mod exploded_view_tests;
 #[cfg(test)]
 mod extent_tests;
 #[cfg(test)]

@@ -92,11 +92,18 @@ fn redo(s: &mut Session, _p: &Value) -> Result<Value> {
 
 /// Put the session at `snap`; returns where it was, under the same label.
 fn go_to(s: &mut Session, snap: Snapshot) -> Snapshot {
-    let was = Snapshot { label: snap.label, doc: s.doc.clone(), active_sketch: s.active_sketch, pending_moves: s.pending_moves.clone() };
+    let was = Snapshot {
+        label: snap.label,
+        doc: s.doc.clone(),
+        active_sketch: s.active_sketch,
+        pending_moves: s.pending_moves.clone(),
+        exploded_view: s.exploded_view,
+    };
     let same = std::sync::Arc::ptr_eq(&s.doc, &snap.doc);
     s.doc = snap.doc;
     s.active_sketch = snap.active_sketch;
     s.pending_moves = snap.pending_moves;
+    s.exploded_view = snap.exploded_view;
     s.selection.clear();
     // A new document is evaluated by `execute`.
     if same {
@@ -1322,6 +1329,7 @@ fn redefine(s: &mut Session, p: &Value) -> Result<Value> {
         }
     }
     s.pending_moves = trial.pending_moves;
+    s.exploded_view = trial.exploded_view;
     s.doc = trial.doc;
     s.refresh();
     if let Some(e) = s.model.result(id).and_then(|r| r.error.clone()) {

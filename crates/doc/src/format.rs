@@ -1917,6 +1917,39 @@ mod tests {
         assert_eq!(back, d);
     }
 
+    /// An exploded view keeps its explosion as steps: a design with a flat list of moves opens
+    /// as a view with one step holding those moves, and a view that already has steps is left
+    /// exactly as it is.
+    #[test]
+    fn an_older_exploded_view_opens_as_one_step() {
+        use solidcraft_geom::Vec3;
+        // A design a build without the change wrote: the current format, but without the change
+        // in the list of the ones it has.
+        let older = serde_json::json!({
+            "format": format_string(FORMAT),
+            "format_pending": pending_names().into_iter().filter(|n| n != "explode-steps").collect::<Vec<_>>(),
+            "name": "A",
+            "params": [],
+            "features": [],
+            "assembly": {"exploded": [
+                {"id": 3, "name": "Apart", "moves": [[1, [10, 0, 0]], [2, [0, 20, 0]]]},
+                {"id": 4, "name": "Stepped", "steps": [{"id": 4000, "name": "Burst", "moves": [[7, [1, 2, 3]]], "duration_ms": 250}]}
+            ]}
+        });
+        let opened = read(&older.to_string()).unwrap();
+        let views = &opened.assembly.exploded;
+        assert_eq!(views.len(), 2);
+        // The old flat list of moves became one step holding them.
+        assert_eq!(views[0].steps.len(), 1);
+        assert_eq!(views[0].steps[0].moves, vec![(1, Vec3::new(10.0, 0.0, 0.0)), (2, Vec3::new(0.0, 20.0, 0.0))]);
+        assert_eq!(views[0].steps[0].duration_ms, crate::motion::DEFAULT_STEP_MS);
+        // A view that already has steps keeps them, untouched.
+        assert_eq!(views[1].steps.len(), 1);
+        assert_eq!(views[1].steps[0].id, 4000);
+        assert_eq!(views[1].steps[0].moves, vec![(7, Vec3::new(1.0, 2.0, 3.0))]);
+        assert_eq!(views[1].steps[0].duration_ms, 250);
+    }
+
     #[test]
     fn old_xz_and_nested_offsets_keep_their_frame() {
         let mut doc = Document::new("old XZ");

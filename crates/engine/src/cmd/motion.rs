@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 use serde_json::{Value, json};
 use solidcraft_doc::Mat;
 use solidcraft_doc::joints::{self, JointKind};
-use solidcraft_doc::motion::{ContactSet, ExplodedView, MotionStudy, StudyKey};
+use solidcraft_doc::motion::{ContactSet, DEFAULT_STEP_MS, EaseKind, ExplodeStep, ExplodedView, MotionStudy, StudyKey, step_id};
 use solidcraft_geom::{Aabb3, Vec3};
 use solidcraft_kernel::Body;
 
@@ -1003,7 +1003,9 @@ fn explode_create(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let id = s.doc_mut().allocate_id()?;
     let name = str_(p, "name").map(str::to_string).unwrap_or_else(|| format!("Exploded View{}", s.doc.assembly.exploded.len() + 1));
-    s.doc_mut().assembly.exploded.push(ExplodedView { id, name: name.clone(), moves: moves.clone() });
+    // The whole explosion is one step; the steps of a view are added to one another.
+    let step = ExplodeStep { id: step_id(id, 0), name: "Explode".into(), moves: moves.clone(), duration_ms: DEFAULT_STEP_MS };
+    s.doc_mut().assembly.exploded.push(ExplodedView { id, name: name.clone(), steps: vec![step], trail_lines: true, easing: EaseKind::default() });
     Ok(json!({"view": id, "name": name, "moves": moves.iter().map(|(o, t)| json!({"occurrence": o, "translate": t})).collect::<Vec<_>>()}))
 }
 
@@ -1011,13 +1013,26 @@ fn explode_show(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "explode.show";
     if p.get("view").is_none_or(|v| v.is_null() || v.as_str().is_some_and(|x| x.eq_ignore_ascii_case("none"))) {
         s.pending_moves.clear();
+        s.exploded_view = None;
         s.revision += 1;
         return Ok(json!({"view": null}));
     }
     let i = view_index(s, p, cmd)?;
     let v = s.doc.assembly.exploded.get(i).cloned().ok_or_else(|| bad(cmd, "view"))?;
     s.pending_moves.clear();
-    for (o, t) in &v.moves {
+    // The whole view is shown: every step's moves add up to the pose. A step's own moves
+    // replace one another per occurrence, as a flat list of moves did.
+    let mut moves: std::collections::BTreeMap<u64, Vec3> = Default::default();
+    for step in &v.steps {
+        let mut step_moves: std::collections::BTreeMap<u64, Vec3> = Default::default();
+        for (o, t) in &step.moves {
+            step_moves.insert(*o, *t);
+        }
+        for (o, t) in step_moves {
+            *moves.entry(o).or_default() += t;
+        }
+    }
+    for (o, t) in &moves {
         let Some(occ) = s.doc.occurrences.iter().find(|x| x.id == *o) else { continue };
         let mut m = occ.transform;
         if let Some(r) = m.get_mut(3) {
@@ -1027,6 +1042,7 @@ fn explode_show(s: &mut Session, p: &Value) -> Result<Value> {
         }
         s.pending_moves.insert(*o, m);
     }
+    s.exploded_view = Some(v.id);
     s.revision += 1;
     Ok(json!({"view": v.id, "name": v.name}))
 }
