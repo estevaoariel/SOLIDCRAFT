@@ -166,6 +166,8 @@ fn buttons_active(app: &SolveApp, ctx: &egui::Context, focused: bool) -> bool {
         && !app.home.open
         && !app.file_picker_busy()
         && !app.file_load.busy()
+        // The keyboard shortcuts wait for a report draft too (`SolveApp::logic`).
+        && app.issue_report.draft.is_none()
         && !crate::keymap::capturing(app)
         && !egui::Popup::is_any_open(ctx)
         && !ctx.egui_wants_keyboard_input()
@@ -638,6 +640,36 @@ mod tests {
 
     /// The keyboard and a button hold the same modifier: it stays down until both let go, whichever
     /// lets go first, for each of Shift, Ctrl and Alt.
+    #[test]
+    fn mapped_buttons_do_nothing_behind_an_issue_report_draft() {
+        let device = "hid 046d:c62b";
+        let mut app = app();
+        app.space_mouse.device = Some(device.into());
+        app.preferences.space_mouse_buttons.insert(
+            device.into(),
+            [
+                (1, ButtonJob::Settings),
+                (2, ButtonJob::Key(ButtonKey::Esc)),
+                (3, ButtonJob::Key(ButtonKey::Shift)),
+                (4, ButtonJob::View("top".into())),
+            ]
+            .into(),
+        );
+        let ctx = window(true);
+        app.issue_report.draft = Some(crate::issue_report::draft_for(&app, None, None));
+        let (cam, undo, dialog) = (app.cam, app.session.undo.len(), app.dialog.is_some());
+        let raw = press(&mut app, &ctx, 0b1111, vec![]);
+        assert_eq!(escapes(&raw), 0, "no Esc");
+        assert!(!app.prefs_window.open, "no Preferences");
+        assert!(!ctx.input(|i| i.modifiers.shift), "no held Shift");
+        assert_eq!((app.cam, app.session.undo.len(), app.dialog.is_some()), (cam, undo, dialog));
+        // Once the draft is closed the same buttons work again (a fresh press).
+        app.issue_report.draft = None;
+        press(&mut app, &ctx, 0, vec![]);
+        press(&mut app, &ctx, 0b1111, vec![]);
+        assert!(app.prefs_window.open);
+    }
+
     #[test]
     fn a_tap_between_two_frames_runs_its_job_once() {
         let mut app = app();
