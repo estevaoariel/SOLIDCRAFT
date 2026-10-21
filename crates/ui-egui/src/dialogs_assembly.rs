@@ -1159,7 +1159,7 @@ fn glyph(painter: &egui::Painter, proj: &Proj, s: &SnapPt, col: Color32, half_he
 }
 
 /// What a snap is called (the hover label).
-fn snap_name(k: SnapKind) -> &'static str {
+pub(crate) fn snap_name(k: SnapKind) -> &'static str {
     match k {
         SnapKind::FaceCenter => "Face center",
         SnapKind::CircleCenter => "Circle center",
