@@ -355,13 +355,13 @@ A component's **bill of materials type** (`bom_type`, a part property set with
 `component.metadata.set {component, bom_type}`) decides how it counts in the assemblies it is
 placed in. Without one it is `normal`.
 
-| Type | In the assembly it is placed in |
-|---|---|
-| `normal` | A row of its own; every occurrence adds to its quantity |
-| `phantom` | No row: what it holds counts as if it were placed there directly, in the same rows as the same parts placed there (a fastener set) |
-| `reference` | Counted nowhere, and nothing inside it is counted either (a fixture shown for context) |
-| `purchased` | One row; nothing inside it is counted or listed (a bought gearbox) |
-| `inseparable` | One row (a welded frame); in parts only, the purchased parts inside it are listed too, and the rest of what it holds is listed in its own bill of materials |
+| Type | For | In the assembly it is placed in |
+|---|---|---|
+| `normal` | Something you make | A row of its own; every occurrence adds to its quantity |
+| `phantom` | Something just to group (a fastener set) | No row: what it holds counts as if it were placed there directly, in the same rows as the same parts placed there |
+| `reference` | Something to use as a reference (a fixture shown for context) | Counted nowhere, and nothing inside it is counted either |
+| `purchased` | Something you buy (a gearbox) | One row; nothing inside it is counted or listed |
+| `inseparable` | Something made as one piece: welded, glued, riveted and so on (a welded frame) | One row; in parts only, the purchased parts inside it are listed too, and the rest of what it holds is listed in its own bill of materials |
 
 Two components with the same part number share a row only when their types agree. A
 component's own bill of materials (`component`) lists what it holds whatever its type.

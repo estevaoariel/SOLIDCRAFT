@@ -67,16 +67,17 @@ holds is counted there.
 
 There are five:
 
-- *normal*: a row; each occurrence adds one to its quantity.
-- *phantom*: no row; what it holds counts where it is placed.
-- *reference*: no row, and nothing inside it counts.
-- *purchased*: one row; nothing inside it is counted or listed.
-- *inseparable*: one row; of what it holds, only the purchased components are listed, and only
-  in a list of every part.
+- *normal*, something you make: a row; each occurrence adds one to its quantity.
+- *phantom*, something just to group: no row; what it holds counts where it is placed.
+- *reference*, something to use as a reference: no row, and nothing inside it counts.
+- *purchased*, something you buy: one row; nothing inside it is counted or listed.
+- *inseparable*, something made as one piece (welded, glued, riveted and so on): one row; of
+  what it holds, only the purchased components are listed, and only in a list of every part.
 
 - **In SolidCraft:** the `bom_type` part property, which `component.metadata.set` changes and
   `component.metadata` reads; the `bom_type` of each `assembly.bom` row.
-- **Don't use:** BOM structure, item type, kind.
+- **Don't use:** BOM structure, item type, kind; made (for *normal*: it reads as "already
+  made").
 - **Elsewhere:** BOM structure, BOM type.
 - **For translators:** *normal* here is not the sketch line type, a direction or the display
   quality (see *Words with more than one meaning*); *reference* is not a construction plane;
