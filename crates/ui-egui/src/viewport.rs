@@ -2988,8 +2988,9 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     crate::select_other::show(app, ui.ctx());
     axis_view(app, ui, rect);
     nav_bar(app, ui, rect);
-    // Under the notices that share the corner, so they still read on top of it.
-    let mut ghost = None;
+    agent_chip(app, ui, rect);
+    // The notices first, so the 3D mouse picture can keep clear of them.
+    let toasts = transient_messages(app, ui, rect);
     if app.preferences.space_mouse_in_view
         && app.space_mouse.calibrating.is_none()
         && let Some(device) = &app.space_mouse.device
@@ -3002,17 +3003,13 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         // too: the picture stays clear of it.
         let chip = app.agent_computing().map(|_| Rect::from_min_size(agent_chip_anchor(app, rect), vec2(400.0, 34.0)));
         let navigation = app.viewport.layout.as_ref().map(|layout| layout.navigation);
-        let obstacles = [bar, navigation, chip].into_iter().flatten().collect::<Vec<_>>();
+        let obstacles = [bar, navigation, chip].into_iter().flatten().chain(toasts).collect::<Vec<_>>();
         // The Viewport positions sit in the content area (right of the browser, above the History bar
         // that floats over its bottom); Left Window in the corner of the whole window.
         let area = if position == SpaceMouseGhost::LeftWindow { rect } else { crate::shell::content_rect(app, rect) };
         let picture = crate::space_mouse_model::corner_rect(area, position, &obstacles);
         crate::space_mouse_model::corner(ui, picture, calibration, app.space_mouse.raw.into());
-        // At the lower right, where the notices go: they stack above it.
-        ghost = (position == SpaceMouseGhost::RightViewport).then_some(picture);
     }
-    agent_chip(app, ui, rect);
-    transient_messages(app, ui, rect, ghost);
 }
 
 fn paint_box_selection(painter: &egui::Painter, bx: BoxSel, sketch: bool) {
@@ -3073,30 +3070,37 @@ fn agent_chip(app: &mut SolveApp, ui: &egui::Ui, rect: Rect) {
     }
 }
 
-/// A single visual pattern for ongoing work and the existing six-second status.
-/// The status and calibration notices, bottom right of the free view; `below` is the 3D mouse picture
-/// when it sits there, and the notices stack above it.
-fn transient_messages(app: &mut SolveApp, ui: &egui::Ui, viewport: Rect, below: Option<Rect>) {
-    let quiet = app.status.is_none() && app.computing_since().is_none();
+/// A single visual pattern for ongoing work, the existing six-second status and the 3D mouse
+/// calibration offer, stacked from the bottom of the free view. Returns the toasts' rects.
+fn transient_messages(app: &mut SolveApp, ui: &egui::Ui, viewport: Rect) -> Vec<Rect> {
     let t = Tokens::get();
+    let mut shown = Vec::new();
     let mut obstacles = crate::shell::covered_rects(app);
     if let Some(layout) = &app.viewport.layout {
         obstacles.extend([layout.navigation, layout.axis_view]);
     }
     let mut free = crate::viewport_layout::free_rect(crate::shell::content_rect(app, viewport), &obstacles).shrink(t.space_8);
-    if let Some(picture) = below.filter(|picture| picture.right() > free.right() - 400.0) {
-        free.max.y = free.max.y.min(picture.top() - t.space_8);
-    }
-    // The calibration notice first, so the status toast stacks above it.
-    crate::space_mouse_offer::toast(app, ui, &mut free);
-    if quiet {
-        return;
+    // The 3D mouse calibration offer: text and actions from its module, drawn by the shared toast.
+    if let Some(offer) = crate::space_mouse_offer::due(app, ui.ctx()) {
+        let labels: Vec<String> = offer.actions.iter().map(|action| crate::i18n::tr(action.label()).to_string()).collect();
+        let labels: Vec<&str> = labels.iter().map(String::as_str).collect();
+        if let Some((r, clicked)) = paint_toast_with(ui, free, crate::i18n::tr("ui.space_mouse_offer").to_string(), ToastLead::Dot(false), &labels) {
+            crate::scenario::publish_rect("toast:space_mouse_offer", r);
+            free.max.y = r.top() - t.space_8;
+            shown.push(r);
+            crate::space_mouse_offer::keep(app, ui.ctx(), r);
+            if let Some(action) = clicked.and_then(|i| offer.actions.get(i)) {
+                crate::space_mouse_offer::act(app, &offer, *action);
+            }
+            ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
+        }
     }
     if let Some((msg, at, error)) = app.status.clone() {
         if crate::now_ms() - at < 6000.0 {
             if let Some(r) = paint_toast(ui, free, msg, error, false) {
                 crate::scenario::publish_rect("toast", r);
                 free.max.y = r.top() - t.space_8;
+                shown.push(r);
                 // Open the run's messages from the tokenised status toast.
                 crate::scenario::publish_handle("status:chip", r.center());
                 if ui.interact(r, egui::Id::new("sc_status_chip"), Sense::click()).on_hover_text(crate::i18n::tr("messages.chip_hint")).clicked() {
@@ -3116,19 +3120,56 @@ fn transient_messages(app: &mut SolveApp, ui: &egui::Ui, viewport: Rect, below: 
             if app.status.is_none() {
                 crate::scenario::publish_rect("toast", r);
             }
+            shown.push(r);
         }
         ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
     }
+    shown
+}
+
+/// What leads a toast's text: a dot (red for an error) or a spinner.
+#[derive(Clone, Copy)]
+enum ToastLead {
+    Dot(bool),
+    Spinner,
 }
 
 fn paint_toast(ui: &egui::Ui, free: Rect, text: String, error: bool, computing: bool) -> Option<Rect> {
+    let lead = if computing { ToastLead::Spinner } else { ToastLead::Dot(error) };
+    paint_toast_with(ui, free, text, lead, &[]).map(|(rect, _)| rect)
+}
+
+/// The one toast painter: its text in a card at the bottom centre of `free`, led by a dot or a
+/// spinner, and, below the text, a wrapping row of buttons (`actions`, kit buttons). Returns the
+/// card's rect and which button was clicked, if any. With no actions the card is exactly the status
+/// and computing toast it always was. The buttons are not live while an issue report holds CAD
+/// input; none is laid outside the card, whose width is bounded by `free`.
+fn paint_toast_with(ui: &egui::Ui, free: Rect, text: String, lead: ToastLead, actions: &[&str]) -> Option<(Rect, Option<usize>)> {
     if !free.is_finite() || !free.is_positive() || free.width() <= 40.0 {
         return None;
     }
     let t = Tokens::get();
     let painter = ui.painter().with_clip_rect(free);
     let galley = painter.layout(text, crate::fonts::medium(t.font_label), t.text, (free.width() - 40.0).min(440.0));
-    let size = galley.size() + vec2(40.0, 16.0);
+    // The buttons' row: each as wide as its text and a margin, wrapped to the text's width.
+    let row_width = (galley.size().x).max(0.0);
+    let mut spots = Vec::new();
+    let (mut x, mut y, mut widest) = (0.0_f32, 0.0_f32, 0.0_f32);
+    let gap = t.space_8;
+    let button_height = crate::ui_kit::row_height();
+    for label in actions {
+        let width = painter.layout_no_wrap((*label).to_string(), crate::fonts::medium(t.font_label), t.text).size().x + 2.0 * t.space_12;
+        let width = width.min((free.width() - 40.0).max(0.0));
+        if x > 0.0 && x + width > row_width.max(width) {
+            (x, y) = (0.0, y + button_height + gap);
+        }
+        spots.push(egui::Rect::from_min_size(pos2(x, y), vec2(width, button_height)));
+        x += width + gap;
+        widest = widest.max(x - gap);
+    }
+    let actions_height = if spots.is_empty() { 0.0 } else { y + button_height + gap };
+    let content = vec2(galley.size().x.max(widest), galley.size().y + actions_height);
+    let size = content + vec2(40.0, 16.0);
     if !size.is_finite() || size.x > free.width() || size.y > free.height() {
         return None;
     }
@@ -3138,14 +3179,32 @@ fn paint_toast(ui: &egui::Ui, free: Rect, text: String, error: bool, computing: 
     }
     let frame = egui::Frame::NONE.fill(t.panel).stroke(Stroke::new(1.0, t.border)).corner_radius(t.radius_md).shadow(t.shell_shadow());
     ui.painter().add(frame.paint(r.shrink(frame.stroke.width)));
-    let dot = pos2(r.left() + 14.0, r.center().y);
-    if computing {
-        egui::Spinner::new().size(12.0).color(t.text).paint_at(ui, Rect::from_center_size(dot, vec2(12.0, 12.0)));
-    } else {
-        painter.circle_filled(dot, 3.0, if error { t.error } else { t.text });
+    let dot = pos2(r.left() + 14.0, r.center().y.min(r.top() + 8.0 + galley.size().y / 2.0));
+    match lead {
+        ToastLead::Spinner => egui::Spinner::new().size(12.0).color(t.text).paint_at(ui, Rect::from_center_size(dot, vec2(12.0, 12.0))),
+        ToastLead::Dot(error) => drop(painter.circle_filled(dot, 3.0, if error { t.error } else { t.text })),
     }
-    painter.galley(r.min + vec2(28.0, 8.0), galley, t.text);
-    Some(r)
+    let text_top = r.min + vec2(28.0, 8.0);
+    painter.galley(text_top, galley.clone(), t.text);
+    let mut clicked = None;
+    let origin = text_top + vec2(0.0, galley.size().y + gap);
+    for (index, (label, spot)) in actions.iter().zip(&spots).enumerate() {
+        let at = spot.translate(origin.to_vec2());
+        // A UI of its own on the viewport's layer, so the toast needs no `&mut Ui`.
+        let mut button_ui = egui::Ui::new(
+            ui.ctx().clone(),
+            egui::Id::new(("sc_toast_action", index)),
+            egui::UiBuilder::new().layer_id(ui.layer_id()).max_rect(at).layout(egui::Layout::left_to_right(egui::Align::Center)),
+        );
+        button_ui.set_clip_rect(button_ui.clip_rect().intersect(r));
+        let response = button_ui
+            .add_enabled_ui(!crate::issue_report::cad_input_blocked(), |ui| crate::ui_kit::button(ui, *label, crate::ui_kit::Button::Normal))
+            .inner;
+        if response.clicked() {
+            clicked = Some(index);
+        }
+    }
+    Some((r, clicked))
 }
 
 /// A click without a command: select the candidate (replacing the selection, or adding /

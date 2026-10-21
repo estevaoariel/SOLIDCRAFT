@@ -356,3 +356,83 @@ fn compass_circle_grabs_on_hover_and_the_home_chip_points() {
     h.settle();
     assert_ne!(h.output.cursor_icon, egui::CursorIcon::Grab, "no hand away from the compass");
 }
+
+/// The status and computing toasts keep the size and place they always had: the text's size plus
+/// 40 by 16, centred at the bottom of the free rect.
+#[test]
+fn the_shared_toast_draws_old_callers_exactly_as_before() {
+    let ctx = crate::fonts::test_context();
+    for width in [200.0_f32, 300.0, 500.0, 900.0] {
+        let free = Rect::from_min_size(pos2(10.0, 20.0), vec2(width, 200.0));
+        for (error, computing) in [(false, false), (true, false), (false, true)] {
+            draw(&ctx, |ui| {
+                let t = Tokens::get();
+                let text = "A message that is long enough to wrap in the narrow cases, and not in the wide ones".to_string();
+                let galley = ui.painter().layout(text.clone(), crate::fonts::medium(t.font_label), t.text, (free.width() - 40.0).min(440.0));
+                let size = galley.size() + vec2(40.0, 16.0);
+                let expected = Rect::from_center_size(pos2(free.center().x, free.bottom() - size.y * 0.5), size);
+                let got = paint_toast(ui, free, text, error, computing);
+                if size.x > free.width() || size.y > free.height() {
+                    assert!(got.is_none());
+                } else {
+                    assert_eq!(got, Some(expected), "width {width} error {error} computing {computing}");
+                }
+            });
+        }
+    }
+}
+
+/// The toast's buttons stay inside its card at narrow widths, and do nothing while an issue report
+/// holds CAD input.
+#[test]
+fn toast_buttons_wrap_inside_the_card_and_are_dead_behind_an_issue_report() {
+    let labels = ["Calibrate…", "Close", "Never show again", "Swap to Hidraw (Direct Driver)"];
+    for width in [260.0_f32, 360.0, 600.0, 1000.0] {
+        for blocked in [false, true] {
+            crate::issue_report::set_cad_input_blocked_for_test(blocked);
+            let ctx = crate::fonts::test_context();
+            let free = Rect::from_min_size(pos2(0.0, 0.0), vec2(width, 300.0));
+            let run = |events: Vec<egui::Event>| {
+                let mut seen = None;
+                let mut output = ctx.run_ui(egui::RawInput { events, screen_rect: Some(free), focused: true, ..Default::default() }, |ui| {
+                    seen = paint_toast_with(ui, free, "Your 3D mouse isn't calibrated.".into(), ToastLead::Dot(false), &labels);
+                });
+                output.textures_delta.clear();
+                seen
+            };
+            run(vec![]);
+            let (card, _) = run(vec![]).unwrap_or_else(|| panic!("width {width}: no card"));
+            assert!(free.contains_rect(card), "width {width}: {card:?}");
+            let mut hits = Vec::new();
+            for step_x in 1..12 {
+                for step_y in 1..16 {
+                    let at = pos2(card.left() + card.width() * step_x as f32 / 12.0, card.top() + card.height() * step_y as f32 / 16.0);
+                    run(vec![egui::Event::PointerMoved(at)]);
+                    run(vec![egui::Event::PointerButton {
+                        pos: at,
+                        button: egui::PointerButton::Primary,
+                        pressed: true,
+                        modifiers: Default::default(),
+                    }]);
+                    let clicked = run(vec![egui::Event::PointerButton {
+                        pos: at,
+                        button: egui::PointerButton::Primary,
+                        pressed: false,
+                        modifiers: Default::default(),
+                    }]);
+                    if let Some((_, Some(index))) = clicked {
+                        hits.push(index);
+                    }
+                }
+            }
+            crate::issue_report::set_cad_input_blocked_for_test(false);
+            if blocked {
+                assert!(hits.is_empty(), "width {width}: a button worked behind a report: {hits:?}");
+            } else {
+                hits.sort_unstable();
+                hits.dedup();
+                assert_eq!(hits, [0, 1, 2, 3], "width {width}: every button can be clicked inside the card");
+            }
+        }
+    }
+}

@@ -1,12 +1,10 @@
 //! The offer to calibrate a 3D mouse that has no calibration yet: people don't know calibration
-//! exists, and it is what fixes swapped or reversed axes. It shows once per device, as a notice
-//! small card above the History bar, until the user calibrates or closes it.
+//! exists, and it is what fixes swapped or reversed axes. It shows once per device, as one of the
+//! shared toasts (`viewport::transient_messages`), until the user calibrates or closes it.
 
 use std::collections::BTreeSet;
 
 use crate::SolveApp;
-use crate::theme::Tokens;
-use crate::ui_kit;
 
 /// Whether to offer calibration for `device`: 3D mouse navigation is on, there is a device, it
 /// has no calibration saved, the offer has not been made (and dismissed) for it, and the user has
@@ -33,30 +31,61 @@ pub fn expired(since: f64, now: f64) -> bool {
     now - since >= SHOW_SECONDS
 }
 
-/// Draws the offer as a small card in the bottom right of `free` (the part of the view the
-/// overlays leave, so above the History bar), and takes the room it uses off `free`. It is due
-/// when `should_offer` says so, the window has focus, no picker or load has the app, no issue
-/// report holds CAD input, and neither Preferences nor the calibration window is open. It goes
-/// after `SHOW_SECONDS` unless the pointer is on it (then only for this run: it is offered again
-/// next time until closed or calibrated).
+/// What the offer's toast can do when clicked.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Action {
+    /// Opens Preferences at Navigation and starts the calibration window.
+    Calibrate,
+    /// Records this device as offered.
+    Close,
+    /// Records that no offer is wanted any more.
+    Never,
+    /// Reads the device directly instead of through spacenavd.
+    Swap,
+}
+
+impl Action {
+    /// The button's text, as a message id.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Calibrate => "ui.space_mouse_calibrate",
+            Self::Close => "ui.close",
+            Self::Never => "ui.space_mouse_offer_never",
+            Self::Swap => "ui.space_mouse_offer_swap",
+        }
+    }
+}
+
+/// An offer to show now: its device and its actions (the text is `ui.space_mouse_offer`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Offer {
+    pub device: String,
+    pub actions: Vec<Action>,
+}
+
+/// The offer due this frame, if any, for the shared toast (`viewport::transient_messages`) to draw.
+/// It is due when `should_offer` says so, the window has focus, no picker or load has the app, no
+/// issue report holds CAD input, and neither Preferences nor the calibration window is open. It goes
+/// after `SHOW_SECONDS` unless the pointer is on it (`keep`; then only for this run: it is offered
+/// again next time until closed or calibrated).
 ///
 /// Everything it reads and writes outside its own state, so a reviewer can check it:
-/// - Reads: the device key, saved calibrations, the offered set and the 3D mouse enable switch
-///   (`app.space_mouse.device`, `app.preferences`); `ctx.input` focus, time and pointer position;
-///   `file_picker_busy`, `file_load.busy`, `prefs_window.open`, `space_mouse.calibrating`,
-///   `issue_report::cad_input_blocked`; the free rect it is given.
-/// - Writes, only its own: `space_mouse.offer_since`, `space_mouse.offer_hidden`, the free rect's
-///   bottom edge; `space_mouse_offered` (preferences) when closed or calibrating; one repaint
-///   request every 500 ms while it is showing (none when hidden, expired, unfocused or blocked).
-/// - Calibrate alone opens Preferences at Navigation and starts the calibration window
-///   (`prefs::open_at`, `space_mouse_calibration::start`), exactly as Preferences does.
-/// - It never touches `ctx.memory`, focus, layer order, keyboard events, `prefs_window` when it
-///   isn't asked to, dialogs, tools, the selection or the document. Its Area (`frame::area`, so
-///   disabled behind an issue report) has its own id and is `Order::Foreground` over its own rect.
-pub fn toast(app: &mut SolveApp, ui: &egui::Ui, free: &mut egui::Rect) {
-    let ctx = ui.ctx();
+/// - Reads: the device key, saved calibrations, the offered set, the never switch and the 3D mouse
+///   enable switch (`app.space_mouse.device`, `app.preferences`); the readers present
+///   (`space_mouse.drivers`); `ctx.input` focus, time and pointer position; `file_picker_busy`,
+///   `file_load.busy`, `prefs_window.open`, `space_mouse.calibrating`,
+///   `issue_report::cad_input_blocked`.
+/// - Writes, only its own: `space_mouse.offer_since`, `space_mouse.offer_hidden`;
+///   `space_mouse_offered` and `space_mouse_offer_never` (preferences) when the user clicks Close,
+///   Calibrate or Never.
+/// - Calibrate opens Preferences at Navigation and starts the calibration window
+///   (`prefs::open_at`, `space_mouse_calibration::start`), exactly as Preferences does. Swap sets
+///   `space_mouse_driver`, the same setting Preferences does.
+/// - It draws nothing and creates no layer: the toast is the shared one. It never touches
+///   `ctx.memory`, focus, layer order, keyboard events, dialogs, tools, the selection or the document.
+pub fn due(app: &mut SolveApp, ctx: &egui::Context) -> Option<Offer> {
     let calibrated = app.space_mouse.device.as_ref().is_some_and(|device| app.preferences.space_mouse_calibrations.contains_key(device));
-    let Some(device) = app.space_mouse.device.clone().filter(|device| {
+    let device = app.space_mouse.device.clone().filter(|device| {
         should_offer(
             Some(device),
             calibrated,
@@ -64,21 +93,18 @@ pub fn toast(app: &mut SolveApp, ui: &egui::Ui, free: &mut egui::Rect) {
             app.preferences.space_mouse_enabled,
             app.preferences.space_mouse_offer_never,
         ) && !app.space_mouse.offer_hidden.contains(device)
-    }) else {
-        return;
-    };
+    })?;
     if !ctx.input(|i| i.focused)
         || app.file_picker_busy()
         || app.file_load.busy()
         || crate::issue_report::cad_input_blocked()
         || app.prefs_window.open
         || app.space_mouse.calibrating.is_some()
-        || !free.is_finite()
-        || free.width() <= 120.0
+        || app.home.open
     {
-        return;
+        return None;
     }
-    let (t, now) = (Tokens::get(), ctx.input(|i| i.time));
+    let now = ctx.input(|i| i.time);
     let since = match &app.space_mouse.offer_since {
         Some((shown, since)) if *shown == device => *since,
         _ => now,
@@ -86,58 +112,46 @@ pub fn toast(app: &mut SolveApp, ui: &egui::Ui, free: &mut egui::Rect) {
     app.space_mouse.offer_since = Some((device.clone(), since));
     if expired(since, now) {
         app.space_mouse.offer_hidden.insert(device);
-        return;
+        return None;
     }
-    let (mut calibrate, mut close, mut never, mut swap) = (false, false, false, false);
-    let can_swap = swap_offered(&device, app.space_mouse.drivers);
-    let width = (free.width() - 2.0 * t.space_8).clamp(120.0, 380.0);
-    let shown = crate::frame::area(egui::Id::new("sc_space_mouse_offer"))
-        .order(egui::Order::Foreground)
-        .pivot(egui::Align2::RIGHT_BOTTOM)
-        .fixed_pos(free.right_bottom() - egui::vec2(t.space_8, t.space_8))
-        .show(ctx, |ui| {
-            crate::frame::shell_card(t.dialog_body).inner_margin(t.space_12).show(ui, |ui| {
-                ui.set_width(width - 2.0 * t.space_12);
-                ui_kit::text(ui, app.tr("ui.space_mouse_offer"), ui_kit::Text::Report("space_mouse_offer", false));
-                // Up to four buttons, wrapping under each other where the card is narrow.
-                ui.horizontal_wrapped(|ui| {
-                    calibrate = ui_kit::button(ui, app.tr("ui.space_mouse_calibrate"), ui_kit::Button::Normal).clicked();
-                    close = ui_kit::button(ui, app.tr("ui.close"), ui_kit::Button::Normal).clicked();
-                    never = ui_kit::button(ui, app.tr("ui.space_mouse_offer_never"), ui_kit::Button::Normal).clicked();
-                    if can_swap {
-                        swap = ui_kit::button(ui, app.tr("ui.space_mouse_offer_swap"), ui_kit::Button::Normal).clicked();
-                    }
-                });
-            });
-        });
-    let rect = shown.response.rect;
-    // Pointing at it keeps it.
+    let mut actions = vec![Action::Calibrate, Action::Close, Action::Never];
+    if swap_offered(&device, app.space_mouse.drivers) {
+        actions.push(Action::Swap);
+    }
+    Some(Offer { device, actions })
+}
+
+/// The toast was drawn at `rect`: a pointer on it keeps it from expiring.
+pub fn keep(app: &mut SolveApp, ctx: &egui::Context, rect: egui::Rect) {
     if ctx.input(|i| i.pointer.hover_pos()).is_some_and(|pos| rect.contains(pos)) {
+        let now = ctx.input(|i| i.time);
         app.space_mouse.offer_since = app.space_mouse.offer_since.take().map(|(device, _)| (device, now));
     }
-    ctx.request_repaint_after(std::time::Duration::from_millis(500));
-    crate::scenario::publish_rect("toast:space_mouse_offer", rect);
-    free.max.y = rect.top() - t.space_8;
-    if (calibrate || close)
-        && let Some((device, _)) = app.space_mouse.offer_since.take()
-    {
-        app.preferences.space_mouse_offered.insert(device);
-    }
-    if never {
-        app.preferences.space_mouse_offer_never = true;
-        app.space_mouse.offer_since = None;
-    }
-    if swap {
-        // The same setting as Preferences, read live by the reader. The device is not marked offered:
-        // read directly it has its own key, and it may still want a calibration.
-        app.preferences.space_mouse_driver = crate::prefs::SpaceMouseDriver::Direct;
-        app.space_mouse.offer_since = None;
-        app.space_mouse.offer_hidden.insert(device);
-    }
-    if calibrate {
-        // The calibration window lives with Preferences, at Navigation.
-        crate::prefs::open_at(app, 1);
-        crate::space_mouse_calibration::start(app);
+}
+
+/// The user clicked `action` on the toast of `offer`.
+pub fn act(app: &mut SolveApp, offer: &Offer, action: Action) {
+    match action {
+        Action::Calibrate | Action::Close => {
+            app.space_mouse.offer_since = None;
+            app.preferences.space_mouse_offered.insert(offer.device.clone());
+            if action == Action::Calibrate {
+                // The calibration window lives with Preferences, at Navigation.
+                crate::prefs::open_at(app, 1);
+                crate::space_mouse_calibration::start(app);
+            }
+        }
+        Action::Never => {
+            app.preferences.space_mouse_offer_never = true;
+            app.space_mouse.offer_since = None;
+        }
+        Action::Swap => {
+            // The same setting as Preferences, read live by the reader. The device is not marked
+            // offered: read directly it has its own key, and it may still want a calibration.
+            app.preferences.space_mouse_driver = crate::prefs::SpaceMouseDriver::Direct;
+            app.space_mouse.offer_since = None;
+            app.space_mouse.offer_hidden.insert(offer.device.clone());
+        }
     }
 }
 
