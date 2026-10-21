@@ -57,6 +57,19 @@ pub struct HomeState {
 }
 
 impl HomeState {
+    /// Wait for the background check of the recent files to answer (tests only).
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub(crate) fn wait_for_existence_checks(&mut self) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while self.recent.iter().any(|p| !self.present.contains_key(p)) && std::time::Instant::now() < deadline {
+            for rx in &self.present_rx {
+                while let Ok((p, there)) = rx.try_recv() {
+                    self.present.insert(p, there);
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
     pub fn ready_recents(&self) -> usize {
         self.recent.iter().filter(|p| self.thumbs.get(*p).is_some_and(Option::is_some)).count()
     }
@@ -388,7 +401,8 @@ fn poll(app: &mut SolveApp, ctx: &egui::Context) {
         ctx.request_repaint();
     }
     for (key, img, session) in done {
-        if session.is_none() && key.starts_with("sample:") && app.home.wanted.is_some_and(|w| key == format!("sample:{w}")) {
+        // A picture sent ahead of the build has no session either; only a build with nothing failed.
+        if session.is_none() && img.is_none() && key.starts_with("sample:") && app.home.wanted.is_some_and(|w| key == format!("sample:{w}")) {
             app.home.wanted = None;
             app.set_status(format!("the sample could not be built ({key})"), true);
         }

@@ -444,6 +444,8 @@ fn a_design_saved_before_pieces_were_numbered_by_place_keeps_their_numbers() {
     if let Some(Value::Array(pending)) = file.get_mut("format_pending") {
         pending.retain(|c| c != "face-pieces-by-place");
     }
+    // 0.18.3 folded the change into format 29, so a build before it wrote 28.
+    file["format"] = Value::String(solidcraft_doc::format::format_string(28));
     let old = solidcraft_doc::Document::from_json(&file.to_string()).unwrap();
     assert!(old.features.iter().all(|f| f.kernel_piece_order), "the features of an older design keep the old numbering");
     let mut reopened = Session::new(old);

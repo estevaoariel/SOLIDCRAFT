@@ -335,7 +335,7 @@ pub const DEFAULT_BROWSER_WIDTH: f32 = 250.0;
 
 // The stored fields, their defaults, page resets and simple form controls share this table.
 // Omitted pages keep fields such as grid_follows_view and added agents when restoring defaults.
-// Accepted control-channel ranges may differ from slider ranges (look_at_speed).
+// Accepted control-channel ranges may differ from slider ranges.
 macro_rules! preference_settings {
     ($( $(#[$doc:meta])* $field:ident: $ty:ty = $default:expr $(, $page:expr)? $(, accept($accepted:expr))? $(=> $control:ident($($args:tt)*))? ;)*) => {
         #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -504,9 +504,6 @@ preference_settings! {
     trackpad_pan: bool = true, 1;
     /// Horizontal trackpad and thumb-wheel scrolling pans the view the other way (#2007).
     pan_reverse_x: bool = false, 1 => check("Reverse horizontal pan direction", "Horizontal two-finger scrolling and the thumb wheel pan the other way");
-    /// View changes (axis view, Look At, Home) animate; `look_at_speed` scales how fast.
-    look_at_anim: bool = true, 1 => check("Animate view changes", "Axis view, Look At, Home and Fit");
-    look_at_speed: f32 = 1.0, 1, accept(0.25..=4.0) => enabled_slider(look_at_anim, "Animation speed", 0.5..=3.0, 0.25, |v| format!("{v:.2}×"));
     /// Default modelling orientation: `z` (Z up) or `y` (Y up) (#3).
     up_axis: String = "z".into(), PAGE_DESIGN;
     /// After a STEP or IGES file opens, offer to stand a Y-up part up (`stand_up`).
@@ -521,6 +518,9 @@ preference_settings! {
     update: crate::update::Memo = crate::update::Memo::default();
     /// Save as mesh: the last format (`stl` or `3mf`), whether it was sent to a slicer, which one
     /// (an installed slicer's id or a program path), and the programs the user added (newest first).
+    /// The variant last started in each split tool family (Rectangle, Circle, Arc, Slot, Polygon, Line,
+    /// Spline): the family's button and shortcut start it again (`sketch_families`).
+    sketch_variants: crate::sketch_families::Choices = crate::sketch_families::Choices::default();
     save_mesh_format: String = "stl".into();
     /// Hidden edges in the current-view DXF export (false: omit, true: dashed).
     view_dxf_dashed: bool = false;
@@ -1298,8 +1298,6 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                     for (m, id, label) in MiddleDoubleClick::ALL { if ui_kit::list_picker(ui, id, crate::i18n::tr_label(label), current == m).clicked() { app.preferences.middle_double_click = id.into(); } }
                 }).on_hover_text(crate::i18n::tr_label("Double-clicking the middle button in the view: Home (the home view, framing what is shown), Fit (frame what is shown, keeping the orientation) or nothing"));
             });
-            setting::look_at_anim(app, ui);
-            setting::look_at_speed(app, ui);
             space_mouse_section(app, ui);
         }
         PAGE_DESIGN => {
@@ -2165,8 +2163,8 @@ pub fn set(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::Valu
     if new.disabled_plugins.len() > crate::plugins::MAX_DISABLED || new.disabled_plugins.iter().any(|id| !crate::plugins::valid_id(id)) {
         return Err(format!("`disabled_plugins` must be at most {} ids of lowercase letters, digits and hyphens", crate::plugins::MAX_DISABLED));
     }
-    if !accepted::ui_scale(&new) || !accepted::look_at_speed(&new) {
-        return Err("`ui_scale` must be 0.5…2.5 and `look_at_speed` 0.25…4".into());
+    if !accepted::ui_scale(&new) {
+        return Err("`ui_scale` must be 0.5…2.5".into());
     }
     if solidcraft_engine::doc::display_quality::DisplayQuality::parse(&new.display_quality).is_none() {
         return Err("`display_quality` must be coarse, normal, fine or ultra".into());
@@ -2777,7 +2775,7 @@ mod tests {
         assert_eq!(h.app.preferences.navigator_style, NavigatorStyle::Axes);
         h.call("ui.prefs", json!({"button":"cancel"}));
         assert_eq!(h.app.preferences.navigator_style, NavigatorStyle::Cube);
-        h.call("ui.prefs", json!({"navigator_style":"axes", "look_at_anim":false}));
+        h.call("ui.prefs", json!({"navigator_style":"axes"}));
         h.call("ui.view", json!({"view":"front"}));
         let axis = crate::scenario::handle_at("axis_view:-y").unwrap();
         h.call("ui.click", json!({"x":axis.x,"y":axis.y}));
@@ -3005,7 +3003,7 @@ mod tests {
         assert!(app.ui.dark && app.preferences.theme == "dark" && app.preferences.ui_scale == 1.0 && app.preferences.zoom_to_cursor);
         assert!(app.keymap.custom.is_empty(), "a rebinding made while the dialog was open is undone too");
 
-        control(&mut app, &json!({"open": "Navigation", "nav": "alias", "look_at_anim": false})).unwrap();
+        control(&mut app, &json!({"open": "Navigation", "nav": "alias"})).unwrap();
         control(&mut app, &json!({"button": "apply"})).unwrap();
         control(&mut app, &json!({"nav": "tinkercad"})).unwrap();
         control(&mut app, &json!({"button": "cancel"})).unwrap();
@@ -3016,12 +3014,11 @@ mod tests {
             c
         };
         app.animate_to(to);
-        assert!(app.cam_anim.is_none() && app.cam == to, "no animation: the view jumps");
+        assert!(app.cam == to, "the view jumps");
 
         control(&mut app, &json!({"open": "Navigation"})).unwrap();
         control(&mut app, &json!({"button": "defaults"})).unwrap();
         assert_eq!(app.preferences.nav, "fusion");
-        assert!(app.preferences.look_at_anim);
         control(&mut app, &json!({"button": "ok"})).unwrap();
         assert!(!app.prefs_window.open);
 
