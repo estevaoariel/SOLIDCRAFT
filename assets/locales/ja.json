@@ -1238,6 +1238,7 @@
   "search.suggest": "{label} ですか？",
   "search.try": "コマンド名、このデザインのフィーチャー、またはパラメーターを入力します。値を指定して実行するには、IDとJSONオブジェクトを入力します：{example}",
   "search.valid": "有効",
+  "section.off_hint": "平面が選択されていません。OK を押すとセクションを解除します。",
   "settings.display_quality_note": "表示だけに影響します。設計や書き出しは変わりません。",
   "settings.frame_rate_note": "ビューの右下に 1 秒あたりのフレーム数を表示します。オンの間、ビューは常に再描画されます。",
   "settings.measure_axis_distances": "計測のX・Y・Z距離を表示",

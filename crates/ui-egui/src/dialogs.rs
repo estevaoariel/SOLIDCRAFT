@@ -2916,6 +2916,11 @@ fn sels(d: &Dialog, i: usize) -> &[Sel] {
     selection::items(&d.inputs, i)
 }
 
+/// Section Analysis with a section on and no plane picked: OK turns the section off.
+fn section_turns_off(s: &Session, inputs: &[selection::SelInput]) -> bool {
+    s.section.is_some() && selection::items(inputs, 0).is_empty()
+}
+
 pub(crate) fn run_dialog(app: &mut SolveApp, d: &Dialog) -> Result<(), String> {
     if let Kind::ViewDxf { dashed, tolerance } = &d.kind {
         return crate::dialogs_view_dxf::run(app, *dashed, *tolerance);
@@ -3570,6 +3575,9 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
             ("material.assign", json!({"bodies": sels(d, 0).body_names(), "material": name}))
         }
         Kind::Section { offset, flip } => {
+            if section_turns_off(s, &d.inputs) {
+                return Ok(vec![("inspect.section".into(), json!({"clear": true}))]);
+            }
             need(0, "a plane or planar face")?;
             let plane = match sels(d, 0).first() {
                 Some(Sel::Plane { name }) if matches!(name.as_str(), "XY" | "XZ" | "YZ") => json!(name),
