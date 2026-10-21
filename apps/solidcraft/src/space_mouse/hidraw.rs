@@ -105,10 +105,14 @@ mod tests {
         use super::super::{Pick, SpaceMouseDriver, UNREADABLE_RETRY, choose, direct_usable};
         for wanted in [SpaceMouseDriver::Automatic, SpaceMouseDriver::Spacenavd, SpaceMouseDriver::Direct] {
             for ago in [Duration::ZERO, Duration::from_secs(29)] {
-                assert_eq!(choose(wanted, true, direct_usable(true, Some(ago)), false), Some(Pick::Spacenavd), "{wanted:?} {ago:?}");
+                assert_eq!(
+                    choose(wanted, true, direct_usable(true, Some(ago), UNREADABLE_RETRY), false),
+                    Some(Pick::Spacenavd),
+                    "{wanted:?} {ago:?}"
+                );
             }
         }
-        assert_eq!(choose(SpaceMouseDriver::Direct, true, direct_usable(true, Some(UNREADABLE_RETRY)), false), Some(Pick::Direct));
+        assert_eq!(choose(SpaceMouseDriver::Direct, true, direct_usable(true, Some(UNREADABLE_RETRY), UNREADABLE_RETRY), false), Some(Pick::Direct));
         // And the daemon's own reader delivers over a fake connection.
         let (mut daemon, client) = std::os::unix::net::UnixStream::pair().unwrap();
         let mut record = [0_u8; 32];

@@ -496,6 +496,8 @@ struct Drivers {
     direct: Mutex<Option<Source>>,
     /// Whether a calibration is saved under that device's own key: Automatic then reads it directly.
     prefer_direct: AtomicBool,
+    /// Ends the reader.
+    quit: AtomicBool,
 }
 
 #[cfg(target_os = "linux")]
@@ -556,22 +558,25 @@ fn prefers_direct(calibrations: &std::collections::BTreeMap<String, Calibration>
 /// (`since_failed`, how long ago, if it did): without that a device that is there but unreadable
 /// (no permission) would keep winning and a working spacenavd would never be tried.
 #[cfg(target_os = "linux")]
-fn direct_usable(found: bool, since_failed: Option<Duration>) -> bool {
-    found && since_failed.is_none_or(|ago| ago >= UNREADABLE_RETRY)
+fn direct_usable(found: bool, since_failed: Option<Duration>, retry: Duration) -> bool {
+    found && since_failed.is_none_or(|ago| ago >= retry)
 }
 
-/// Whether a read of `pick` should end because the direct device, absent when it began, is there now
-/// and would be the choice: the daemon was read for want of the device, and the device is back.
+/// Whether a read of the daemon should end because the direct device would be the choice now: it was
+/// away and is back, or it failed to open, the wait (`retry`) is over (`failed`, how long since) and
+/// the caller has found that it opens. A read of anything else is left alone: a device that works is
+/// not given up for a daemon that has appeared.
 #[cfg(target_os = "linux")]
 fn switch_back(
     wanted: SpaceMouseDriver,
     pick: Option<Pick>,
     present: DriversPresent,
-    direct_at_start: bool,
     failed: Option<Duration>,
+    retry: Duration,
     prefer_direct: bool,
 ) -> bool {
-    !direct_at_start && choose(wanted, present.spacenavd, direct_usable(present.direct, failed), prefer_direct) != pick
+    pick == Some(Pick::Spacenavd)
+        && choose(wanted, present.spacenavd, direct_usable(present.direct, failed, retry), prefer_direct) == Some(Pick::Direct)
 }
 
 /// Which reader to use: the one asked for when it is there, else the other, else none. Automatic
@@ -595,38 +600,87 @@ fn choose(wanted: SpaceMouseDriver, spacenavd: bool, direct: bool, prefer_direct
     [first, other].into_iter().find(|&pick| there(pick))
 }
 
+/// What the reader looks at, so that a test can stand in for the machine.
+#[cfg(target_os = "linux")]
+trait System {
+    fn find(&self) -> Option<hidraw::Device>;
+    fn daemon_exists(&self) -> bool;
+    fn daemon_connect(&self) -> Option<std::os::unix::net::UnixStream>;
+    fn open(&self, path: &std::path::Path) -> std::io::Result<Box<dyn std::io::Read>>;
+    fn times(&self) -> Times;
+}
+
+/// The waits of the reader.
+#[cfg(target_os = "linux")]
+#[derive(Clone, Copy)]
+struct Times {
+    /// How often a read looks again at what is there.
+    look_every: Duration,
+    /// How long before the next try when nothing could be read.
+    retry_after: Duration,
+    /// How long a device that failed to open stays out of the choice.
+    unreadable_retry: Duration,
+    /// How long a read of the daemon waits for a record before it checks for a change.
+    wake: Duration,
+}
+
+/// The machine itself.
+#[cfg(target_os = "linux")]
+struct Machine;
+
+#[cfg(target_os = "linux")]
+impl System for Machine {
+    fn find(&self) -> Option<hidraw::Device> {
+        hidraw::find()
+    }
+
+    fn daemon_exists(&self) -> bool {
+        spacenavd::exists()
+    }
+
+    fn daemon_connect(&self) -> Option<std::os::unix::net::UnixStream> {
+        spacenavd::connect()
+    }
+
+    fn open(&self, path: &std::path::Path) -> std::io::Result<Box<dyn std::io::Read>> {
+        Ok(Box::new(hidraw::open(path)?))
+    }
+
+    fn times(&self) -> Times {
+        Times { look_every: LOOK_EVERY, retry_after: RETRY_AFTER, unreadable_retry: UNREADABLE_RETRY, wake: SPACENAVD_WAKE }
+    }
+}
+
 /// A change of driver is only looked at when a read goes idle (every 250 ms of quiet), so a device
 /// that streams without a pause takes the new choice when it next pauses; a held cap goes quiet at
 /// once, a moving one at its next pause, so the wait is bounded by the motion.
 /// Reads the 3D mouse through spacenavd or `/dev/hidrawN`, as `Drivers::choice` says (Automatic
-/// is spacenavd when it runs, unless a calibration is saved for the direct device and it opens, so what `spnavcfg` sets, swapped and inverted axes, sensitivity,
-/// dead zones, applies here as in other programs). Both reads wake up when idle to see whether
-/// the choice changed, which then moves to the other reader without a restart. hidraw is opened
-/// non-blocking and ends with an error when the device is unplugged. Opening needs permission:
-/// most distributions grant it to the logged-in user for devices that carry the `uaccess` udev
-/// tag, which a rule for the 3D mouse has to add.
+/// is spacenavd when it runs, unless a calibration is saved for the direct device and it opens, so
+/// what `spnavcfg` sets, swapped and inverted axes, sensitivity, dead zones, applies here as in
+/// other programs). Both reads wake up when idle to see whether the choice changed, which then
+/// moves to the other reader without a restart. hidraw is opened non-blocking and ends with an
+/// error when the device is unplugged. Opening needs permission: most distributions grant it to
+/// the logged-in user for devices that carry the `uaccess` udev tag, which a rule for the 3D mouse
+/// has to add. Ends when `Drivers::quit` is set.
 #[cfg(target_os = "linux")]
-fn reader(ctx: Context, shared: Arc<Mutex<Reading>>, drivers: Arc<Drivers>) {
-    let look = || {
-        let device = hidraw::find();
-        (DriversPresent { spacenavd: spacenavd::exists(), direct: device.is_some() }, device.map(|device| Source::Hid(device.ids)))
-    };
+fn reader<S: System>(ctx: Context, shared: Arc<Mutex<Reading>>, drivers: Arc<Drivers>, system: S) {
+    let times = system.times();
     let mut denied = None;
     // When the direct device last failed to open, so a device that is there but unreadable does not
     // keep the choice from a daemon that works.
     let mut unreadable: Option<Instant> = None;
     let mut told = None;
-    loop {
-        let device = hidraw::find();
-        let present = DriversPresent { spacenavd: spacenavd::exists(), direct: device.is_some() };
+    while !drivers.quit.load(Ordering::Relaxed) {
+        let device = system.find();
+        let present = DriversPresent { spacenavd: system.daemon_exists(), direct: device.is_some() };
         drivers.publish(present);
         drivers.publish_direct(device.as_ref().map(|device| Source::Hid(device.ids)));
         let wanted = drivers.choice();
-        let direct = direct_usable(present.direct, unreadable.map(|at| at.elapsed()));
+        let direct = direct_usable(present.direct, unreadable.map(|at| at.elapsed()), times.unreadable_retry);
         let prefer = drivers.prefer_direct.load(Ordering::Relaxed);
         let mut pick = choose(wanted, present.spacenavd, direct, prefer);
         // A socket file with no daemon behind it is no spacenavd.
-        let daemon = if pick == Some(Pick::Spacenavd) { spacenavd::connect() } else { None };
+        let daemon = if pick == Some(Pick::Spacenavd) { system.daemon_connect() } else { None };
         if pick == Some(Pick::Spacenavd) && daemon.is_none() {
             pick = choose(wanted, false, direct, prefer);
         }
@@ -644,22 +698,29 @@ fn reader(ctx: Context, shared: Arc<Mutex<Reading>>, drivers: Arc<Drivers>) {
         }
         // Asked at every idle moment of a read: has the choice changed, and what is there now.
         let mut looked = Instant::now();
-        let (direct_at_start, failed_at) = (present.direct, unreadable);
+        let mut failed_at = unreadable;
         let mut stop = || {
-            if looked.elapsed() >= LOOK_EVERY {
+            if drivers.quit.load(Ordering::Relaxed) {
+                return true;
+            }
+            if looked.elapsed() >= times.look_every {
                 looked = Instant::now();
-                let (now_present, now_direct) = look();
+                let now_device = system.find();
+                let now_present = DriversPresent { spacenavd: system.daemon_exists(), direct: now_device.is_some() };
                 drivers.publish(now_present);
-                drivers.publish_direct(now_direct);
-                // The device came back (replugged) while the daemon was being read in its place.
-                if switch_back(
-                    wanted,
-                    pick,
-                    now_present,
-                    direct_at_start,
-                    failed_at.map(|at| at.elapsed()),
-                    drivers.prefer_direct.load(Ordering::Relaxed),
-                ) {
+                drivers.publish_direct(now_device.as_ref().map(|device| Source::Hid(device.ids)));
+                // A device that failed to open is tried again once its wait is over, by opening it, so a
+                // daemon that works is only left for a device that now works, and a device that still
+                // cannot be read is not tried again for another wait.
+                if let (Some(at), Some(device), Some(Pick::Spacenavd)) = (failed_at, &now_device, pick)
+                    && at.elapsed() >= times.unreadable_retry
+                    && system.open(&device.path).is_err()
+                {
+                    failed_at = Some(Instant::now());
+                }
+                // The device came back (replugged), or became readable, while the daemon was read.
+                let prefer = drivers.prefer_direct.load(Ordering::Relaxed);
+                if switch_back(wanted, pick, now_present, failed_at.map(|at| at.elapsed()), times.unreadable_retry, prefer) {
                     return true;
                 }
             }
@@ -668,7 +729,7 @@ fn reader(ctx: Context, shared: Arc<Mutex<Reading>>, drivers: Arc<Drivers>) {
         match (pick, daemon, device) {
             (Some(Pick::Spacenavd), Some(daemon), _) => {
                 log::info!("3D mouse: reading spacenavd, which applies the spnavcfg settings");
-                if let Err(error) = daemon.set_read_timeout(Some(SPACENAVD_WAKE)) {
+                if let Err(error) = daemon.set_read_timeout(Some(times.wake)) {
                     log::warn!("3D mouse: spacenavd reads cannot time out ({error}); a change of driver waits for the next event");
                 }
                 connected(&ctx, &shared, Source::Spacenavd);
@@ -680,7 +741,7 @@ fn reader(ctx: Context, shared: Arc<Mutex<Reading>>, drivers: Arc<Drivers>) {
                 );
                 reset(&ctx, &shared);
             }
-            (Some(Pick::Direct), _, Some(device)) => match hidraw::open(&device.path) {
+            (Some(Pick::Direct), _, Some(device)) => match system.open(&device.path) {
                 Ok(file) => {
                     denied = None;
                     log::info!("3D mouse: reading {}", device.path.display());
@@ -701,7 +762,7 @@ fn reader(ctx: Context, shared: Arc<Mutex<Reading>>, drivers: Arc<Drivers>) {
         }
         // A new choice is taken up at once; anything else waits to try again.
         if drivers.choice() == wanted {
-            std::thread::sleep(RETRY_AFTER);
+            std::thread::sleep(times.retry_after);
         }
     }
 }
@@ -775,7 +836,7 @@ impl SpaceMouse {
         let worker_drivers = Arc::clone(&drivers);
         let spawned = std::thread::Builder::new().name("solidcraft-3d-mouse".into()).spawn(move || {
             #[cfg(target_os = "linux")]
-            reader(worker_ctx, worker_state, worker_drivers);
+            reader(worker_ctx, worker_state, worker_drivers, Machine);
             #[cfg(not(target_os = "linux"))]
             reader(worker_ctx, worker_state);
         });
@@ -1107,15 +1168,15 @@ mod tests {
         // Direct asked for, unplugged: the daemon is read. It comes back: switch.
         let pick = choose(Direct, true, false, false);
         assert_eq!(pick, Some(Pick::Spacenavd));
-        assert!(switch_back(Direct, pick, both, false, None, false));
-        assert!(!switch_back(Direct, pick, only_daemon, false, None, false), "still away");
+        assert!(switch_back(Direct, pick, both, None, UNREADABLE_RETRY, false));
+        assert!(!switch_back(Direct, pick, only_daemon, None, UNREADABLE_RETRY, false), "still away");
         // A device that was there at the start (but could not be opened) does not make the read flap.
-        assert!(!switch_back(Direct, pick, both, true, Some(Duration::ZERO), false));
+        assert!(!switch_back(Direct, pick, both, Some(Duration::ZERO), UNREADABLE_RETRY, false));
         // Within the backoff after a failed open, not yet.
-        assert!(!switch_back(Direct, pick, both, false, Some(Duration::from_secs(1)), false));
+        assert!(!switch_back(Direct, pick, both, Some(Duration::from_secs(1)), UNREADABLE_RETRY, false));
         // Automatic and Spacenavd keep the daemon whatever else appears.
         for wanted in [Automatic, Spacenavd] {
-            assert!(!switch_back(wanted, Some(Pick::Spacenavd), both, false, None, false), "{wanted:?}");
+            assert!(!switch_back(wanted, Some(Pick::Spacenavd), both, None, UNREADABLE_RETRY, false), "{wanted:?}");
         }
         // The key a replugged device gets is its ids, whatever hidraw node it comes up on.
         assert_eq!(Source::Hid(Some((0x046d, 0xc62b))).key(), "hid 046d:c62b");
@@ -1132,7 +1193,7 @@ mod tests {
         // Both live, none saved: the daemon first, as before.
         assert_eq!(choose(Automatic, true, true, false), Some(Pick::Spacenavd));
         // A calibration but the device does not open (no permission, backing off): the daemon, no new key.
-        let unopenable = direct_usable(true, Some(Duration::from_secs(1)));
+        let unopenable = direct_usable(true, Some(Duration::from_secs(1)), UNREADABLE_RETRY);
         assert_eq!(choose(Automatic, true, unopenable, true), Some(Pick::Spacenavd));
         // Only one source is there: that one, whatever is saved.
         assert_eq!(choose(Automatic, false, true, true), Some(Pick::Direct));
@@ -1144,12 +1205,12 @@ mod tests {
         let (both, only_daemon) = (DriversPresent { spacenavd: true, direct: true }, DriversPresent { spacenavd: true, direct: false });
         let pick = choose(Automatic, true, false, true);
         assert_eq!(pick, Some(Pick::Spacenavd));
-        assert!(!switch_back(Automatic, pick, only_daemon, false, None, true), "still away");
-        assert!(switch_back(Automatic, pick, both, false, None, true), "back");
-        assert!(!switch_back(Automatic, pick, both, false, None, false), "nothing saved: the daemon stays");
-        assert!(!switch_back(Automatic, pick, both, false, Some(Duration::from_secs(1)), true), "backing off after a failed open");
+        assert!(!switch_back(Automatic, pick, only_daemon, None, UNREADABLE_RETRY, true), "still away");
+        assert!(switch_back(Automatic, pick, both, None, UNREADABLE_RETRY, true), "back");
+        assert!(!switch_back(Automatic, pick, both, None, UNREADABLE_RETRY, false), "nothing saved: the daemon stays");
+        assert!(!switch_back(Automatic, pick, both, Some(Duration::from_secs(1)), UNREADABLE_RETRY, true), "backing off after a failed open");
         // Already reading the device: nothing to switch.
-        assert!(!switch_back(Automatic, Some(Pick::Direct), both, true, None, true));
+        assert!(!switch_back(Automatic, Some(Pick::Direct), both, None, UNREADABLE_RETRY, true));
     }
 
     /// What is saved decides it: the key of the direct device the reader saw. A calibration for another
@@ -1169,21 +1230,41 @@ mod tests {
         assert!(!prefers_direct(&calibrations, Some(Source::Hid(Some((0x256f, 0xc63b))))), "another model");
     }
 
+    /// A device that failed to open and is readable now ends the read of the daemon once the wait is over,
+    /// and not before; a device that works is never given up for a daemon.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_device_that_failed_to_open_ends_the_daemon_read_when_its_wait_is_over() {
+        use SpaceMouseDriver::{Automatic, Direct, Spacenavd};
+        let both = DriversPresent { spacenavd: true, direct: true };
+        let wait = UNREADABLE_RETRY;
+        for (wanted, prefer) in [(Direct, false), (Automatic, true)] {
+            assert!(!switch_back(wanted, Some(Pick::Spacenavd), both, Some(Duration::from_secs(1)), wait, prefer), "{wanted:?}: inside the wait");
+            assert!(switch_back(wanted, Some(Pick::Spacenavd), both, Some(wait), wait, prefer), "{wanted:?}: the wait is over");
+            assert!(!switch_back(wanted, Some(Pick::Direct), both, Some(wait), wait, prefer), "{wanted:?}: already reading the device");
+        }
+        // Automatic with nothing saved, and Spacenavd, stay on the daemon whatever the wait.
+        assert!(!switch_back(Automatic, Some(Pick::Spacenavd), both, Some(wait), wait, false));
+        assert!(!switch_back(Spacenavd, Some(Pick::Spacenavd), both, Some(wait), wait, true));
+        // A device read directly because there was no daemon is not given up when one appears.
+        assert!(!switch_back(Automatic, Some(Pick::Direct), both, None, wait, false));
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
     fn a_direct_device_that_cannot_be_opened_gives_way_to_a_working_daemon_for_a_while() {
         use SpaceMouseDriver::{Automatic, Direct, Spacenavd};
         for wanted in [Automatic, Spacenavd, Direct] {
             // Found, but the open just failed: the daemon is used, whichever was asked for.
-            let ok = direct_usable(true, Some(Duration::from_secs(1)));
+            let ok = direct_usable(true, Some(Duration::from_secs(1)), UNREADABLE_RETRY);
             assert!(!ok);
             assert_eq!(choose(wanted, true, ok, false), Some(Pick::Spacenavd), "{wanted:?}");
         }
         // Found and never failed: Direct wins when asked for. After the wait it is tried again.
-        assert_eq!(choose(Direct, true, direct_usable(true, None), false), Some(Pick::Direct));
-        assert_eq!(choose(Direct, true, direct_usable(true, Some(UNREADABLE_RETRY)), false), Some(Pick::Direct));
+        assert_eq!(choose(Direct, true, direct_usable(true, None, UNREADABLE_RETRY), false), Some(Pick::Direct));
+        assert_eq!(choose(Direct, true, direct_usable(true, Some(UNREADABLE_RETRY), UNREADABLE_RETRY), false), Some(Pick::Direct));
         // Not found is not usable however long ago.
-        assert!(!direct_usable(false, None));
+        assert!(!direct_usable(false, None, UNREADABLE_RETRY));
         // With no daemon either, nothing is read rather than a loop on the device that fails.
         assert_eq!(choose(Direct, false, false, false), None);
     }
@@ -1507,5 +1588,200 @@ mod tests {
         let mut raw = egui::RawInput { events: vec![wheel()], ..Default::default() };
         cap.raw_input_hook_at(true, &mut raw, later);
         assert_eq!(raw.events.len(), 1, "kept once the cap has been still");
+    }
+
+    /// A stand-in for the machine: a device that can be plugged, unplugged and made unreadable, and a
+    /// daemon that can be there or not. Every read is a socket pair, so what the reader reads is
+    /// whatever the test writes, and a device is unplugged by closing its end.
+    #[cfg(target_os = "linux")]
+    mod machine {
+        use super::super::*;
+        use std::io::Write;
+        use std::os::unix::net::UnixStream;
+        use std::path::{Path, PathBuf};
+
+        pub const IDS: (u16, u16) = (0x046d, 0xc62b);
+
+        #[derive(Default)]
+        pub struct World {
+            pub device: bool,
+            pub daemon: bool,
+            pub openable: bool,
+            pub device_end: Option<UnixStream>,
+            pub daemon_end: Option<UnixStream>,
+            pub opens: u32,
+            pub connects: u32,
+        }
+
+        #[derive(Clone, Default)]
+        pub struct Fake(pub Arc<Mutex<World>>);
+
+        impl Fake {
+            pub fn world(&self) -> std::sync::MutexGuard<'_, World> {
+                self.0.lock().unwrap()
+            }
+
+            pub fn unplug(&self) {
+                let mut world = self.world();
+                world.device = false;
+                world.device_end = None;
+            }
+
+            /// The daemon sends a motion record (all zeros: the daemon's rest), which is what shows
+            /// a device behind it.
+            pub fn daemon_sends_a_record(&self) {
+                if let Some(end) = self.world().daemon_end.as_mut() {
+                    end.write_all(&[0_u8; 32]).ok();
+                }
+            }
+        }
+
+        impl System for Fake {
+            fn find(&self) -> Option<hidraw::Device> {
+                self.world().device.then(|| hidraw::Device { path: PathBuf::from("/dev/hidraw-fake"), layout: Layout::default(), ids: Some(IDS) })
+            }
+
+            fn daemon_exists(&self) -> bool {
+                self.world().daemon
+            }
+
+            fn daemon_connect(&self) -> Option<UnixStream> {
+                let mut world = self.world();
+                if !world.daemon {
+                    return None;
+                }
+                let (ours, theirs) = UnixStream::pair().unwrap();
+                world.daemon_end = Some(theirs);
+                world.connects += 1;
+                Some(ours)
+            }
+
+            fn open(&self, _: &Path) -> std::io::Result<Box<dyn std::io::Read>> {
+                let mut world = self.world();
+                world.opens += 1;
+                if !world.openable {
+                    return Err(std::io::ErrorKind::PermissionDenied.into());
+                }
+                let (ours, theirs) = UnixStream::pair().unwrap();
+                ours.set_nonblocking(true).unwrap();
+                world.device_end = Some(theirs);
+                Ok(Box::new(ours))
+            }
+
+            fn times(&self) -> Times {
+                Times {
+                    look_every: Duration::from_millis(10),
+                    retry_after: Duration::from_millis(10),
+                    unreadable_retry: Duration::from_millis(300),
+                    wake: Duration::from_millis(5),
+                }
+            }
+        }
+
+        pub struct Running {
+            pub fake: Fake,
+            pub shared: Arc<Mutex<Reading>>,
+            pub drivers: Arc<Drivers>,
+            thread: Option<std::thread::JoinHandle<()>>,
+        }
+
+        impl Running {
+            pub fn start(driver: SpaceMouseDriver, prefer_direct: bool, fake: Fake) -> Self {
+                let shared = Arc::new(Mutex::new(Reading::new(Instant::now())));
+                let drivers = Arc::new(Drivers::default());
+                drivers.choice.store(driver.to_u8(), Ordering::Relaxed);
+                drivers.prefer_direct.store(prefer_direct, Ordering::Relaxed);
+                let (ctx, state, quit, system) = (Context::default(), Arc::clone(&shared), Arc::clone(&drivers), fake.clone());
+                let thread = Some(std::thread::spawn(move || reader(ctx, state, quit, system)));
+                Self { fake, shared, drivers, thread }
+            }
+
+            /// The key of the device being read, if any.
+            pub fn key(&self) -> Option<String> {
+                self.shared.lock().unwrap().device.map(Source::key)
+            }
+
+            /// Waits (up to three seconds) until the device being read has this key.
+            pub fn reads(&self, key: &str) {
+                let until = Instant::now() + Duration::from_secs(3);
+                while self.key().as_deref() != Some(key) {
+                    assert!(Instant::now() < until, "still reading {:?}, not {key}", self.key());
+                    self.fake.daemon_sends_a_record();
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+            }
+        }
+
+        impl Drop for Running {
+            fn drop(&mut self) {
+                self.drivers.quit.store(true, Ordering::Relaxed);
+                if let Some(thread) = self.thread.take() {
+                    thread.join().ok();
+                }
+            }
+        }
+    }
+
+    /// The reader itself, on a stand-in machine: Automatic with a calibration saved for the device
+    /// reads the device; unplugged, the daemon; replugged, the device again (so its own key, and the
+    /// calibration saved under it, applies), and the saved driver setting is never touched.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_reader_follows_a_calibrated_device_through_an_unplug_and_a_replug() {
+        use machine::{Fake, IDS, Running};
+        let device_key = Source::Hid(Some(IDS)).key();
+        let fake = Fake::default();
+        *fake.world() = machine::World { device: true, daemon: true, openable: true, ..Default::default() };
+        let reader = Running::start(SpaceMouseDriver::Automatic, true, fake.clone());
+        reader.reads(&device_key);
+        fake.unplug();
+        reader.reads("spacenavd");
+        fake.world().device = true;
+        reader.reads(&device_key);
+        assert_eq!(reader.drivers.choice(), SpaceMouseDriver::Automatic, "the saved choice is not changed by any of it");
+        // The calibration for the device's key is what applies: nothing was moved between keys.
+        let mut calibrations = std::collections::BTreeMap::new();
+        calibrations.insert(device_key.clone(), resting_at_100());
+        assert!(prefers_direct(&calibrations, Some(Source::Hid(Some(IDS)))));
+        assert!(calibrations.get("spacenavd").is_none());
+    }
+
+    /// Without a saved calibration Automatic keeps reading the daemon first, device there or not.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_reader_keeps_the_daemon_under_automatic_when_nothing_is_saved_for_the_device() {
+        use machine::{Fake, Running};
+        let fake = Fake::default();
+        *fake.world() = machine::World { device: true, daemon: true, openable: true, ..Default::default() };
+        let reader = Running::start(SpaceMouseDriver::Automatic, false, fake.clone());
+        reader.reads("spacenavd");
+        std::thread::sleep(Duration::from_millis(200));
+        assert_eq!(reader.key().as_deref(), Some("spacenavd"));
+        assert_eq!(fake.world().opens, 0, "the device was never opened");
+    }
+
+    /// A device that cannot be opened (no permission) gives way to the daemon; once the permission is
+    /// fixed it is taken within the wait, without the read of the daemon flapping before that, and the
+    /// saved driver choice is untouched.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_device_that_becomes_readable_is_taken_from_the_daemon_within_the_retry_wait() {
+        use machine::{Fake, IDS, Running};
+        for driver in [SpaceMouseDriver::Direct, SpaceMouseDriver::Automatic] {
+            let fake = Fake::default();
+            *fake.world() = machine::World { device: true, daemon: true, openable: false, ..Default::default() };
+            let reader = Running::start(driver, true, fake.clone());
+            reader.reads("spacenavd");
+            // Still not readable, over two waits: the daemon read goes on, one connection, a few probes.
+            std::thread::sleep(Duration::from_millis(700));
+            assert_eq!(reader.key().as_deref(), Some("spacenavd"), "{driver:?}");
+            assert_eq!(fake.world().connects, 1, "{driver:?}: the daemon read was not restarted for a device that still cannot be read");
+            let opens = fake.world().opens;
+            assert!(opens <= 4, "{driver:?}: {opens} tries in 700 ms with a 300 ms wait");
+            // The permission is fixed.
+            fake.world().openable = true;
+            reader.reads(&Source::Hid(Some(IDS)).key());
+            assert_eq!(reader.drivers.choice(), driver, "the saved choice is not changed");
+        }
     }
 }
