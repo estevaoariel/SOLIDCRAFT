@@ -270,7 +270,6 @@ pub(crate) fn button(ui: &mut Ui, label: impl Into<egui::WidgetText>, options: B
 }
 
 /// Accent action outside the footer. Tokens: `accent, on_accent; scope tokens`.
-#[cfg(any(not(target_arch = "wasm32"), test))]
 pub(crate) fn primary_button(ui: &mut Ui, label: &str) -> Response {
     let t = Tokens::get();
     let response = ui.add(egui::Button::new(RichText::new(crate::i18n::tr_label(label)).color(t.on_accent)).fill(t.form_primary));
