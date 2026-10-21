@@ -55,7 +55,10 @@ SolidCraft needs Direct3D 12 or Vulkan on Windows, Metal on macOS, and Vulkan or
 Linux. Without a graphics driver it falls back to the system's software renderer (WARP on
 Windows, llvmpipe or lavapipe on Linux), which is slow but works. From 0.10.2, if no window can
 be opened at all, SolidCraft tries the software renderer once and otherwise shows a message
-saying what failed (earlier versions closed without a word). Things to try:
+saying what failed (earlier versions closed without a word). When it was Direct3D 12 on a
+graphics card or integrated GPU that failed, SolidCraft tries Vulkan first and keeps using it
+(`"backend": "vulkan"` in `graphics.json`), and the software renderer only if Vulkan fails
+too. Things to try:
 
 - Install the graphics driver from the GPU maker (Intel, AMD, NVIDIA) rather than Windows Update.
 - In a virtual machine, turn on 3D acceleration. Over Remote Desktop, try it on the machine itself.

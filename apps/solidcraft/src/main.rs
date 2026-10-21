@@ -660,6 +660,10 @@ fn main() -> eframe::Result {
     if let Some(hung) = std::env::var(startup::HUNG_ENV).ok().filter(|v| !v.trim().is_empty()) {
         notes.push(startup::hang_note(&hung, safe_mode, backend_preference().as_deref()));
     }
+    // The launch before this one never got a window on its GPU's D3D12 (`no_window`).
+    if let Some(failed) = std::env::var(startup::NO_WINDOW_ENV).ok().filter(|v| !v.trim().is_empty()) {
+        notes.push(startup::no_window_note(&failed, backend_preference().as_deref()));
+    }
     if safe_mode {
         notes.push("Safe mode: default settings (yours are kept for the next normal start), no recovery offer, software rendering.".into());
     }
@@ -849,9 +853,13 @@ fn main() -> eframe::Result {
 fn startup_step(step: &'static str, detail: &str) {
     if step == eframe::egui_wgpu::STEP_ADAPTER_CHOSEN {
         solidcraft_engine::crash::set_environment(&format!("Renderer: {detail}"));
+        ON_D3D12_GPU.store(startup::d3d12_gpu(detail), std::sync::atomic::Ordering::Relaxed);
     }
     solidcraft_engine::crash::phase(step);
 }
+
+/// The adapter picked for the window is D3D12 on a GPU (`startup::d3d12_gpu`).
+static ON_D3D12_GPU: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// The renderer settings: with `cpu`, the software adapter (WARP, lavapipe, llvmpipe). The
 /// backends come from `startup::choose_backends` (on Windows D3D12 first, Vulkan on AMD
@@ -879,17 +887,29 @@ fn wgpu_options(cpu: bool, preference: Option<&str>) -> eframe::egui_wgpu::WgpuC
 }
 
 /// The window never opened (no graphics adapter, a device that wouldn't start): once more on
-/// the software renderer, else a message box saying what failed instead of a silent exit.
+/// the software renderer, else a message box saying what failed instead of a silent exit. On a
+/// GPU's D3D12, once more on Vulkan first, kept as after a hang ([`remember_backend`]); that
+/// launch goes on to the software renderer if Vulkan fails too (#3321).
 fn no_window(error: eframe::Error, tried_cpu: bool, settings: Option<&std::path::Path>) -> eframe::Result {
     log::error!("the window could not open: {error}");
     eprintln!("SolidCraft: the window could not open: {error}");
     if !tried_cpu && let Ok(exe) = std::env::current_exe() {
-        eprintln!("SolidCraft: trying again with the software renderer ({}=cpu)", startup::RENDERER_ENV);
-        match std::process::Command::new(exe).args(std::env::args_os().skip(1)).env(startup::RENDERER_ENV, "cpu").status() {
+        let mut command = std::process::Command::new(exe);
+        command.args(std::env::args_os().skip(1));
+        if ON_D3D12_GPU.load(std::sync::atomic::Ordering::Relaxed) {
+            eprintln!("SolidCraft: trying again with Vulkan");
+            remember_backend("vulkan");
+            // `WGPU_BACKEND` would win over the backend just saved.
+            command.env(startup::NO_WINDOW_ENV, "Dx12").env_remove(startup::WGPU_BACKEND_ENV);
+        } else {
+            eprintln!("SolidCraft: trying again with the software renderer ({}=cpu)", startup::RENDERER_ENV);
+            command.env(startup::RENDERER_ENV, "cpu");
+        }
+        match command.status() {
             Ok(status) if status.success() => return Ok(()),
             // The second try showed its own message.
             Ok(_) => return Err(error),
-            Err(e) => log::error!("could not start again with the software renderer: {e}"),
+            Err(e) => log::error!("could not start again: {e}"),
         }
     }
     let _ = rfd::MessageDialog::new()

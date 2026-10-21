@@ -247,6 +247,25 @@ pub fn after_hang(backend: eframe::wgpu::Backend, cpu: bool) -> Option<Restart> 
     }
 }
 
+/// Set on the launch that replaces one whose window never opened on a GPU's D3D12: that backend,
+/// for the notice.
+pub const NO_WINDOW_ENV: &str = "SOLIDCRAFT_NO_WINDOW_ON";
+
+/// Whether the adapter [`eframe::egui_wgpu::STEP_ADAPTER_CHOSEN`] names (`Dx12 <name>
+/// (IntegratedGpu, driver …)`) is D3D12 on a GPU, not WARP. A window that never opens there is
+/// tried again on Vulkan, as after a hang, before the software renderer: on the AMD integrated
+/// GPUs whose D3D12 driver hung at the first frame, Vulkan runs and WARP is slow (#3321).
+pub fn d3d12_gpu(adapter: &str) -> bool {
+    adapter.starts_with("Dx12 ") && !adapter.contains(" (Cpu, driver ")
+}
+
+/// The notice on the launch after one whose window never opened on `failed` (a backend's name),
+/// now on the `backend` preference.
+pub fn no_window_note(failed: &str, backend: Option<&str>) -> String {
+    let now = backend.map_or("another renderer", api_name);
+    format!("SolidCraft's window didn't open on {}, so it started on {now}, which it keeps using (the backend in graphics.json).", api_name(failed))
+}
+
 /// The notice on the launch after the GPU hung on `hung` (a backend's name): this one is in safe
 /// mode, or on the `backend` preference.
 pub fn hang_note(hung: &str, safe_mode: bool, backend: Option<&str>) -> String {
@@ -467,6 +486,18 @@ mod tests {
         let note = hang_note("Dx12", false, Some("vulkan"));
         assert!(note.contains("on Direct3D 12") && note.contains("on Vulkan") && note.contains("recovery"), "{note}");
         assert!(hang_note("Vulkan", true, Some("vulkan")).contains("in safe mode"));
+    }
+
+    #[test]
+    fn a_window_that_never_opened_on_a_gpus_d3d12_tries_vulkan_next() {
+        assert!(d3d12_gpu("Dx12 AMD Radeon(TM) Graphics (IntegratedGpu, driver  32.0.21025.10016)"));
+        assert!(d3d12_gpu("Dx12 NVIDIA GeForce RTX 4070 (DiscreteGpu, driver NVIDIA 581.57 (580.97))"));
+        // WARP has nothing behind it but the software renderer, and other backends aren't D3D12.
+        assert!(!d3d12_gpu("Dx12 Microsoft Basic Render Driver (Cpu, driver  10.0.26100.1)"));
+        assert!(!d3d12_gpu("Vulkan AMD Radeon(TM) Graphics (IntegratedGpu, driver AMD proprietary 2.0.341)"));
+        assert!(!d3d12_gpu(""));
+        let note = no_window_note("Dx12", Some("vulkan"));
+        assert!(note.contains("on Direct3D 12") && note.contains("on Vulkan"), "{note}");
     }
 
     #[test]
