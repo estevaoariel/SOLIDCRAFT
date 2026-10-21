@@ -1749,6 +1749,7 @@
   "ui.space_mouse_calibrate": "Calibrar…",
   "ui.space_mouse_calibrate_tip": "Mueve el capuchón como pide la ventana para que SolidCraft aprenda hacia dónde y hasta dónde va cada eje de este ratón 3D. Se guarda para este ratón 3D.",
   "ui.space_mouse_calibrate_title": "Calibrar ratón 3D",
+  "ui.space_mouse_calibrate_wait": "Mueve el ratón 3D una vez para que SolidCraft lo vea.",
   "ui.space_mouse_calibrated": "Calibrado",
   "ui.space_mouse_calibration": "Calibración del ratón 3D",
   "ui.space_mouse_calibration_done": "Listo. Guárdala para usarla siempre que este ratón 3D esté conectado.",

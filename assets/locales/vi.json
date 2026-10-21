@@ -1748,6 +1748,7 @@
   "ui.space_mouse_calibrate": "Hiệu chuẩn…",
   "ui.space_mouse_calibrate_tip": "Di chuyển núm điều khiển theo yêu cầu của cửa sổ để SolidCraft biết mỗi trục của chuột 3D này đi theo hướng nào và xa bao nhiêu. Được lưu cho chuột 3D này.",
   "ui.space_mouse_calibrate_title": "Hiệu chuẩn chuột 3D",
+  "ui.space_mouse_calibrate_wait": "Hãy di chuyển chuột 3D một lần để SolidCraft nhận ra nó.",
   "ui.space_mouse_calibrated": "Đã hiệu chuẩn",
   "ui.space_mouse_calibration": "Hiệu chuẩn chuột 3D",
   "ui.space_mouse_calibration_done": "Xong. Hãy lưu để dùng mỗi khi chuột 3D này được kết nối.",

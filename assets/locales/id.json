@@ -1740,6 +1740,7 @@
   "ui.space_mouse_calibrate": "Kalibrasi…",
   "ui.space_mouse_calibrate_tip": "Gerakkan cap sesuai permintaan jendela, agar SolidCraft mempelajari arah dan jarak setiap sumbu mouse 3D ini. Disimpan untuk mouse 3D ini.",
   "ui.space_mouse_calibrate_title": "Kalibrasi mouse 3D",
+  "ui.space_mouse_calibrate_wait": "Gerakkan mouse 3D sekali agar SolidCraft dapat melihatnya.",
   "ui.space_mouse_calibrated": "Terkalibrasi",
   "ui.space_mouse_calibration": "Kalibrasi mouse 3D",
   "ui.space_mouse_calibration_done": "Selesai. Simpan untuk dipakai setiap kali mouse 3D ini terhubung.",

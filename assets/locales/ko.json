@@ -1749,6 +1749,7 @@
   "ui.space_mouse_calibrate": "보정…",
   "ui.space_mouse_calibrate_tip": "창의 안내대로 캡을 움직이면 SolidCraft가 이 3D 마우스의 각 축이 어느 방향으로 얼마나 움직이는지 학습합니다. 이 3D 마우스에 저장됩니다.",
   "ui.space_mouse_calibrate_title": "3D 마우스 보정",
+  "ui.space_mouse_calibrate_wait": "SolidCraft가 인식할 수 있도록 3D 마우스를 한 번 움직여 주세요.",
   "ui.space_mouse_calibrated": "보정됨",
   "ui.space_mouse_calibration": "3D 마우스 보정",
   "ui.space_mouse_calibration_done": "완료했습니다. 저장하면 이 3D 마우스를 연결할 때마다 사용됩니다.",

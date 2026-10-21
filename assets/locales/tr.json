@@ -1749,6 +1749,7 @@
   "ui.space_mouse_calibrate": "Kalibre et…",
   "ui.space_mouse_calibrate_tip": "Pencerenin istediği gibi başlığı hareket ettirin; SolidCraft bu 3B farenin her ekseninin hangi yöne ve ne kadar gittiğini öğrensin. Bu 3B fare için kaydedilir.",
   "ui.space_mouse_calibrate_title": "3B fareyi kalibre et",
+  "ui.space_mouse_calibrate_wait": "SolidCraft'ın görebilmesi için 3D fareyi bir kez hareket ettirin.",
   "ui.space_mouse_calibrated": "Kalibre edildi",
   "ui.space_mouse_calibration": "3B fare kalibrasyonu",
   "ui.space_mouse_calibration_done": "Bitti. Bu 3B fare her bağlandığında kullanılması için kaydedin.",

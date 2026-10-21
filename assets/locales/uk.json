@@ -1749,6 +1749,7 @@
   "ui.space_mouse_calibrate": "Калібрувати…",
   "ui.space_mouse_calibrate_tip": "Рухайте ковпачок так, як просить вікно, щоб SolidCraft дізнався, куди й наскільки далеко рухається кожна вісь цієї 3D-миші. Зберігається для цієї 3D-миші.",
   "ui.space_mouse_calibrate_title": "Калібрування 3D-миші",
+  "ui.space_mouse_calibrate_wait": "Один раз порухайте 3D-мишу, щоб SolidCraft її побачив.",
   "ui.space_mouse_calibrated": "Відкалібровано",
   "ui.space_mouse_calibration": "Калібрування 3D-миші",
   "ui.space_mouse_calibration_done": "Готово. Збережіть його, щоб воно застосовувалося щоразу, коли підключено цю 3D-мишу.",

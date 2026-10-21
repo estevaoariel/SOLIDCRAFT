@@ -1748,6 +1748,7 @@
   "ui.space_mouse_calibrate": "Tentukur…",
   "ui.space_mouse_calibrate_tip": "Gerakkan penutup seperti yang diminta tetingkap, supaya SolidCraft mempelajari arah dan jarak setiap paksi tetikus 3D ini. Disimpan untuk tetikus 3D ini.",
   "ui.space_mouse_calibrate_title": "Tentukur tetikus 3D",
+  "ui.space_mouse_calibrate_wait": "Gerakkan tetikus 3D sekali supaya SolidCraft dapat melihatnya.",
   "ui.space_mouse_calibrated": "Telah ditentukur",
   "ui.space_mouse_calibration": "Penentukuran tetikus 3D",
   "ui.space_mouse_calibration_done": "Selesai. Simpan untuk digunakan setiap kali tetikus 3D ini disambungkan.",

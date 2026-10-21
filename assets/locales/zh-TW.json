@@ -1740,6 +1740,7 @@
   "ui.space_mouse_calibrate": "校準…",
   "ui.space_mouse_calibrate_tip": "按視窗提示移動搖桿帽，SolidCraft 會記住這個 3D 滑鼠每個軸的方向和行程。校準結果按此 3D 滑鼠儲存。",
   "ui.space_mouse_calibrate_title": "校準 3D 滑鼠",
+  "ui.space_mouse_calibrate_wait": "請移動一次 3D 滑鼠，讓 SolidCraft 能夠辨識它。",
   "ui.space_mouse_calibrated": "已校準",
   "ui.space_mouse_calibration": "3D 滑鼠校準",
   "ui.space_mouse_calibration_done": "完成。儲存後，每次連線此 3D 滑鼠都會使用它。",

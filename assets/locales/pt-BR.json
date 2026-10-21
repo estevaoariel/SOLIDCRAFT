@@ -1749,6 +1749,7 @@
   "ui.space_mouse_calibrate": "Calibrar…",
   "ui.space_mouse_calibrate_tip": "Mova a tampa como a janela pedir, para que o SolidCraft aprenda para onde e até onde vai cada eixo deste mouse 3D. Salvo para este mouse 3D.",
   "ui.space_mouse_calibrate_title": "Calibrar mouse 3D",
+  "ui.space_mouse_calibrate_wait": "Mova o mouse 3D uma vez para o SolidCraft vê-lo.",
   "ui.space_mouse_calibrated": "Calibrado",
   "ui.space_mouse_calibration": "Calibração do mouse 3D",
   "ui.space_mouse_calibration_done": "Pronto. Salve para usá-la sempre que este mouse 3D estiver conectado.",

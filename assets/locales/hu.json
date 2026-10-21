@@ -1740,6 +1740,7 @@
   "ui.space_mouse_calibrate": "Kalibrálás…",
   "ui.space_mouse_calibrate_tip": "Mozgassa a kupakot az ablak kérése szerint, hogy a SolidCraft megtanulja, merre és mennyire mozdul a 3D-egér mindegyik tengelye. Ehhez a 3D-egérhez mentve.",
   "ui.space_mouse_calibrate_title": "3D-egér kalibrálása",
+  "ui.space_mouse_calibrate_wait": "Mozdítsa meg egyszer a 3D-s egeret, hogy a SolidCraft lássa.",
   "ui.space_mouse_calibrated": "Kalibrálva",
   "ui.space_mouse_calibration": "3D-egér kalibrálása",
   "ui.space_mouse_calibration_done": "Kész. Mentse, hogy a 3D-egér csatlakoztatásakor mindig használatos legyen.",

@@ -1441,14 +1441,13 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
     }
 }
 
-/// The 3D mouse's settings under Navigation. The section starts folded without a 3D mouse, so it
-/// doesn't take the page from everyone without one, and open with one; once the user folds or
-/// unfolds it, it stays as they left it: whether it moves the view and shows in it, its
-/// speed and each axis, its calibration and dead zone, and what its buttons do.
+/// The 3D mouse's settings under Navigation. The section starts folded, so it doesn't take the
+/// page from everyone, and stays as the user last left it: whether it moves the view and shows in
+/// it, where the picture goes, its speed and each axis, its calibration and dead zone, and what its
+/// buttons do.
 fn space_mouse_section(app: &mut SolveApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
-    let open = app.space_mouse.device.is_some();
-    ui_kit::section(ui, "sc_prefs_space_mouse", crate::i18n::tr("ui.space_mouse_section"), open, |ui| {
+    ui_kit::section(ui, "sc_prefs_space_mouse", crate::i18n::tr("ui.space_mouse_section"), false, |ui| {
         setting::space_mouse_enabled(app, ui);
         setting::space_mouse_in_view(app, ui).on_hover_text(crate::i18n::tr("ui.space_mouse_show_in_view_tip"));
         // Where the picture goes, a choice that waits on the checkbox above.
@@ -1627,6 +1626,11 @@ fn space_mouse_section(app: &mut SolveApp, ui: &mut egui::Ui) {
             ui.add_enabled_ui(app.preferences.space_mouse_enabled && device.is_some(), |ui| {
                 if ui_kit::button(ui, app.tr("ui.space_mouse_calibrate"), ui_kit::Button::Normal)
                     .on_hover_text(app.tr("ui.space_mouse_calibrate_tip"))
+                    .on_disabled_hover_text(app.tr(if app.space_mouse.device.is_none() {
+                        "ui.space_mouse_calibrate_wait"
+                    } else {
+                        "ui.space_mouse_calibrate_tip"
+                    }))
                     .clicked()
                 {
                     crate::space_mouse_calibration::start(app);
@@ -1645,6 +1649,11 @@ fn space_mouse_section(app: &mut SolveApp, ui: &mut egui::Ui) {
             };
             ui_kit::text(ui, &status, ui_kit::Text::Report("calibration_status", false));
         });
+        // No device yet (after a change of driver, say, until the first reading): say what to do rather
+        // than leave a disabled button unexplained.
+        if app.space_mouse.device.is_none() {
+            ui_kit::text(ui, app.tr("ui.space_mouse_calibrate_wait"), ui_kit::Text::Note("space_mouse_calibrate_wait"));
+        }
         let enabled = app.preferences.space_mouse_enabled;
         let (label, tip) = (app.tr("ui.space_mouse_dead_zone").to_owned(), app.tr("ui.space_mouse_dead_zone_tip").to_owned());
         let (device, raw) = (app.space_mouse.device.clone(), app.space_mouse.raw.into());
@@ -2190,6 +2199,9 @@ mod tests {
                 };
                 let mut output = ctx.run_ui(input, |ui| {
                     ui.scope_builder(egui::UiBuilder::new().max_rect(panel), |ui| {
+                        // The section starts folded: unfold it.
+                        let id = ui.make_persistent_id("sc_prefs_space_mouse");
+                        ui.ctx().data_mut(|data| data.insert_persisted(id, true));
                         super::space_mouse_section(&mut app, ui);
                         let wide: Vec<_> = crate::scenario::rects("").into_iter().filter(|(_, r)| r.right() > panel.right() + 0.5).collect();
                         assert!(ui.min_rect().right() <= panel.right() + 0.5 || wide.is_empty() && false, "{wide:?}",);
@@ -2240,6 +2252,31 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Calibration starts while Preferences is open, and its window is on top of it; with no device
+    /// known there is nothing to start (the button is off and says why, see the hint key).
+    #[test]
+    fn calibration_opens_over_an_open_preferences_and_waits_for_a_device() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.home.open = false;
+        // After a driver change and before any reading: no device, so nothing starts.
+        h.app.space_mouse.device = None;
+        crate::prefs::open_at(&mut h.app, 1);
+        h.frames(5);
+        assert!(crate::i18n::tr("ui.space_mouse_calibrate_wait").starts_with("Move the 3D mouse"));
+        crate::space_mouse_calibration::start(&mut h.app);
+        h.frames(3);
+        assert!(h.app.space_mouse.calibrating.is_none() && h.app.prefs_window.open);
+        // The device is seen: the window opens, above Preferences, which stays open.
+        h.app.space_mouse.device = Some("hid 046d:c62b".into());
+        h.frames(3);
+        crate::space_mouse_calibration::start(&mut h.app);
+        h.frames(5);
+        assert!(h.app.space_mouse.calibrating.is_some() && h.app.prefs_window.open);
+        let window = crate::scenario::rect_of("dialog:window").expect("the calibration window is the last window drawn");
+        let top = h.ctx.layer_id_at(window.center());
+        assert!(top.is_some_and(|layer| layer.id == egui::Id::new("sc_space_mouse_calibration")), "top is {top:?}");
     }
 
     /// The first screen of the calibration (which kind of device) fits at the window's widths:

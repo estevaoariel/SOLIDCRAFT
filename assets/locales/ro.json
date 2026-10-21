@@ -1740,6 +1740,7 @@
   "ui.space_mouse_calibrate": "Calibrează…",
   "ui.space_mouse_calibrate_tip": "Mișcați capacul așa cum cere fereastra, ca SolidCraft să învețe în ce direcție merge fiecare axă a acestui mouse 3D și cât de departe. Salvat pentru acest mouse 3D.",
   "ui.space_mouse_calibrate_title": "Calibrează mouse-ul 3D",
+  "ui.space_mouse_calibrate_wait": "Mișcă o dată mouse-ul 3D ca SolidCraft să îl vadă.",
   "ui.space_mouse_calibrated": "Calibrat",
   "ui.space_mouse_calibration": "Calibrarea mouse-ului 3D",
   "ui.space_mouse_calibration_done": "Gata. Salvați-o pentru a o folosi ori de câte ori acest mouse 3D este conectat.",

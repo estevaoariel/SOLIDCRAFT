@@ -1757,6 +1757,7 @@
   "ui.space_mouse_calibrate": "キャリブレーション…",
   "ui.space_mouse_calibrate_tip": "ウィンドウの指示どおりにキャップを動かすと、この3Dマウスの各軸の向きと移動量をSolidCraftが学習します。この3Dマウス用に保存されます。",
   "ui.space_mouse_calibrate_title": "3Dマウスのキャリブレーション",
+  "ui.space_mouse_calibrate_wait": "SolidCraftが認識できるように、3Dマウスを一度動かしてください。",
   "ui.space_mouse_calibrated": "キャリブレーション済み",
   "ui.space_mouse_calibration": "3Dマウスのキャリブレーション",
   "ui.space_mouse_calibration_done": "完了しました。保存すると、この3Dマウスを接続したときに毎回使われます。",

@@ -1757,6 +1757,7 @@
   "ui.space_mouse_calibrate": "校准…",
   "ui.space_mouse_calibrate_tip": "按窗口提示移动摇杆帽，SolidCraft 会记住这个 3D 鼠标每个轴的方向和行程。校准结果按此 3D 鼠标保存。",
   "ui.space_mouse_calibrate_title": "校准 3D 鼠标",
+  "ui.space_mouse_calibrate_wait": "请移动一次 3D 鼠标，让 SolidCraft 能够识别它。",
   "ui.space_mouse_calibrated": "已校准",
   "ui.space_mouse_calibration": "3D 鼠标校准",
   "ui.space_mouse_calibration_done": "完成。保存后，每次连接此 3D 鼠标都会使用它。",

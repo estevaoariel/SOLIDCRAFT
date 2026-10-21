@@ -1748,6 +1748,7 @@
   "ui.space_mouse_calibrate": "Kalibruj…",
   "ui.space_mouse_calibrate_tip": "Przesuwaj nakładkę zgodnie z poleceniami okna, aby SolidCraft nauczył się kierunku i zakresu każdej osi tej myszy 3D. Zapisywane dla tej myszy 3D.",
   "ui.space_mouse_calibrate_title": "Kalibracja myszy 3D",
+  "ui.space_mouse_calibrate_wait": "Poruszaj myszą 3D raz, aby SolidCraft ją zobaczył.",
   "ui.space_mouse_calibrated": "Skalibrowano",
   "ui.space_mouse_calibration": "Kalibracja myszy 3D",
   "ui.space_mouse_calibration_done": "Gotowe. Zapisz, aby używać kalibracji po każdym podłączeniu tej myszy 3D.",

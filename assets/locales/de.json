@@ -1749,6 +1749,7 @@
   "ui.space_mouse_calibrate": "Kalibrieren…",
   "ui.space_mouse_calibrate_tip": "Bewegen Sie die Kappe so, wie das Fenster es verlangt. So lernt SolidCraft, in welche Richtung und wie weit jede Achse dieser 3D-Maus geht. Wird für diese 3D-Maus gespeichert.",
   "ui.space_mouse_calibrate_title": "3D-Maus kalibrieren",
+  "ui.space_mouse_calibrate_wait": "Bewegen Sie die 3D-Maus einmal, damit SolidCraft sie erkennt.",
   "ui.space_mouse_calibrated": "Kalibriert",
   "ui.space_mouse_calibration": "3D-Maus-Kalibrierung",
   "ui.space_mouse_calibration_done": "Fertig. Speichern Sie die Kalibrierung, damit sie immer gilt, wenn diese 3D-Maus angeschlossen ist.",

@@ -1755,6 +1755,7 @@
   "ui.space_mouse_calibrate": "Calibrer…",
   "ui.space_mouse_calibrate_tip": "Déplacez le capuchon comme la fenêtre le demande, pour que SolidCraft apprenne dans quel sens et jusqu'où va chaque axe de cette souris 3D. Enregistré pour cette souris 3D.",
   "ui.space_mouse_calibrate_title": "Calibrer la souris 3D",
+  "ui.space_mouse_calibrate_wait": "Bougez la souris 3D une fois pour que SolidCraft la voie.",
   "ui.space_mouse_calibrated": "Calibrée",
   "ui.space_mouse_calibration": "Calibrage de la souris 3D",
   "ui.space_mouse_calibration_done": "Terminé. Enregistrez-le pour l'utiliser chaque fois que cette souris 3D est connectée.",

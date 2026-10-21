@@ -1749,6 +1749,7 @@
   "ui.space_mouse_calibrate": "Calibra…",
   "ui.space_mouse_calibrate_tip": "Muovi la manopola come chiede la finestra, così SolidCraft impara in che direzione e quanto va ogni asse di questo mouse 3D. Viene salvata per questo mouse 3D.",
   "ui.space_mouse_calibrate_title": "Calibra mouse 3D",
+  "ui.space_mouse_calibrate_wait": "Muovi il mouse 3D una volta così SolidCraft lo vede.",
   "ui.space_mouse_calibrated": "Calibrato",
   "ui.space_mouse_calibration": "Calibrazione del mouse 3D",
   "ui.space_mouse_calibration_done": "Fatto. Salvala per usarla ogni volta che questo mouse 3D è collegato.",

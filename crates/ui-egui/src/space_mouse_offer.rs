@@ -569,4 +569,36 @@ mod preferences_tests {
         run(&mut h, 2.0);
         assert!(card_up(&h));
     }
+
+    /// Hot-plug: a daemon with no records is no device (no offer), the first record is, and an offer
+    /// hidden for the run stays hidden.
+    #[test]
+    fn the_offer_follows_the_first_record_and_a_hidden_offer_stays_hidden() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.home.open = false;
+        h.app.space_mouse.drivers = Some(crate::space_mouse::DriversPresent { spacenavd: true, direct: true });
+        h.app.space_mouse.device = None;
+        run(&mut h, 3.0);
+        assert!(!card_up(&h) && h.app.preferences.space_mouse_offered.is_empty());
+        h.app.space_mouse.device = Some("spacenavd".into());
+        run(&mut h, 2.0);
+        assert!(card_up(&h), "the first record shows the offer");
+        assert!(h.widget("Swap to Hidraw (Direct Driver)").is_some(), "with a direct device there, Swap shows");
+        // Hidden for the run (a status toast), it stays hidden when the device is seen again.
+        h.app.status = Some(("Done".into(), crate::now_ms(), false));
+        run(&mut h, 1.0);
+        h.app.status = None;
+        h.app.space_mouse.device = None;
+        run(&mut h, 1.0);
+        h.app.space_mouse.device = Some("spacenavd".into());
+        run(&mut h, 2.0);
+        assert!(!card_up(&h));
+        // Without a direct device there is no Swap.
+        let mut h = crate::scenario::Harness::new();
+        h.app.home.open = false;
+        h.app.space_mouse.drivers = Some(crate::space_mouse::DriversPresent { spacenavd: true, direct: false });
+        h.app.space_mouse.device = Some("spacenavd".into());
+        run(&mut h, 2.0);
+        assert!(card_up(&h) && h.widget("Swap to Hidraw (Direct Driver)").is_none());
+    }
 }

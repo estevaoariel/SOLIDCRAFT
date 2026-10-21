@@ -1757,6 +1757,7 @@
   "ui.space_mouse_calibrate": "Calibrate…",
   "ui.space_mouse_calibrate_tip": "Move the cap as the window asks, so SolidCraft learns which way each axis of this 3D mouse goes and how far. Saved for this 3D mouse.",
   "ui.space_mouse_calibrate_title": "Calibrate 3D mouse",
+  "ui.space_mouse_calibrate_wait": "Move the 3D mouse once so SolidCraft can see it.",
   "ui.space_mouse_calibrated": "Calibrated",
   "ui.space_mouse_calibration": "3D mouse calibration",
   "ui.space_mouse_calibration_done": "Done. Save it to use it whenever this 3D mouse is connected.",

@@ -1749,6 +1749,7 @@
   "ui.space_mouse_calibrate": "Calibrar…",
   "ui.space_mouse_calibrate_tip": "Move o capuchón como pide a xanela para que SolidCraft aprenda cara a onde e ata onde vai cada eixe deste rato 3D. Gárdase para este rato 3D.",
   "ui.space_mouse_calibrate_title": "Calibrar o rato 3D",
+  "ui.space_mouse_calibrate_wait": "Move o rato 3D unha vez para que SolidCraft o vexa.",
   "ui.space_mouse_calibrated": "Calibrado",
   "ui.space_mouse_calibration": "Calibración do rato 3D",
   "ui.space_mouse_calibration_done": "Feito. Gárdaa para usala sempre que este rato 3D estea conectado.",

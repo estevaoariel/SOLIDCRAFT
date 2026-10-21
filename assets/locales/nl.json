@@ -1740,6 +1740,7 @@
   "ui.space_mouse_calibrate": "Kalibreren…",
   "ui.space_mouse_calibrate_tip": "Beweeg de dop zoals het venster vraagt, zodat SolidCraft leert welke kant elke as van deze 3D-muis op gaat en hoe ver. Opgeslagen voor deze 3D-muis.",
   "ui.space_mouse_calibrate_title": "3D-muis kalibreren",
+  "ui.space_mouse_calibrate_wait": "Beweeg de 3D-muis één keer, zodat SolidCraft hem ziet.",
   "ui.space_mouse_calibrated": "Gekalibreerd",
   "ui.space_mouse_calibration": "Kalibratie van 3D-muis",
   "ui.space_mouse_calibration_done": "Gereed. Sla op om het te gebruiken wanneer deze 3D-muis is aangesloten.",

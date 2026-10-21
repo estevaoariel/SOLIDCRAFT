@@ -1749,6 +1749,7 @@
   "ui.space_mouse_calibrate": "Kalibrovat…",
   "ui.space_mouse_calibrate_tip": "Pohybujte hlavicí podle pokynů v okně, aby se SolidCraft naučil, kterým směrem a jak daleko se pohybuje každá osa této 3D myši. Uloží se pro tuto 3D myš.",
   "ui.space_mouse_calibrate_title": "Kalibrace 3D myši",
+  "ui.space_mouse_calibrate_wait": "Jednou pohněte 3D myší, aby ji SolidCraft uviděl.",
   "ui.space_mouse_calibrated": "Zkalibrováno",
   "ui.space_mouse_calibration": "Kalibrace 3D myši",
   "ui.space_mouse_calibration_done": "Hotovo. Uložte ji a použije se vždy, když bude tato 3D myš připojená.",

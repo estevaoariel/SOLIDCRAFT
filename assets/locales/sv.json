@@ -1740,6 +1740,7 @@
   "ui.space_mouse_calibrate": "Kalibrera…",
   "ui.space_mouse_calibrate_tip": "Flytta knappen som fönstret ber om, så att SolidCraft lär sig åt vilket håll och hur långt varje axel på denna 3D-mus går. Sparas för denna 3D-mus.",
   "ui.space_mouse_calibrate_title": "Kalibrera 3D-mus",
+  "ui.space_mouse_calibrate_wait": "Rör 3D-musen en gång så att SolidCraft ser den.",
   "ui.space_mouse_calibrated": "Kalibrerad",
   "ui.space_mouse_calibration": "Kalibrering av 3D-mus",
   "ui.space_mouse_calibration_done": "Klart. Spara den för att använda den när denna 3D-mus är ansluten.",
