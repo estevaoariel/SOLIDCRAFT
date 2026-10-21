@@ -490,7 +490,7 @@ pub fn navigate_frame(app: &mut SolveApp, ctx: &egui::Context, mapping: DriverMa
     if let Some((device, wizard)) = &mut app.space_mouse.calibrating {
         if app.space_mouse.device.as_ref() == Some(device) {
             wizard.feed(axes.into(), seconds);
-            ctx.request_repaint_after(Duration::from_millis(16));
+            ctx.request_repaint_after(Duration::from_millis(33));
             return false;
         }
         // Another device is being read now, or none: what was recorded isn't its.

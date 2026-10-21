@@ -27,6 +27,10 @@ use solidcraft_ui_egui::prefs::SpaceMouseDriver;
 use solidcraft_ui_egui::space_mouse::DriversPresent;
 use solidcraft_ui_egui::space_mouse::{Axes, AxisRule, Calibration, DriverMapping, WheelGuard, calibrated, calibration, navigate_frame};
 
+/// The fastest the window repaints for the device's reports: a device sends them faster than anyone
+/// sees, and each one used to be a frame of its own.
+const REPAINT_EVERY: Duration = Duration::from_millis(16);
+
 const STALE_AFTER: Duration = Duration::from_millis(150);
 /// How long a held (spacenavd) reading that is nearly at rest may go without a new record before
 /// it reads as rest: spacenavd sends no final record when the cap springs back, only the last
@@ -335,7 +339,7 @@ fn publish(ctx: &Context, shared: &Mutex<Reading>, layout: Layout, report: &[u8]
     if let Ok(mut reading) = shared.lock()
         && decode_report(report, layout, &mut reading, Instant::now())
     {
-        ctx.request_repaint();
+        ctx.request_repaint_after(REPAINT_EVERY);
     }
 }
 
@@ -345,7 +349,7 @@ fn publish_held(ctx: &Context, shared: &Mutex<Reading>, axes: Axes) {
     if let Ok(mut reading) = shared.lock() {
         reading.heard();
         *reading = Reading { device: reading.device, axes, held: true, buttons: reading.buttons, taps: reading.taps, ..Reading::new(Instant::now()) };
-        ctx.request_repaint();
+        ctx.request_repaint_after(REPAINT_EVERY);
     }
 }
 
@@ -356,7 +360,7 @@ fn publish_button(ctx: &Context, shared: &Mutex<Reading>, button: u32, down: boo
         reading.heard();
         let buttons = if down { reading.buttons | bit } else { reading.buttons & !bit };
         reading.set_buttons(buttons);
-        ctx.request_repaint();
+        ctx.request_repaint_after(REPAINT_EVERY);
     }
 }
 
@@ -648,13 +652,13 @@ fn start_driver_client(ctx: &Context, shared: &Arc<Mutex<Reading>>) {
                     let now = Instant::now();
                     reading.axes = Axes { translation, rotation };
                     reading.at = [now; 6];
-                    ctx.request_repaint();
+                    ctx.request_repaint_after(REPAINT_EVERY);
                 }
             }
             Event::Buttons(buttons) => {
                 if let Ok(mut reading) = shared.lock() {
                     reading.set_buttons(buttons);
-                    ctx.request_repaint();
+                    ctx.request_repaint_after(REPAINT_EVERY);
                 }
             }
         },

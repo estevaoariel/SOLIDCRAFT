@@ -178,3 +178,58 @@ fn stacked_bars_in_a_short_view_do_not_push_the_picture_out_of_it() {
         assert!(rect.top() >= view.top() && view.contains_rect(rect), "{position:?}: {rect:?} is outside {view:?}");
     }
 }
+
+/// How much one frame of each picture costs the painter: shapes and tessellated vertices. A ceiling
+/// each, so a picture cannot quietly grow expensive (the calibration window once ran a core flat out).
+#[test]
+fn the_pictures_cost_a_bounded_amount_to_draw_per_frame() {
+    let ctx = crate::fonts::test_context();
+    let calibration = Calibration {
+        dead_zone_share: 0.0,
+        kind: Kind::ReturnToCenter,
+        axes: std::array::from_fn(|source| solidcraft_space_mouse::AxisCalibration {
+            source,
+            reversed: false,
+            rest: 0,
+            dead_zone: 0,
+            full: [350; 2],
+        }),
+    };
+    let cost = |draw_it: &mut dyn FnMut(&mut egui::Ui)| {
+        let mut output = ctx.run_ui(
+            egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0))), ..Default::default() },
+            |ui| draw_it(ui),
+        );
+        output.textures_delta.clear();
+        let shapes = output.shapes.len();
+        let vertices: usize = ctx
+            .tessellate(output.shapes, 1.0)
+            .iter()
+            .filter_map(|p| if let egui::epaint::Primitive::Mesh(m) = &p.primitive { Some(m.vertices.len()) } else { None })
+            .sum();
+        (shapes, vertices)
+    };
+    let cap = cost(&mut |ui| live(ui, &calibration, [60, -40, 100, 10, -20, 30]));
+    let ball = Calibration { kind: Kind::Trackball, ..calibration };
+    let rolling = cost(&mut |ui| live(ui, &ball, [60, -40, 100, 10, -20, 30]));
+    let demo_cost = cost(&mut |ui| demo(ui, solidcraft_space_mouse::STEPS[0], Kind::ReturnToCenter));
+    eprintln!("PICTURE COST cap (shapes, vertices) {cap:?} trackball {rolling:?} demo {demo_cost:?}");
+    for (name, (shapes, vertices)) in [("cap", cap), ("trackball", rolling), ("demo", demo_cost)] {
+        assert!(shapes <= CEILING_SHAPES && vertices <= CEILING_VERTICES, "{name}: {shapes} shapes, {vertices} vertices");
+    }
+}
+
+/// Measured at 45 shapes and 1,374 vertices for the cap, 82 and 2,534 for the trackball.
+const CEILING_SHAPES: usize = 150;
+const CEILING_VERTICES: usize = 4_000;
+
+#[test]
+fn the_demo_repaints_at_30_fps_only_while_it_moves() {
+    use std::time::Duration;
+    let [out, hold, back, rest] = DEMO_SECONDS;
+    assert_eq!(demo_repaint_after(out / 2.0, true), Duration::from_millis(33), "moving out");
+    assert_eq!(demo_repaint_after(out + hold / 2.0, true), Duration::from_millis(100), "holding");
+    assert_eq!(demo_repaint_after(out + hold + back / 2.0, true), Duration::from_millis(33), "moving back");
+    assert_eq!(demo_repaint_after(out + hold + back + rest / 2.0 - 0.1, true), Duration::from_millis(100), "resting");
+    assert_eq!(demo_repaint_after(out / 2.0, false), Duration::from_millis(500), "not in use");
+}

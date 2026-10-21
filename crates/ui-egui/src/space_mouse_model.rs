@@ -303,7 +303,21 @@ pub(crate) fn demo(ui: &mut egui::Ui, step: Step, kind: Kind) {
     }
     let (rect, _) = ui.allocate_exact_size(SIZE, egui::Sense::hover());
     draw(ui, "demo", rect, kind, travel, moving);
-    ui.ctx().request_repaint_after(std::time::Duration::from_millis(16));
+    let focused = ui.input(|i| i.focused);
+    ui.ctx().request_repaint_after(demo_repaint_after((now - started) as f32, focused));
+}
+
+/// How long the demo waits before it is drawn again: 30 frames a second while the cap or ball moves,
+/// 10 while it holds or rests (nothing changes), and rarely when the window is not in use.
+pub(crate) fn demo_repaint_after(seconds: f32, focused: bool) -> std::time::Duration {
+    use std::time::Duration;
+    if !focused {
+        Duration::from_millis(500)
+    } else if (demo_swing(seconds) - demo_swing(seconds + 0.1)).abs() < 1e-6 {
+        Duration::from_millis(100)
+    } else {
+        Duration::from_millis(33)
+    }
 }
 
 /// A level circle round the device's centre line.
