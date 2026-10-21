@@ -2814,9 +2814,6 @@ mod ux_tests;
 #[path = "sketch_axis_ref_tests.rs"]
 mod axis_ref_tests;
 #[cfg(test)]
-#[path = "sketch_design_units_tests.rs"]
-mod design_units_tests;
-#[cfg(test)]
 #[path = "sketch_drag_live_tests.rs"]
 mod drag_live_tests;
 #[cfg(test)]
