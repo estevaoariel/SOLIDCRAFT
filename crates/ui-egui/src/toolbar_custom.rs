@@ -263,15 +263,25 @@ pub fn run(app: &mut SolveApp, action: &str, p: &Value) {
     }
 }
 
-/// Shortcut keys, S box favourites and the toolbar as one file (Keyboard Shortcuts › Export).
+/// The shortcut set and keys, S box favourites and the toolbar as one file (Keyboard Shortcuts ›
+/// Export).
 pub fn export(app: &SolveApp) -> Value {
-    json!({ "format": "solidcraft-shortcuts/1", "shortcuts": app.keymap.prefs(), "favourites": app.sbox.pinned, "toolbar": app.toolbar_custom.prefs() })
+    json!({
+        "format": "solidcraft-shortcuts/1",
+        "set": app.preferences.shortcut_set,
+        "shortcuts": app.keymap.prefs(),
+        "favourites": app.sbox.pinned,
+        "toolbar": app.toolbar_custom.prefs(),
+    })
 }
 
 pub fn import(app: &mut SolveApp, v: &Value) -> Result<(), String> {
     // "solvecraft-shortcuts/1": files exported before the rename (compatibility shim).
     if !matches!(v.get("format").and_then(Value::as_str), Some("solidcraft-shortcuts/1" | "solvecraft-shortcuts/1")) {
         return Err("not a SolidCraft shortcuts file".into());
+    }
+    if let Some(set) = v.get("set").and_then(Value::as_str).filter(|s| crate::keymap::SETS.iter().any(|k| k.id == *s)) {
+        app.preferences.shortcut_set = set.into();
     }
     if let Some(s) = v.get("shortcuts") {
         app.keymap.load(s);

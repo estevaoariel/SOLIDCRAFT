@@ -180,6 +180,11 @@ pub(crate) fn cmd(app: &SolveApp, id: &str, label: &str) -> Item {
     }
 }
 
+/// The key that runs command `id` now (`keymap::effective`), or none.
+fn key(app: &SolveApp, id: &str) -> String {
+    crate::keymap::effective(app, id).unwrap_or_default()
+}
+
 /// A view action (`ui.*`).
 pub(crate) fn act(id: &str, label: &str, icon: &str) -> Item {
     Item {
@@ -509,7 +514,7 @@ fn viewport_items(app: &SolveApp) -> Vec<Item> {
         v.push(act("ui.editFeature", "Edit Feature", "edit").with(json!({ "feature": feature })).on(feature.is_some()));
         v.push(act("ui.editSketch", "Edit Profile Sketch", "sketch").with(json!({ "sketch": sketch })).on(sketch.is_some()));
         v.push(Item::sep());
-        v.push(act("ui.appearance", "Appearance", "appearance").key("A"));
+        v.push(act("ui.appearance", "Appearance", "appearance").key(&key(app, "appearance.assign")));
         v.push(act("ui.properties", "Properties", "measure").with(json!({ "bodies": [face] })));
         v.push(act("ui.saveMesh", "Save As Mesh", "export").with(json!({ "bodies": [face] })));
         v.push(Item::sep());
@@ -589,11 +594,11 @@ fn body_items(app: &SolveApp, bodies: &[String], browser: bool) -> Vec<Item> {
     let locked = bodies.iter().all(|b| app.ui.locked_bodies.contains(b));
     let items = json!(bodies.iter().map(|b| json!({"type": "body", "name": b})).collect::<Vec<_>>());
     let mut v = vec![
-        act("ui.moveBodies", "Move/Copy", "move").key("M").with(json!({ "bodies": names })).on(!locked),
+        act("ui.moveBodies", "Move/Copy", "move").key(&key(app, "solid.move")).with(json!({ "bodies": names })).on(!locked),
         cmd(app, "component.from_bodies", "Create Components from Bodies").with(json!({ "bodies": names })),
         Item::sep(),
         act("ui.material", "Physical Material", "material").with(json!({ "bodies": names })),
-        act("ui.appearance", "Appearance", "appearance").key("A").with(json!({ "bodies": names })),
+        act("ui.appearance", "Appearance", "appearance").key(&key(app, "appearance.assign")).with(json!({ "bodies": names })),
         act("ui.properties", "Properties", "measure").with(json!({ "bodies": names })),
         Item::sep(),
         act("ui.saveMesh", "Save As Mesh", "export").with(json!({ "bodies": names })),
@@ -628,7 +633,7 @@ fn sketch_items(app: &SolveApp, id: u64) -> Vec<Item> {
     let editing = app.session.active_sketch == Some(id);
     let has_profiles = app.session.world_state().sketch(id).is_some_and(|s| !s.profiles.is_empty());
     vec![
-        act("ui.extrudeSketch", "Extrude", "extrude").key("E").with(json!({ "sketch": id })).on(has_profiles && !editing),
+        act("ui.extrudeSketch", "Extrude", "extrude").key(&key(app, "solid.extrude")).with(json!({ "sketch": id })).on(has_profiles && !editing),
         Item::sep(),
         act("ui.editSketch", "Edit Sketch", "sketch").with(json!({ "sketch": id })).on(!editing),
         act("ui.redefineSketch", "Redefine Sketch Plane", "plane").with(json!({ "sketch": id })),
@@ -766,7 +771,7 @@ fn component_items(app: &SolveApp, id: u64) -> Vec<Item> {
         v.push(cmd(app, "occurrence.ground", if grounded { "Unground" } else { "Ground" }).with(json!({ "occurrence": oid, "grounded": !grounded })));
         v.push(
             act("ui.moveOccurrence", "Move/Copy", "move")
-                .key("M")
+                .key(&key(app, "solid.move"))
                 .with(json!({ "occurrence": oid }))
                 .on(!grounded && occ.is_some() && app.session.held_by_rigid_group(oid).is_none()),
         );
@@ -790,7 +795,7 @@ fn component_items(app: &SolveApp, id: u64) -> Vec<Item> {
     v.push(act("ui.material", "Physical Material", "material").with(json!({ "bodies": names })).on(!bodies.is_empty()));
     v.push(
         act("ui.appearance", "Appearance", "appearance")
-            .key("A")
+            .key(&key(app, "appearance.assign"))
             .with(if id == 0 { json!({ "bodies": names }) } else { json!({"component": id}) })
             .on(id != 0 || !bodies.is_empty()),
     );
@@ -883,7 +888,7 @@ fn sketch_entity_items(app: &SolveApp) -> Vec<Item> {
         v.push(cmd(app, "sketch.edit_text", "Edit Text"));
         v.extend(explode_text(app));
     }
-    v.push(cmd(app, "sketch.move", "Move/Copy").key("M"));
+    v.push(cmd(app, "sketch.move", "Move/Copy"));
     v.push(act("ui.cut", "Cut", "cut").key("Ctrl+X"));
     v.push(act("ui.copy", "Copy", "copy").key("Ctrl+C"));
     v.push(act("ui.paste", "Paste", "paste").key("Ctrl+V").on(app.session.sketch_clipboard.is_some()));

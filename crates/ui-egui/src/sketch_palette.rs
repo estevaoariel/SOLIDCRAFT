@@ -82,16 +82,19 @@ pub fn mode(app: &SolveApp) -> u8 {
 pub fn set_mode(app: &mut SolveApp, m: u8) {
     MODE.with(|c| c.set((m, app.session.active_sketch)));
     let hint = match m {
-        1 => "Construction mode: new curves are construction geometry (X or the palette's Normal to leave)",
-        2 => "Centerline mode: new lines are centerlines",
-        3 => "Infinite mode: new lines are infinite construction lines",
-        _ => "Normal mode",
+        1 => match crate::keymap::effective(app, "sketch.construction") {
+            Some(key) => format!("Construction mode: new curves are construction geometry ({key} or the palette's Normal to leave)"),
+            None => "Construction mode: new curves are construction geometry (the palette's Normal to leave)".into(),
+        },
+        2 => "Centerline mode: new lines are centerlines".into(),
+        3 => "Infinite mode: new lines are infinite construction lines".into(),
+        _ => "Normal mode".into(),
     };
     app.set_status(hint, false);
 }
 
-/// X / the toolbar's Construction: convert the selected curves, or with nothing selected
-/// switch construction mode on or off.
+/// The construction key / the toolbar's Construction: convert the selected curves, or with
+/// nothing selected switch construction mode on or off.
 pub fn toggle_construction(app: &mut SolveApp) {
     let curves = selected_curves(app);
     if curves.is_empty() && app.session.active_sketch.is_none() {
@@ -276,6 +279,14 @@ fn active_feature(app: &SolveApp) -> Option<(&'static crate::sketch_families::Fa
     (family.commands.len() > 1).then_some((family, id))
 }
 
+/// The construction mode row, with the key that toggles it now.
+pub(crate) fn construction_label(app: &SolveApp) -> String {
+    match crate::keymap::effective(app, "sketch.construction") {
+        Some(key) => crate::i18n::format("ui.palette_construction_mode_key", &[("key", &key)]),
+        None => crate::i18n::tr("ui.palette_construction_mode").to_string(),
+    }
+}
+
 fn section_alias(name: &str, title: &str) {
     if let Some(at) = crate::scenario::handle_at(&format!("dialog:section:{title}")) {
         crate::scenario::publish_handle(name, at);
@@ -456,12 +467,8 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         set = Some((key.to_string(), !shown(key)));
                     }
                 }
-                construction = crate::ui_kit::checkbox_row(
-                    ui,
-                    "construction_mode",
-                    "ui.palette_construction_mode",
-                    selected_types.get(1).copied().unwrap_or(false),
-                );
+                construction =
+                    crate::ui_kit::checkbox_row(ui, "construction_mode", &construction_label(app), selected_types.get(1).copied().unwrap_or(false));
                 crate::ui_kit::section(ui, "more", "ui.palette_more", false, |ui| {
                     for (key, label) in TOGGLES {
                         if !["show_constraints", "show_dimensions", "show_points", "snap"].contains(&key)

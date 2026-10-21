@@ -140,7 +140,7 @@ pub fn paste(app: &mut SolveApp, at: Option<Pos2>) -> bool {
         };
         let Ok(out) = app.run("sketch.paste", params) else { return false };
         let n = out.get("curves").and_then(Value::as_array).map_or(0, Vec::len) + out.get("points").and_then(Value::as_array).map_or(0, Vec::len);
-        app.set_status(format!("Pasted {n} sketch entities (selected: drag them, or press M to move them)"), false);
+        app.set_status(format!("Pasted {n} sketch entities (selected: drag them to move them)"), false);
         return true;
     }
     if let Some(path) = app.linked_design_clipboard.clone() {

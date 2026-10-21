@@ -205,10 +205,11 @@ fn view_keys_blocked(app: &SolveApp, ctx: &egui::Context) -> bool {
 }
 
 /// View keys (#1541): the arrows turn the view 15° (with Shift a quarter turn, as the navigation
-/// cube's arrows), Ctrl+arrows pan it a tenth of the view, and Ctrl+8 looks straight at the
-/// selected face, plane or sketch. Held longer than a tap, an arrow keeps turning the view at a
-/// steady rate (`step_key_hold`); the operating system's key repeat does nothing. Not while a
-/// menu, the command box or a focused widget has the arrows. Returns whether the key was used.
+/// cube's arrows), Ctrl+arrows pan it a tenth of the view, Ctrl+8 looks straight at the
+/// selected face, plane or sketch, and the shortcut set's view keys (`keymap::view_key`) do
+/// theirs. Held longer than a tap, an arrow keeps turning the view at a steady rate
+/// (`step_key_hold`); the operating system's key repeat does nothing. Not while a menu, the
+/// command box or a focused widget has the arrows. Returns whether the key was used.
 pub(crate) fn view_key(app: &mut SolveApp, ctx: &egui::Context, key: egui::Key, mods: egui::Modifiers, repeat: bool) -> bool {
     use egui::Key;
     let menu_open = view_keys_blocked(app, ctx);
@@ -218,6 +219,18 @@ pub(crate) fn view_key(app: &mut SolveApp, ctx: &egui::Context, key: egui::Key, 
     }
     if key == Key::Num8 && ctrl && !mods.shift {
         crate::viewport::look_at_selection(app);
+        return true;
+    }
+    if let Some(view) = crate::keymap::view_key(app, &crate::keymap::key_name(key, mods)) {
+        use crate::keymap::ViewKey;
+        // The flat pattern neither turns nor looks at anything; Fit frames it.
+        let flat = crate::dialogs_sheet::flat_active(app);
+        match view {
+            ViewKey::View(v) if !repeat && (!flat || v == "fit") => app.animate_view(v),
+            ViewKey::LookAt if !repeat && !flat => crate::viewport::look_at_selection(app),
+            ViewKey::ZoomIn | ViewKey::ZoomOut => key_zoom(app, view == ViewKey::ZoomOut),
+            _ => {}
+        }
         return true;
     }
     let (action, dx, dy): (&'static str, f32, f32) = match key {
@@ -242,6 +255,25 @@ pub(crate) fn view_key(app: &mut SolveApp, ctx: &egui::Context, key: egui::Key, 
         let _ = app.run("view.navigate", json!({"camera": from, "action": action, "degrees": degrees}));
     }
     true
+}
+
+/// How far one zoom key press zooms.
+const KEY_ZOOM: f64 = 1.25;
+
+/// A zoom key's step through `view.navigate`, on the canvas shown (the flat pattern's own view,
+/// else the Design camera), reversed with the wheel by `zoom_reverse`.
+fn key_zoom(app: &mut SolveApp, out: bool) {
+    let Some(rect) = app.viewport.rect else { return };
+    let factor = KEY_ZOOM.powf(if out { 1.0 } else { -1.0 } * crate::prefs::zoom_sign(app));
+    let params = json!({"motion": "zoom", "factor": factor});
+    app.viewport.orbit_free = None;
+    if crate::dialogs_sheet::flat_active(app) {
+        let design = std::mem::replace(&mut app.cam, app.flat_view.cam);
+        camera_motion(app, rect, params);
+        app.flat_view.cam = std::mem::replace(&mut app.cam, design);
+    } else {
+        camera_motion(app, rect, params);
+    }
 }
 
 /// Each frame an arrow turning the view is held past a tap: turn at a steady rate by the frame's
@@ -1332,6 +1364,33 @@ mod view_key_tests {
         assert!(turn(mid.yaw, anim.from.yaw).abs() < 15f64.to_radians(), "continues from the camera as it is");
         h.settle();
         assert!((turn(before, h.app.cam.yaw).abs() - 30f64.to_radians()).abs() < 1e-6);
+    }
+
+    /// The Onshape set's Z zooms out and Shift+Z in, as `view.navigate`'s zoom does, and both
+    /// turn round with the wheel under `zoom_reverse`.
+    #[test]
+    fn zoom_keys_zoom_through_view_navigate_and_follow_zoom_reverse() {
+        for reverse in [false, true] {
+            let mut h = front_view();
+            h.app.preferences.shortcut_set = crate::keymap::ONSHAPE_SET.into();
+            h.app.preferences.zoom_reverse = reverse;
+            for (shift, out) in [(false, true), (true, false)] {
+                let rect = h.app.viewport.rect.unwrap();
+                let factor = if out != reverse { 1.25 } else { 0.8 };
+                let params = json!({"camera": h.app.cam, "motion": "zoom", "factor": factor, "viewport": [rect.width(), rect.height()]});
+                let want: solidcraft_engine::render::Camera =
+                    serde_json::from_value(h.app.session.execute("view.navigate", &params).unwrap()["camera"].clone()).unwrap();
+                h.step(&json!({"key": "Z", "shift": shift})).unwrap();
+                h.frames(2);
+                assert!(
+                    (h.app.cam.distance - want.distance).abs() < 1e-9,
+                    "reverse {reverse}, shift {shift}: {} {}",
+                    h.app.cam.distance,
+                    want.distance
+                );
+                assert_eq!(h.app.cam.target, want.target);
+            }
+        }
     }
 
     /// #1886: Ctrl+8 looks straight at the sketch; pressed again while the view faces it, it
