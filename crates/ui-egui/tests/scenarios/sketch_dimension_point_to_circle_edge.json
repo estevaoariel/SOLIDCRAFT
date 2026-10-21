@@ -9,7 +9,7 @@
   {"call": "ui.view", "params": {"view": "fit"}},
   {"start": "sketch.dimension"},
   {"click": {"sketch": [32, 15]}},
-  {"click": {"sketch": [20, 10]}},
+  {"click": {"sketch": [20, 20]}},
   {"text": "3"},
   {"key": "Enter"},
   {"key": "Escape"},
