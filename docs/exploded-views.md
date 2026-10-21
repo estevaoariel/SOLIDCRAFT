@@ -83,15 +83,24 @@ nothing about them is saved. They are drawn only when the view on show has trail
 
 ## In the app
 
-The **Exploded View** dialog holds the view's name, its easing, the trail-lines switch, the list
-of steps and a scrubber over the whole sequence. The steps can be added, renamed, reordered and
-deleted, and each step's moves are edited as a list of `occurrence: translate [x, y, z]` rows.
+The **Exploded View** dialog holds, from the top: the view (a new one, or one of the design's
+views to edit), its name, its easing, the trail-lines switch, the **Explode** scale (a new view
+only — it fills the first step with the automatic moves), the **Playback** buttons (to the start,
+step back, play/pause, step on, to the end, with Loop and the speed), the **Sequence** scrubber
+over the whole sequence in milliseconds, and the list of steps. A step is a row: its number, its
+name, its length, and the buttons that move it up, move it down or delete it. Under it, one row
+per move: the occurrence, its translation in the design's units, and the button that removes it.
+**Add step** appends a step at the end.
+
 Play, Pause and Loop move the scrubber in real time at the chosen speed, and the pose follows.
 OK saves the view and shows it; closing the dialog without OK puts the occurrences back.
 
 While the dialog is open, the occurrence picked in the viewport gets a translation gizmo at the
 place the part is **now**, so it can be pulled along X, Y or Z. The drag changes the current
 step's move for that occurrence, never the occurrence's own placement.
+
+The dialog's live preview is a copy of the session, so the design is untouched while it is open —
+and the trail lines, which belong to the view on show, are drawn once OK has shown it.
 
 ## The file format
 
