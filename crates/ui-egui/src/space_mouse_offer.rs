@@ -672,4 +672,31 @@ mod preferences_tests {
         assert_eq!(from_card, from_prefs);
         assert!(from_card.is_some());
     }
+
+    /// The driver fallback round trip: Direct asked for, the device away so the daemon is read (its own
+    /// key), the device back: the saved calibration under the device's key applies again and the saved
+    /// driver choice never changed.
+    #[test]
+    fn a_driver_fallback_round_trip_keeps_the_calibration_and_the_driver_choice() {
+        let axes =
+            std::array::from_fn(|source| solidcraft_space_mouse::AxisCalibration { source, reversed: false, rest: 0, dead_zone: 0, full: [350; 2] });
+        let calibration = solidcraft_space_mouse::Calibration { dead_zone_share: 0.0, kind: solidcraft_space_mouse::Kind::ReturnToCenter, axes };
+        let mut h = crate::scenario::Harness::new();
+        h.app.home.open = false;
+        h.app.preferences.space_mouse_driver = crate::prefs::SpaceMouseDriver::Direct;
+        h.app.preferences.space_mouse_calibrations.insert("hid 046d:c62b".into(), calibration);
+        h.app.space_mouse.device = Some("hid 046d:c62b".into());
+        run(&mut h, 2.0);
+        assert_eq!(crate::space_mouse::calibration(&h.app), Some(calibration));
+        // Away: the daemon is read under its own key, which has no calibration (it is a different reading).
+        h.app.space_mouse.device = Some("spacenavd".into());
+        run(&mut h, 2.0);
+        assert!(crate::space_mouse::calibration(&h.app).is_none());
+        assert_eq!(h.app.preferences.space_mouse_driver, crate::prefs::SpaceMouseDriver::Direct, "the choice is not changed by the fallback");
+        // Back: the device's own key, and its calibration, at once.
+        h.app.space_mouse.device = Some("hid 046d:c62b".into());
+        run(&mut h, 1.0);
+        assert_eq!(crate::space_mouse::calibration(&h.app), Some(calibration));
+        assert!(h.app.preferences.space_mouse_calibrations.contains_key("hid 046d:c62b"));
+    }
 }

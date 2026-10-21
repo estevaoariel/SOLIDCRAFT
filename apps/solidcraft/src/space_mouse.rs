@@ -209,6 +209,12 @@ impl Source {
         }
     }
 
+    /// The key a device's saved settings are kept under: where the reading comes from and, for a device
+    /// read directly, its vendor and product ids (`hid 046d:c62b`). Never the hidraw node or a device
+    /// number, which change at every replug. Two mice of one model share a slot (the kernel gives no
+    /// serial here); the calibration is of the model's axes, so that is the same calibration. A reading
+    /// through spacenavd or the 3Dconnexion driver is a different reading of the device (processed by
+    /// them), so it has its own key and its own calibration.
     fn key(self) -> String {
         match self {
             Self::Hid(Some((vendor, product))) => format!("hid {vendor:04x}:{product:04x}"),
