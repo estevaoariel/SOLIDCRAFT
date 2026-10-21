@@ -876,12 +876,14 @@ impl Wizard {
     /// step's peak: spacenavd keeps a relative device's last report (#2778), which isn't recorded.
     /// Exactly, not within the noise a cap's steadiness allows: a scroll ring's clicks are smaller
     /// than that. The same reading for [`HELD_SECONDS`] without slowing down is a cap being held,
-    /// which [`Wizard::mismatch`] reports; the step is then done all the same.
+    /// which [`Wizard::mismatch`] reports; the step stays open (a skip or a switch of kind moves on).
     fn roll(&mut self, index: usize, raw: [i16; 6], away: f64, offsets: [f64; 6], furthest: f64, seconds: f64) {
         let stuck = self.same >= SETTLE_SECONDS;
         let high = away >= 1.0 && offsets.iter().copied().fold(0.0, f64::max) >= 0.5 * furthest;
         self.held |= high && self.same >= HELD_SECONDS;
-        let stopped = away <= 0.5 || (stuck && (!high || self.held));
+        // A still-high reading is never a place the ball came to rest: a quantized ball can send the
+        // same speed while it rolls. Held steady far out only makes `mismatch` suggest a cap.
+        let stopped = away <= 0.5 || (stuck && !high);
         if away >= 1.0 && !stuck {
             self.recording.step(index, raw);
             self.seconds += seconds;
@@ -1758,6 +1760,25 @@ mod tests {
         // The raw axes it has no use for read nothing; the ones it has read at full scale.
         assert_eq!(calibration.apply([0, 0, 0, 99, 99, 0]), [0; 6]);
         assert_eq!(calibration.apply([40, 0, 0, 0, 0, 0])[0], FULL_SCALE);
+    }
+
+    #[test]
+    fn a_steady_trackball_speed_is_not_taken_for_rest() {
+        let mut wizard = Wizard::new(Kind::Trackball);
+        hold(&mut wizard, [0; 6], REST_SECONDS + TOUCH_SECONDS + 0.1);
+        assert_eq!(wizard.stage(), Stage::Step(0));
+        // A quantized ball rolling at one speed for longer than a cap is ever held.
+        hold(&mut wizard, [40, 3, 0, 0, 0, 0], HELD_SECONDS + 0.1);
+        assert_eq!(wizard.stage(), Stage::Step(0), "the step is not done by a reading that stays high");
+        // Letting it stop finishes the step, and the rest of the strokes go as usual.
+        hold(&mut wizard, [0; 6], 0.2);
+        assert_eq!(wizard.stage(), Stage::Step(1));
+        for (index, reading) in BALL.into_iter().skip(1) {
+            strokes(&mut wizard, reading, index);
+        }
+        let calibration = wizard.result().unwrap().expect("no NoResponse for the first axis");
+        assert!(calibration.axes[0].dead_zone < 20 && calibration.axes[0].rest == 0, "{:?}", calibration.axes[0]);
+        assert!(calibration.is_usable());
     }
 
     #[test]
