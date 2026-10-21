@@ -214,7 +214,9 @@ impl Source {
     /// number, which change at every replug. Two mice of one model share a slot (the kernel gives no
     /// serial here); the calibration is of the model's axes, so that is the same calibration. A reading
     /// through spacenavd or the 3Dconnexion driver is a different reading of the device (processed by
-    /// them), so it has its own key and its own calibration.
+    /// them), so it has its own key and its own calibration. That key is shared by every device the
+    /// daemon reads, so it cannot hold a device's own settings: Automatic reads a device directly when
+    /// a calibration is saved under its `hid` key and it opens (see `choose`).
     fn key(self) -> String {
         match self {
             Self::Hid(Some((vendor, product))) => format!("hid {vendor:04x}:{product:04x}"),
@@ -489,6 +491,11 @@ struct Drivers {
     choice: AtomicU8,
     /// `PRESENT_SPACENAVD` and `PRESENT_DIRECT`, as of the reader's last look.
     found: AtomicU8,
+    /// The direct device the reader last saw (its ids make the settings key), for the egui thread to
+    /// look up what is saved for it.
+    direct: Mutex<Option<Source>>,
+    /// Whether a calibration is saved under that device's own key: Automatic then reads it directly.
+    prefer_direct: AtomicBool,
 }
 
 #[cfg(target_os = "linux")]
@@ -513,6 +520,12 @@ impl Drivers {
         DriversPresent { spacenavd: found & PRESENT_SPACENAVD != 0, direct: found & PRESENT_DIRECT != 0 }
     }
 
+    fn publish_direct(&self, source: Option<Source>) {
+        if let Ok(mut direct) = self.direct.lock() {
+            *direct = source;
+        }
+    }
+
     fn publish(&self, present: DriversPresent) {
         let found = (u8::from(present.spacenavd) * PRESENT_SPACENAVD) | (u8::from(present.direct) * PRESENT_DIRECT);
         self.found.store(found, Ordering::Relaxed);
@@ -531,6 +544,14 @@ enum Pick {
 #[cfg(target_os = "linux")]
 const UNREADABLE_RETRY: Duration = Duration::from_secs(30);
 
+/// Whether Automatic should read the direct device: a calibration is saved under that device's own
+/// key. A calibration saved for another device, or for the daemon's key, does not count, and nothing
+/// is ever copied from one key to another.
+#[cfg(target_os = "linux")]
+fn prefers_direct(calibrations: &std::collections::BTreeMap<String, Calibration>, direct: Option<Source>) -> bool {
+    direct.is_some_and(|source| calibrations.contains_key(&source.key()))
+}
+
 /// Whether the direct reader can be chosen: a device was found, and it did not just fail to open
 /// (`since_failed`, how long ago, if it did): without that a device that is there but unreadable
 /// (no permission) would keep winning and a working spacenavd would never be tried.
@@ -542,15 +563,27 @@ fn direct_usable(found: bool, since_failed: Option<Duration>) -> bool {
 /// Whether a read of `pick` should end because the direct device, absent when it began, is there now
 /// and would be the choice: the daemon was read for want of the device, and the device is back.
 #[cfg(target_os = "linux")]
-fn switch_back(wanted: SpaceMouseDriver, pick: Option<Pick>, present: DriversPresent, direct_at_start: bool, failed: Option<Duration>) -> bool {
-    !direct_at_start && choose(wanted, present.spacenavd, direct_usable(present.direct, failed)) != pick
+fn switch_back(
+    wanted: SpaceMouseDriver,
+    pick: Option<Pick>,
+    present: DriversPresent,
+    direct_at_start: bool,
+    failed: Option<Duration>,
+    prefer_direct: bool,
+) -> bool {
+    !direct_at_start && choose(wanted, present.spacenavd, direct_usable(present.direct, failed), prefer_direct) != pick
 }
 
 /// Which reader to use: the one asked for when it is there, else the other, else none. Automatic
-/// asks for spacenavd, which is what has always been read first.
+/// asks for spacenavd, which is what has always been read first, unless a calibration is saved
+/// under the direct device's own key (`prefer_direct`) and the device opens (`direct`): the same
+/// device keeps the same settings only when it is read the same way, and spacenavd's key is shared
+/// by every device the daemon reads. A device that cannot be opened leaves Automatic on the daemon
+/// as before, with no new key.
 #[cfg(target_os = "linux")]
-fn choose(wanted: SpaceMouseDriver, spacenavd: bool, direct: bool) -> Option<Pick> {
+fn choose(wanted: SpaceMouseDriver, spacenavd: bool, direct: bool, prefer_direct: bool) -> Option<Pick> {
     let first = match wanted {
+        SpaceMouseDriver::Automatic if prefer_direct && direct => Pick::Direct,
         SpaceMouseDriver::Automatic | SpaceMouseDriver::Spacenavd => Pick::Spacenavd,
         SpaceMouseDriver::Direct => Pick::Direct,
     };
@@ -566,7 +599,7 @@ fn choose(wanted: SpaceMouseDriver, spacenavd: bool, direct: bool) -> Option<Pic
 /// that streams without a pause takes the new choice when it next pauses; a held cap goes quiet at
 /// once, a moving one at its next pause, so the wait is bounded by the motion.
 /// Reads the 3D mouse through spacenavd or `/dev/hidrawN`, as `Drivers::choice` says (Automatic
-/// is spacenavd when it runs, so what `spnavcfg` sets, swapped and inverted axes, sensitivity,
+/// is spacenavd when it runs, unless a calibration is saved for the direct device and it opens, so what `spnavcfg` sets, swapped and inverted axes, sensitivity,
 /// dead zones, applies here as in other programs). Both reads wake up when idle to see whether
 /// the choice changed, which then moves to the other reader without a restart. hidraw is opened
 /// non-blocking and ends with an error when the device is unplugged. Opening needs permission:
@@ -574,7 +607,10 @@ fn choose(wanted: SpaceMouseDriver, spacenavd: bool, direct: bool) -> Option<Pic
 /// tag, which a rule for the 3D mouse has to add.
 #[cfg(target_os = "linux")]
 fn reader(ctx: Context, shared: Arc<Mutex<Reading>>, drivers: Arc<Drivers>) {
-    let look = || DriversPresent { spacenavd: spacenavd::exists(), direct: hidraw::find().is_some() };
+    let look = || {
+        let device = hidraw::find();
+        (DriversPresent { spacenavd: spacenavd::exists(), direct: device.is_some() }, device.map(|device| Source::Hid(device.ids)))
+    };
     let mut denied = None;
     // When the direct device last failed to open, so a device that is there but unreadable does not
     // keep the choice from a daemon that works.
@@ -584,13 +620,15 @@ fn reader(ctx: Context, shared: Arc<Mutex<Reading>>, drivers: Arc<Drivers>) {
         let device = hidraw::find();
         let present = DriversPresent { spacenavd: spacenavd::exists(), direct: device.is_some() };
         drivers.publish(present);
+        drivers.publish_direct(device.as_ref().map(|device| Source::Hid(device.ids)));
         let wanted = drivers.choice();
         let direct = direct_usable(present.direct, unreadable.map(|at| at.elapsed()));
-        let mut pick = choose(wanted, present.spacenavd, direct);
+        let prefer = drivers.prefer_direct.load(Ordering::Relaxed);
+        let mut pick = choose(wanted, present.spacenavd, direct, prefer);
         // A socket file with no daemon behind it is no spacenavd.
         let daemon = if pick == Some(Pick::Spacenavd) { spacenavd::connect() } else { None };
         if pick == Some(Pick::Spacenavd) && daemon.is_none() {
-            pick = choose(wanted, false, direct);
+            pick = choose(wanted, false, direct, prefer);
         }
         let asked_for = match wanted {
             SpaceMouseDriver::Automatic => None,
@@ -610,10 +648,18 @@ fn reader(ctx: Context, shared: Arc<Mutex<Reading>>, drivers: Arc<Drivers>) {
         let mut stop = || {
             if looked.elapsed() >= LOOK_EVERY {
                 looked = Instant::now();
-                let now_present = look();
+                let (now_present, now_direct) = look();
                 drivers.publish(now_present);
+                drivers.publish_direct(now_direct);
                 // The device came back (replugged) while the daemon was being read in its place.
-                if switch_back(wanted, pick, now_present, direct_at_start, failed_at.map(|at| at.elapsed())) {
+                if switch_back(
+                    wanted,
+                    pick,
+                    now_present,
+                    direct_at_start,
+                    failed_at.map(|at| at.elapsed()),
+                    drivers.prefer_direct.load(Ordering::Relaxed),
+                ) {
                     return true;
                 }
             }
@@ -801,6 +847,9 @@ impl SpaceMouse {
         #[cfg(target_os = "linux")]
         {
             self.drivers.choice.store(app.preferences.space_mouse_driver.to_u8(), Ordering::Relaxed);
+            let direct = self.drivers.direct.lock().ok().and_then(|direct| *direct);
+            let saved = prefers_direct(&app.preferences.space_mouse_calibrations, direct);
+            self.drivers.prefer_direct.store(saved, Ordering::Relaxed);
             app.space_mouse.drivers = Some(self.drivers.present());
         }
         let Ok(reading) = self.shared.lock().map(|reading| *reading) else { return };
@@ -809,8 +858,9 @@ impl SpaceMouse {
         if app.space_mouse.logged_device != app.space_mouse.device {
             if let (Some(key), Some(source)) = (&app.space_mouse.device, reading.device) {
                 log::info!(
-                    "3D mouse: {key} read through {}; saved calibration: {}; calibration offered before: {}",
+                    "3D mouse: {key} read through {} (driver setting {:?}); saved calibration: {}; calibration offered before: {}",
                     source.path(),
+                    app.preferences.space_mouse_driver,
                     app.preferences.space_mouse_calibrations.contains_key(key),
                     app.preferences.space_mouse_offered.contains(key),
                 );
@@ -912,7 +962,7 @@ mod tests {
             (AskDirect, false, false, None),
         ];
         for (asked, spacenavd, direct, expected) in cases {
-            assert_eq!(choose(asked, spacenavd, direct), expected, "{asked:?}, spacenavd {spacenavd}, device {direct}");
+            assert_eq!(choose(asked, spacenavd, direct, false), expected, "{asked:?}, spacenavd {spacenavd}, device {direct}");
         }
     }
 
@@ -1055,20 +1105,68 @@ mod tests {
         let both = DriversPresent { spacenavd: true, direct: true };
         let only_daemon = DriversPresent { spacenavd: true, direct: false };
         // Direct asked for, unplugged: the daemon is read. It comes back: switch.
-        let pick = choose(Direct, true, false);
+        let pick = choose(Direct, true, false, false);
         assert_eq!(pick, Some(Pick::Spacenavd));
-        assert!(switch_back(Direct, pick, both, false, None));
-        assert!(!switch_back(Direct, pick, only_daemon, false, None), "still away");
+        assert!(switch_back(Direct, pick, both, false, None, false));
+        assert!(!switch_back(Direct, pick, only_daemon, false, None, false), "still away");
         // A device that was there at the start (but could not be opened) does not make the read flap.
-        assert!(!switch_back(Direct, pick, both, true, Some(Duration::ZERO)));
+        assert!(!switch_back(Direct, pick, both, true, Some(Duration::ZERO), false));
         // Within the backoff after a failed open, not yet.
-        assert!(!switch_back(Direct, pick, both, false, Some(Duration::from_secs(1))));
+        assert!(!switch_back(Direct, pick, both, false, Some(Duration::from_secs(1)), false));
         // Automatic and Spacenavd keep the daemon whatever else appears.
         for wanted in [Automatic, Spacenavd] {
-            assert!(!switch_back(wanted, Some(Pick::Spacenavd), both, false, None), "{wanted:?}");
+            assert!(!switch_back(wanted, Some(Pick::Spacenavd), both, false, None, false), "{wanted:?}");
         }
         // The key a replugged device gets is its ids, whatever hidraw node it comes up on.
         assert_eq!(Source::Hid(Some((0x046d, 0xc62b))).key(), "hid 046d:c62b");
+    }
+
+    /// Automatic reads the device directly only when a calibration is saved under its own key and the
+    /// device opens; otherwise it keeps the daemon, as it always has.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn automatic_reads_a_calibrated_device_directly_when_it_opens_and_otherwise_the_daemon() {
+        use SpaceMouseDriver::{Automatic, Direct, Spacenavd};
+        // Both live, a calibration under the device's key: the device.
+        assert_eq!(choose(Automatic, true, true, true), Some(Pick::Direct));
+        // Both live, none saved: the daemon first, as before.
+        assert_eq!(choose(Automatic, true, true, false), Some(Pick::Spacenavd));
+        // A calibration but the device does not open (no permission, backing off): the daemon, no new key.
+        let unopenable = direct_usable(true, Some(Duration::from_secs(1)));
+        assert_eq!(choose(Automatic, true, unopenable, true), Some(Pick::Spacenavd));
+        // Only one source is there: that one, whatever is saved.
+        assert_eq!(choose(Automatic, false, true, true), Some(Pick::Direct));
+        assert_eq!(choose(Automatic, true, false, true), Some(Pick::Spacenavd));
+        // Nothing saved changes what was asked for explicitly.
+        assert_eq!(choose(Spacenavd, true, true, true), Some(Pick::Spacenavd));
+        assert_eq!(choose(Direct, true, true, false), Some(Pick::Direct));
+        // The replug path: calibrated, unplugged -> daemon, replugged -> the read ends and the device is taken.
+        let (both, only_daemon) = (DriversPresent { spacenavd: true, direct: true }, DriversPresent { spacenavd: true, direct: false });
+        let pick = choose(Automatic, true, false, true);
+        assert_eq!(pick, Some(Pick::Spacenavd));
+        assert!(!switch_back(Automatic, pick, only_daemon, false, None, true), "still away");
+        assert!(switch_back(Automatic, pick, both, false, None, true), "back");
+        assert!(!switch_back(Automatic, pick, both, false, None, false), "nothing saved: the daemon stays");
+        assert!(!switch_back(Automatic, pick, both, false, Some(Duration::from_secs(1)), true), "backing off after a failed open");
+        // Already reading the device: nothing to switch.
+        assert!(!switch_back(Automatic, Some(Pick::Direct), both, true, None, true));
+    }
+
+    /// What is saved decides it: the key of the direct device the reader saw. A calibration for another
+    /// device, or under the daemon's key, never makes an unrelated device win.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn only_a_calibration_under_the_devices_own_key_prefers_it() {
+        let mut calibrations = std::collections::BTreeMap::new();
+        assert!(!prefers_direct(&calibrations, Some(Source::Hid(Some((0x046d, 0xc62b))))), "no calibration");
+        calibrations.insert("spacenavd".to_string(), resting_at_100());
+        calibrations.insert("hid 256f:c63a".to_string(), resting_at_100());
+        assert!(!prefers_direct(&calibrations, Some(Source::Hid(Some((0x046d, 0xc62b))))), "only others are saved");
+        assert!(!prefers_direct(&calibrations, Some(Source::Hid(None))));
+        assert!(!prefers_direct(&calibrations, None));
+        calibrations.insert("hid 046d:c62b".to_string(), resting_at_100());
+        assert!(prefers_direct(&calibrations, Some(Source::Hid(Some((0x046d, 0xc62b))))));
+        assert!(!prefers_direct(&calibrations, Some(Source::Hid(Some((0x256f, 0xc63b))))), "another model");
     }
 
     #[cfg(target_os = "linux")]
@@ -1079,15 +1177,15 @@ mod tests {
             // Found, but the open just failed: the daemon is used, whichever was asked for.
             let ok = direct_usable(true, Some(Duration::from_secs(1)));
             assert!(!ok);
-            assert_eq!(choose(wanted, true, ok), Some(Pick::Spacenavd), "{wanted:?}");
+            assert_eq!(choose(wanted, true, ok, false), Some(Pick::Spacenavd), "{wanted:?}");
         }
         // Found and never failed: Direct wins when asked for. After the wait it is tried again.
-        assert_eq!(choose(Direct, true, direct_usable(true, None)), Some(Pick::Direct));
-        assert_eq!(choose(Direct, true, direct_usable(true, Some(UNREADABLE_RETRY))), Some(Pick::Direct));
+        assert_eq!(choose(Direct, true, direct_usable(true, None), false), Some(Pick::Direct));
+        assert_eq!(choose(Direct, true, direct_usable(true, Some(UNREADABLE_RETRY)), false), Some(Pick::Direct));
         // Not found is not usable however long ago.
         assert!(!direct_usable(false, None));
         // With no daemon either, nothing is read rather than a loop on the device that fails.
-        assert_eq!(choose(Direct, false, false), None);
+        assert_eq!(choose(Direct, false, false, false), None);
     }
 
     #[test]
