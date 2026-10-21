@@ -208,8 +208,11 @@ impl Source {
 
 #[derive(Clone, Copy)]
 struct Reading {
-    /// The device being read; none between devices.
+    /// The device being read; none between devices, and none while a daemon's socket is only reachable.
     device: Option<Source>,
+    /// A source that is connected but has not yet shown a device behind it (spacenavd's socket answers
+    /// with no mouse plugged in; its protocol has no enumeration, so the first record is the evidence).
+    awaiting: Option<Source>,
     axes: Axes,
     /// When each of X, Y, Z, Rx, Ry and Rz last arrived. Each ages on its own: a device may send
     /// translation and rotation in separate reports, or spread even one group over several.
@@ -234,8 +237,15 @@ impl Reading {
         self.buttons = buttons;
     }
 
+    /// A record arrived from the source being waited on: there is a device.
+    fn heard(&mut self) {
+        if self.device.is_none() {
+            self.device = self.awaiting.take();
+        }
+    }
+
     fn new(now: Instant) -> Self {
-        Self { device: None, axes: Axes::default(), at: [now; 6], held: false, buttons: 0, taps: 0 }
+        Self { device: None, awaiting: None, axes: Axes::default(), at: [now; 6], held: false, buttons: 0, taps: 0 }
     }
 
     /// The axes at `now`. One with nothing fresh reads as `rest`: the device's own rest when it
@@ -333,6 +343,7 @@ fn publish(ctx: &Context, shared: &Mutex<Reading>, layout: Layout, report: &[u8]
 #[cfg(target_os = "linux")]
 fn publish_held(ctx: &Context, shared: &Mutex<Reading>, axes: Axes) {
     if let Ok(mut reading) = shared.lock() {
+        reading.heard();
         *reading = Reading { device: reading.device, axes, held: true, buttons: reading.buttons, taps: reading.taps, ..Reading::new(Instant::now()) };
         ctx.request_repaint();
     }
@@ -342,9 +353,23 @@ fn publish_held(ctx: &Context, shared: &Mutex<Reading>, axes: Axes) {
 #[cfg(target_os = "linux")]
 fn publish_button(ctx: &Context, shared: &Mutex<Reading>, button: u32, down: bool) {
     if let (Ok(mut reading), Some(bit)) = (shared.lock(), 1_u32.checked_shl(button)) {
+        reading.heard();
         let buttons = if down { reading.buttons | bit } else { reading.buttons & !bit };
         reading.set_buttons(buttons);
         ctx.request_repaint();
+    }
+}
+
+/// Whether a connection to `source` says nothing about a device being there until it sends a record.
+fn needs_evidence(source: Source) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        matches!(source, Source::Spacenavd)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = source;
+        false
     }
 }
 
@@ -354,7 +379,9 @@ fn connected(ctx: &Context, shared: &Mutex<Reading>, source: Source) {
         // Nothing has arrived from it yet, so every axis starts out stale.
         let now = Instant::now();
         let stale = now.checked_sub(STALE_AFTER).unwrap_or(now);
-        *reading = Reading { device: Some(source), at: [stale; 6], ..Reading::new(now) };
+        // A daemon is not yet a device: it counts once a record comes from it.
+        let (device, awaiting) = if needs_evidence(source) { (None, Some(source)) } else { (Some(source), None) };
+        *reading = Reading { device, awaiting, at: [stale; 6], ..Reading::new(now) };
     }
     ctx.request_repaint();
 }
@@ -1006,6 +1033,28 @@ mod tests {
         assert_eq!(held.current_with(later, Axes::default(), settle_band(Some(calibration(50)))), push);
         // While the same reading on an ordinary cap (full 350) is a leftover and settles.
         assert_eq!(held.current_with(later, Axes::default(), settle_band(Some(calibration(350)))), Axes::default());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_reachable_daemon_is_not_a_device_until_it_sends_a_record() {
+        let ctx = Context::default();
+        let shared = Mutex::new(Reading::new(Instant::now()));
+        connected(&ctx, &shared, Source::Spacenavd);
+        assert_eq!(shared.lock().unwrap().device, None, "a socket that answers is no evidence");
+        publish_held(&ctx, &shared, Axes::default());
+        assert_eq!(shared.lock().unwrap().device, Some(Source::Spacenavd), "the first record is");
+        // A button record is evidence too.
+        connected(&ctx, &shared, Source::Spacenavd);
+        assert_eq!(shared.lock().unwrap().device, None);
+        publish_button(&ctx, &shared, 2, true);
+        assert_eq!(shared.lock().unwrap().device, Some(Source::Spacenavd));
+        // An opened device is evidence at once.
+        connected(&ctx, &shared, Source::Hid(Some((0x046d, 0xc62b))));
+        assert_eq!(shared.lock().unwrap().device, Some(Source::Hid(Some((0x046d, 0xc62b)))));
+        // Gone, and nothing again.
+        reset(&ctx, &shared);
+        assert_eq!(shared.lock().unwrap().device, None);
     }
 
     #[test]
