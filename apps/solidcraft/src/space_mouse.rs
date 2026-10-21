@@ -466,6 +466,18 @@ enum Pick {
     Direct,
 }
 
+/// How long a direct device that failed to open stays out of the choice before it is tried again.
+#[cfg(target_os = "linux")]
+const UNREADABLE_RETRY: Duration = Duration::from_secs(30);
+
+/// Whether the direct reader can be chosen: a device was found, and it did not just fail to open
+/// (`since_failed`, how long ago, if it did): without that a device that is there but unreadable
+/// (no permission) would keep winning and a working spacenavd would never be tried.
+#[cfg(target_os = "linux")]
+fn direct_usable(found: bool, since_failed: Option<Duration>) -> bool {
+    found && since_failed.is_none_or(|ago| ago >= UNREADABLE_RETRY)
+}
+
 /// Which reader to use: the one asked for when it is there, else the other, else none. Automatic
 /// asks for spacenavd, which is what has always been read first.
 #[cfg(target_os = "linux")]
@@ -494,17 +506,21 @@ fn reader(ctx: Context, shared: Arc<Mutex<Reading>>, drivers: Arc<Drivers>) {
     use std::os::unix::fs::OpenOptionsExt;
     let look = || DriversPresent { spacenavd: spacenavd::exists(), direct: hidraw::find().is_some() };
     let mut denied = None;
+    // When the direct device last failed to open, so a device that is there but unreadable does not
+    // keep the choice from a daemon that works.
+    let mut unreadable: Option<Instant> = None;
     let mut told = None;
     loop {
         let device = hidraw::find();
         let present = DriversPresent { spacenavd: spacenavd::exists(), direct: device.is_some() };
         drivers.publish(present);
         let wanted = drivers.choice();
-        let mut pick = choose(wanted, present.spacenavd, present.direct);
+        let direct = direct_usable(present.direct, unreadable.map(|at| at.elapsed()));
+        let mut pick = choose(wanted, present.spacenavd, direct);
         // A socket file with no daemon behind it is no spacenavd.
         let daemon = if pick == Some(Pick::Spacenavd) { spacenavd::connect() } else { None };
         if pick == Some(Pick::Spacenavd) && daemon.is_none() {
-            pick = choose(wanted, false, present.direct);
+            pick = choose(wanted, false, direct);
         }
         let asked_for = match wanted {
             SpaceMouseDriver::Automatic => None,
@@ -552,11 +568,13 @@ fn reader(ctx: Context, shared: Arc<Mutex<Reading>>, drivers: Arc<Drivers>) {
                     reset(&ctx, &shared);
                 }
                 // Say so once per device node, not every retry.
-                Err(error) if denied.as_ref() != Some(&device.path) => {
+                Err(error) if unreadable.replace(Instant::now()).is_none() && denied.as_ref() != Some(&device.path) => {
                     log::warn!("3D mouse: cannot open {}: {error}. A udev rule granting the logged-in user access is needed.", device.path.display());
                     denied = Some(device.path);
                 }
-                Err(_) => {}
+                Err(_) => {
+                    unreadable = Some(Instant::now());
+                }
             },
             _ => {}
         }
@@ -936,6 +954,25 @@ mod tests {
             assert_eq!(held.current(now + HELD_SETTLE_AFTER - Duration::from_millis(1), Axes::default()), axes);
             assert_eq!(held.current(now + HELD_SETTLE_AFTER, Axes::default()), Axes::default());
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_direct_device_that_cannot_be_opened_gives_way_to_a_working_daemon_for_a_while() {
+        use SpaceMouseDriver::{Automatic, Direct, Spacenavd};
+        for wanted in [Automatic, Spacenavd, Direct] {
+            // Found, but the open just failed: the daemon is used, whichever was asked for.
+            let ok = direct_usable(true, Some(Duration::from_secs(1)));
+            assert!(!ok);
+            assert_eq!(choose(wanted, true, ok), Some(Pick::Spacenavd), "{wanted:?}");
+        }
+        // Found and never failed: Direct wins when asked for. After the wait it is tried again.
+        assert_eq!(choose(Direct, true, direct_usable(true, None)), Some(Pick::Direct));
+        assert_eq!(choose(Direct, true, direct_usable(true, Some(UNREADABLE_RETRY))), Some(Pick::Direct));
+        // Not found is not usable however long ago.
+        assert!(!direct_usable(false, None));
+        // With no daemon either, nothing is read rather than a loop on the device that fails.
+        assert_eq!(choose(Direct, false, false), None);
     }
 
     #[test]
