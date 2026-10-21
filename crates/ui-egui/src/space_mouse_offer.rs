@@ -16,10 +16,12 @@ pub fn should_offer(device: Option<&str>, calibrated: bool, offered: &BTreeSet<S
     enabled && !never && !calibrated && !offered.contains(device) && !device.starts_with("3dxware")
 }
 
-/// Whether the card offers to swap to the direct (hidraw) reader: the 3D mouse is being read through
-/// spacenavd and a direct device is there to read instead.
-pub fn swap_offered(device: &str, drivers: Option<crate::space_mouse::DriversPresent>) -> bool {
-    device == "spacenavd" && drivers.is_some_and(|present| present.direct)
+/// Whether the card offers to swap to the direct (hidraw) reader: the user chose spacenavd, it is
+/// what is being read, and a direct device is there to read instead. Under Automatic the device is
+/// read whenever it opens, so spacenavd being read with a device there means the device does not open
+/// (and Direct would fall back the same way): a swap would do nothing, so it is not offered.
+pub fn swap_offered(device: &str, drivers: Option<crate::space_mouse::DriversPresent>, driver: crate::prefs::SpaceMouseDriver) -> bool {
+    device == "spacenavd" && driver == crate::prefs::SpaceMouseDriver::Spacenavd && drivers.is_some_and(|present| present.direct)
 }
 
 /// How long the notice stays when nobody is pointing at it: long enough to read it, find the
@@ -95,8 +97,9 @@ pub struct Offer {
 ///   `space_mouse_offered` and `space_mouse_offer_never` (preferences) when the user clicks Close,
 ///   Calibrate or Never.
 /// - Calibrate opens Preferences at Navigation and starts the calibration window
-///   (`prefs::open_at`, `space_mouse_calibration::start`), exactly as Preferences does. Swap sets
-///   `space_mouse_driver`, the same setting Preferences does.
+///   (`prefs::open_at`, `space_mouse_calibration::start`), exactly as Preferences does. Swap (offered only
+///   when the user chose spacenavd and a device is there) sets `space_mouse_driver` to Direct, the same
+///   setting Preferences does.
 /// - It draws nothing and creates no layer: the toast is the shared one. It never touches
 ///   `ctx.memory`, focus, layer order, keyboard events, dialogs, tools, the selection or the document.
 pub fn due(app: &mut SolveApp, ctx: &egui::Context) -> Option<Offer> {
@@ -142,7 +145,7 @@ pub fn due(app: &mut SolveApp, ctx: &egui::Context) -> Option<Offer> {
         return None;
     }
     let mut actions = vec![Action::Calibrate];
-    if swap_offered(&device, app.space_mouse.drivers) {
+    if swap_offered(&device, app.space_mouse.drivers, app.preferences.space_mouse_driver) {
         actions.push(Action::Swap);
     }
     actions.extend([Action::Close, Action::Never]);
@@ -216,7 +219,8 @@ mod tests {
     }
 
     #[test]
-    fn the_swap_to_direct_is_offered_only_on_spacenavd_with_a_direct_device_there() {
+    fn the_swap_to_direct_is_offered_only_when_spacenavd_was_chosen_and_is_read_with_a_device_there() {
+        use crate::prefs::SpaceMouseDriver::{Automatic, Direct, Spacenavd};
         use crate::space_mouse::DriversPresent;
         for device in ["spacenavd", "hid 046d:c62b", "hid 256f:c63a", "3dxware", "web 256f:c63a"] {
             for drivers in [
@@ -225,8 +229,10 @@ mod tests {
                 Some(DriversPresent { spacenavd: true, direct: true }),
                 Some(DriversPresent { spacenavd: false, direct: true }),
             ] {
-                let expected = device == "spacenavd" && drivers.is_some_and(|d| d.direct);
-                assert_eq!(swap_offered(device, drivers), expected, "{device} {drivers:?}");
+                for driver in [Automatic, Spacenavd, Direct] {
+                    let expected = device == "spacenavd" && driver == Spacenavd && drivers.is_some_and(|d| d.direct);
+                    assert_eq!(swap_offered(device, drivers, driver), expected, "{device} {drivers:?} {driver:?}");
+                }
             }
         }
     }
@@ -448,6 +454,8 @@ mod preferences_tests {
         h.app.home.open = false;
         h.app.space_mouse.device = Some("spacenavd".into());
         h.app.space_mouse.drivers = Some(crate::space_mouse::DriversPresent { spacenavd: true, direct: true });
+        // Spacenavd chosen by the user, so the card may offer the swap to the device.
+        h.app.preferences.space_mouse_driver = crate::prefs::SpaceMouseDriver::Spacenavd;
         h.frames(4);
         h
     }
@@ -653,6 +661,7 @@ mod preferences_tests {
         let mut h = crate::scenario::Harness::new();
         h.app.home.open = false;
         h.app.space_mouse.drivers = Some(crate::space_mouse::DriversPresent { spacenavd: true, direct: true });
+        h.app.preferences.space_mouse_driver = crate::prefs::SpaceMouseDriver::Spacenavd;
         h.app.space_mouse.device = None;
         run(&mut h, 3.0);
         assert!(!card_up(&h) && h.app.preferences.space_mouse_offered.is_empty());
@@ -669,6 +678,14 @@ mod preferences_tests {
         h.app.space_mouse.device = Some("spacenavd".into());
         run(&mut h, 2.0);
         assert!(!card_up(&h));
+        // Under Automatic (the default) the device is read whenever it opens, so spacenavd being read with
+        // a device there is a device that does not open: a swap would do nothing, and is not offered.
+        let mut h = crate::scenario::Harness::new();
+        h.app.home.open = false;
+        h.app.space_mouse.drivers = Some(crate::space_mouse::DriversPresent { spacenavd: true, direct: true });
+        h.app.space_mouse.device = Some("spacenavd".into());
+        run(&mut h, 2.0);
+        assert!(card_up(&h) && h.widget("Swap to Hidraw (Direct Driver)").is_none(), "no Swap under Automatic");
         // Without a direct device there is no Swap.
         let mut h = crate::scenario::Harness::new();
         h.app.home.open = false;

@@ -286,7 +286,8 @@ pub enum OrbitAround {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SpaceMouseDriver {
-    /// spacenavd when it runs, else the device itself (how it always was).
+    /// The device itself (hidraw) when it opens, else spacenavd. Spacenavd has been a known source of
+    /// trouble, and a device read directly keeps its settings across a replug.
     #[default]
     Automatic,
     Spacenavd,
