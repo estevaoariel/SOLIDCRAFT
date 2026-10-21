@@ -1743,7 +1743,7 @@ mod tests {
         let mut calibrations = std::collections::BTreeMap::new();
         calibrations.insert(device_key.clone(), resting_at_100());
         assert!(prefers_direct(&calibrations, Some(Source::Hid(Some(IDS)))));
-        assert!(calibrations.get("spacenavd").is_none());
+        assert!(!calibrations.contains_key("spacenavd"));
     }
 
     /// Without a saved calibration Automatic keeps reading the daemon first, device there or not.
