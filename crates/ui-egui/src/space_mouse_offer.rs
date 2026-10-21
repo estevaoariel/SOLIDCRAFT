@@ -647,4 +647,29 @@ mod preferences_tests {
         run(&mut h, 3.0);
         assert!(!card_up(&h) && h.app.space_mouse.offer_since.is_none());
     }
+
+    /// The offer keeps away while Preferences (and so its 3D mouse section) is open, and is back when it is
+    /// closed if nothing dismissed it; Calibrate from the card and from Preferences reach the same wizard.
+    #[test]
+    fn the_offer_keeps_away_from_the_open_section_and_calibrate_starts_the_same_wizard_either_way() {
+        let mut h = spacenavd_harness();
+        run(&mut h, 2.0);
+        assert!(card_up(&h));
+        crate::prefs::open_at(&mut h.app, 1);
+        run(&mut h, 3.0);
+        assert!(!card_up(&h), "no card over Preferences");
+        h.app.prefs_window.open = false;
+        run(&mut h, 2.0);
+        assert!(card_up(&h), "back once Preferences is closed, nothing was dismissed");
+        assert!(h.app.preferences.space_mouse_offered.is_empty());
+        let offer = crate::space_mouse_offer::due(&mut h.app, &h.ctx).expect("due");
+        crate::space_mouse_offer::act(&mut h.app, &offer, crate::space_mouse_offer::Action::Calibrate);
+        let from_card = h.app.space_mouse.calibrating.as_ref().map(|(device, wizard)| (device.clone(), wizard.stage(), wizard.kind()));
+        assert!(h.app.prefs_window.open);
+        let mut other = spacenavd_harness();
+        crate::space_mouse_calibration::start(&mut other.app);
+        let from_prefs = other.app.space_mouse.calibrating.as_ref().map(|(device, wizard)| (device.clone(), wizard.stage(), wizard.kind()));
+        assert_eq!(from_card, from_prefs);
+        assert!(from_card.is_some());
+    }
 }
