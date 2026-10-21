@@ -1777,7 +1777,7 @@ mod tests {
             };
             let ctx = Context::default();
             ctx.run_ui(egui::RawInput::default(), |_| {}).textures_delta.clear();
-            let mut settle = |mouse: &mut SpaceMouse, app: &mut SolveApp, want: &str| {
+            let settle = |mouse: &mut SpaceMouse, app: &mut SolveApp, want: &str| {
                 let until = Instant::now() + Duration::from_secs(3);
                 loop {
                     fake.daemon_sends_a_record();
