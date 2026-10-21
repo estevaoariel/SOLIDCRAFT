@@ -56,7 +56,7 @@ pub(crate) fn dead_zone_slider(ui: &mut egui::Ui, share: &mut f32) -> egui::Resp
 /// The calibration's dead zones the way a game controller tester shows a stick: per pair of axes,
 /// a circle for the full travel, the dead zone shaded inside it (each direction its own size), and
 /// a dot where the cap is now, before the dead zone, so it's plain when the view starts to move.
-pub(crate) fn dead_zone_pads(ui: &mut egui::Ui, calibration: &Calibration, raw: [i16; 6], centred: bool) {
+pub(crate) fn dead_zone_pads(ui: &mut egui::Ui, calibration: &Calibration, raw: [i16; 6], centred: bool, stories: &[String; 6]) {
     const NAMES: [&str; 6] = ["X", "Y", "Z", "Rx", "Ry", "Rz"];
     // (horizontal axis, its positive way on screen, vertical axis, its positive way down), so the
     // dot moves as the cap does: slid right and pulled toward you, twisted and pressed, tilted.
@@ -102,7 +102,9 @@ pub(crate) fn dead_zone_pads(ui: &mut egui::Ui, calibration: &Calibration, raw: 
                 let live = moving[h] != 0 || moving[v] != 0;
                 painter.circle_filled(centre + dot * radius, 3.5, if live { visuals.selection.stroke.color } else { faint });
                 let percent = |axis: usize| format!("{} −{:.0} % +{:.0} %", NAMES[axis], shares[axis][0] * 100.0, shares[axis][1] * 100.0);
-                response.on_hover_text(format!("{}\n{}", percent(h), percent(v)));
+                // What the view does with each axis, where the page says (not in the calibration window).
+                let story = |axis: usize| if stories[axis].is_empty() { String::new() } else { format!(" → {}", stories[axis]) };
+                response.on_hover_text(format!("{}{}\n{}{}", percent(h), story(h), percent(v), story(v)));
                 // As wide as the circle, so the labels don't push the circles apart.
                 ui.allocate_ui(egui::vec2(SIZE, 0.0), |ui| {
                     crate::ui_kit::text(ui, &format!("{} · {}", NAMES[h], NAMES[v]), crate::ui_kit::Text::Note("space_mouse_pad"));
@@ -223,7 +225,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                             (_, Some(Ok(calibration))) => {
                                 let calibration = Calibration { dead_zone_share: dead_zone, ..calibration };
                                 crate::space_mouse_model::live(ui, &calibration, raw);
-                                dead_zone_pads(ui, &calibration, raw, true);
+                                dead_zone_pads(ui, &calibration, raw, true, &Default::default());
                             }
                             _ => crate::space_mouse_model::rest(ui, kind),
                         }

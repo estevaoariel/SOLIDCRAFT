@@ -1601,6 +1601,22 @@ fn space_mouse_section(app: &mut SolveApp, ui: &mut egui::Ui) {
                     }
                 });
             });
+            // Restore this section's settings (after asking); the calibration, the button mapping and the
+            // test model are not touched.
+            ui_kit::row(ui, "", |ui| {
+                if app.space_mouse.restore_pending {
+                    ui_kit::text(ui, app.tr("ui.space_mouse_restore_ask"), ui_kit::Text::Note("space_mouse_restore_ask"));
+                    if ui_kit::button(ui, app.tr("ui.restore_defaults"), ui_kit::Button::Normal).clicked() {
+                        restore_space_mouse_defaults(app);
+                        app.space_mouse.restore_pending = false;
+                    }
+                    if ui_kit::button(ui, app.tr("ui.cancel"), ui_kit::Button::Normal).clicked() {
+                        app.space_mouse.restore_pending = false;
+                    }
+                } else if ui_kit::button(ui, app.tr("ui.space_mouse_restore"), ui_kit::Button::Normal).clicked() {
+                    app.space_mouse.restore_pending = true;
+                }
+            });
             // Only where the reader has seen the choice: Linux, with spacenavd and the device both there.
             if let Some(present) = app.space_mouse.drivers.filter(|present| present.spacenavd || present.direct) {
                 let [label, auto, direct, only_spacenavd, only_direct] =
@@ -1687,7 +1703,16 @@ fn space_mouse_section(app: &mut SolveApp, ui: &mut egui::Ui) {
                 // The calibrated device moving as it does, with the test model beside it, then its dead zones.
                 ui.add_space(t.space_8);
                 let (boat, motion, reverse) = (&mut app.space_mouse.boat, app.space_mouse.motion, app.preferences.zoom_reverse);
-                let pads = |ui: &mut egui::Ui| crate::space_mouse_calibration::dead_zone_pads(ui, calibration, raw, false);
+                // Under each circle's axes, what the view does with them: the rows' own labels.
+                let source = app.preferences.space_mouse_axis_source;
+                let stories: [String; 6] = std::array::from_fn(|motion| {
+                    source.iter().position(|&s| s == motion).and_then(|row| rows.get(row)).map(|(text, _)| text.clone()).unwrap_or_default()
+                });
+                let help = crate::i18n::tr("ui.space_mouse_circles_help").to_string();
+                let pads = |ui: &mut egui::Ui| {
+                    crate::space_mouse_calibration::dead_zone_pads(ui, calibration, raw, false, &stories);
+                    ui_kit::text(ui, &help, ui_kit::Text::Note("space_mouse_circles_help"));
+                };
                 picture_and_boat(ui, boat, motion, reverse, true, |ui| crate::space_mouse_model::live(ui, calibration, raw), pads);
             } else if app.space_mouse.device.is_some() {
                 // Not calibrated: the test model alone.
@@ -1716,6 +1741,22 @@ const AXIS_SLIDER_MIN: f32 = 150.0;
 /// instead of saying none was found. Nothing reachable at all is "none found".
 fn waiting_for_a_record(drivers: Option<crate::space_mouse::DriversPresent>) -> bool {
     drivers.is_some_and(|present| present.spacenavd || present.direct)
+}
+
+/// Puts this section's settings back: the driver choice, the speed, each axis's invert and speed and
+/// assignment, where the picture goes and whether it shows. Not the calibration (it has its own
+/// Forget), the button mapping, the offered set, "never show again", "Navigate with the 3D mouse" or
+/// the test model.
+pub(crate) fn restore_space_mouse_defaults(app: &mut SolveApp) {
+    let d = Prefs::default();
+    let p = &mut app.preferences;
+    p.space_mouse_driver = d.space_mouse_driver;
+    p.space_mouse_speed = d.space_mouse_speed;
+    p.space_mouse_reverse = d.space_mouse_reverse;
+    p.space_mouse_axis_speed = d.space_mouse_axis_speed;
+    p.space_mouse_axis_source = d.space_mouse_axis_source;
+    p.space_mouse_ghost_position = d.space_mouse_ghost_position;
+    p.space_mouse_in_view = d.space_mouse_in_view;
 }
 
 /// The device's picture with the coordinate circles under it, and a box with a small model that
@@ -2443,6 +2484,71 @@ mod tests {
             }
         }
         assert!(report.is_empty(), "{}", report.join("\n"));
+    }
+
+    /// Restore defaults for the 3D mouse section puts back what it lists, and nothing else.
+    #[test]
+    fn restoring_the_3d_mouse_section_resets_its_settings_and_keeps_the_rest() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.home.open = false;
+        let axes =
+            std::array::from_fn(|source| solidcraft_space_mouse::AxisCalibration { source, reversed: false, rest: 0, dead_zone: 0, full: [350; 2] });
+        let calibration = solidcraft_space_mouse::Calibration { dead_zone_share: 0.2, kind: solidcraft_space_mouse::Kind::ReturnToCenter, axes };
+        let p = &mut h.app.preferences;
+        p.space_mouse_calibrations.insert("hid 046d:c62b".into(), calibration);
+        p.space_mouse_buttons.insert("hid 046d:c62b".into(), [(1, crate::space_mouse::ButtonJob::Settings)].into());
+        p.space_mouse_offered.insert("hid 046d:c62b".into());
+        p.space_mouse_offer_never = true;
+        p.space_mouse_enabled = false;
+        p.space_mouse_driver = SpaceMouseDriver::Direct;
+        p.space_mouse_speed = 2.5;
+        p.space_mouse_reverse = [true; 6];
+        p.space_mouse_axis_speed = [0.25; 6];
+        p.space_mouse_axis_source = [1, 0, 2, 3, 4, 5];
+        p.space_mouse_ghost_position = SpaceMouseGhost::LeftWindow;
+        p.space_mouse_in_view = true;
+        let before = h.app.preferences.clone();
+        let camera = h.app.cam;
+        restore_space_mouse_defaults(&mut h.app);
+        let d = Prefs::default();
+        let p = &h.app.preferences;
+        assert_eq!(
+            (p.space_mouse_driver, p.space_mouse_speed, p.space_mouse_reverse),
+            (d.space_mouse_driver, d.space_mouse_speed, d.space_mouse_reverse)
+        );
+        assert_eq!((p.space_mouse_axis_speed, p.space_mouse_axis_source), (d.space_mouse_axis_speed, d.space_mouse_axis_source));
+        assert_eq!((p.space_mouse_ghost_position, p.space_mouse_in_view), (d.space_mouse_ghost_position, d.space_mouse_in_view));
+        // Kept: the calibration (dead zone too), the buttons, the offered set, never, enabled, the rest of the page.
+        assert_eq!(p.space_mouse_calibrations, before.space_mouse_calibrations);
+        assert_eq!(p.space_mouse_buttons, before.space_mouse_buttons);
+        assert_eq!(p.space_mouse_offered, before.space_mouse_offered);
+        assert!(p.space_mouse_offer_never && !p.space_mouse_enabled);
+        assert_eq!(p.nav, before.nav);
+        assert_eq!(h.app.cam, camera);
+        // And it asks first: the button only arms it.
+        assert!(!h.app.space_mouse.restore_pending);
+        assert!(include_str!("prefs.rs").contains("app.space_mouse.restore_pending = true;"));
+    }
+
+    /// The circles say what the view does with their axes in the rows' own words, and keep saying it
+    /// after an axis is reassigned.
+    #[test]
+    fn the_circles_and_the_rows_tell_the_same_story_after_a_reassignment() {
+        use crate::space_mouse::{DriverMapping, SAME_AXES, motion_story, reassign, row_label};
+        let mapping = Some(DriverMapping::default());
+        // Unchanged: each motion is read by the row of its own number.
+        for motion in 0..6 {
+            assert_eq!(motion_story(mapping, SAME_AXES, motion), Some(row_label(mapping, motion)));
+        }
+        // Row 2 (lift) now reads motion 1 (push): the motion's story is that row's label, and row 1 reads motion 2.
+        let mut source = SAME_AXES;
+        reassign(&mut source, 2, 1);
+        assert_eq!(motion_story(mapping, source, 1), Some(row_label(mapping, 2)));
+        assert_eq!(motion_story(mapping, source, 2), Some(row_label(mapping, 1)));
+        assert_ne!(motion_story(mapping, source, 1), motion_story(mapping, SAME_AXES, 1));
+        // Not one motion per row: a motion nobody reads has no story.
+        assert_eq!(motion_story(mapping, [0, 0, 0, 0, 0, 0], 3), None);
+        assert!(crate::i18n::tr("ui.space_mouse_circles_help").contains("test model"));
     }
 
     /// The first screen of the calibration (which kind of device) fits at the window's widths:

@@ -74,6 +74,8 @@ pub struct Input {
     pub offer_seen: f64,
     /// The device last written to the log (one line per connect), `None` for none.
     pub logged_device: Option<String>,
+    /// "Restore 3D mouse defaults" was clicked and waits for its answer.
+    pub restore_pending: bool,
     /// The motion `navigate_frame` handed the view this frame (calibrated, reassigned, inverted and
     /// scaled), for the test model on the Preferences page to move with; none when the view got none.
     pub motion: Option<DeviceMotion>,
@@ -443,6 +445,13 @@ pub fn row_label(mapping: Option<DriverMapping>, row: usize) -> &'static str {
         Some(_) => "ui.space_mouse_view_off",
         None => "ui.space_mouse_view_unmapped",
     }
+}
+
+/// What the view does with calibrated motion `motion` under the axis assignment `source`: the label
+/// of the row that reads it, the same label the rows show (and so the same after an invert or a
+/// reassignment). `None` for a motion no row reads (an assignment that is not one motion per row).
+pub fn motion_story(mapping: Option<DriverMapping>, source: [usize; 6], motion: usize) -> Option<&'static str> {
+    source.iter().position(|&s| s == motion).map(|row| row_label(mapping, row))
 }
 
 /// Which of the cap's motions drives each of its axes (`Prefs::space_mouse_axis_source`): row
