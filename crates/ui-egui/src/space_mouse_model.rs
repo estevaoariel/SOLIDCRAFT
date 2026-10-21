@@ -197,22 +197,25 @@ pub(crate) fn rest(ui: &mut egui::Ui, kind: Kind) {
 
 const CORNER: egui::Vec2 = egui::vec2(160.0, 120.0);
 
-/// Where the corner picture sits in `view`: `Current` and `Left` at its lower left, `Right` at its
-/// lower right, each a margin in from the edge. Any of `obstacles` (the History bar, the navigation
-/// bar) that would cover it moves it up to just above them, and it stays inside `view` sideways.
+/// Where the corner picture sits in `view`: the two left positions at its lower left, the right one
+/// at its lower right, each a margin in from the edge (the caller passes the viewport area for the
+/// Viewport positions and the whole window for Left Window). Any of `obstacles` (the History bar,
+/// the navigation bar, the agent chip) that would cover it moves it up to just above them, and it
+/// stays inside `view`.
 pub(crate) fn corner_rect(view: egui::Rect, position: crate::prefs::SpaceMouseGhost, obstacles: &[egui::Rect]) -> egui::Rect {
     use crate::prefs::SpaceMouseGhost;
     const MARGIN: f32 = 12.0;
     let x = match position {
-        SpaceMouseGhost::Current | SpaceMouseGhost::Left => view.left() + MARGIN,
-        SpaceMouseGhost::Right => (view.right() - MARGIN - CORNER.x).max(view.left() + MARGIN),
+        SpaceMouseGhost::LeftViewport | SpaceMouseGhost::LeftWindow => view.left() + MARGIN,
+        SpaceMouseGhost::RightViewport => (view.right() - MARGIN - CORNER.x).max(view.left() + MARGIN),
     };
     let mut rect = egui::Rect::from_min_size(egui::pos2(x, view.bottom() - MARGIN - CORNER.y), CORNER);
     for _ in 0..obstacles.len() {
         let Some(blocking) = obstacles.iter().find(|bar| bar.is_positive() && bar.intersects(rect)) else { break };
         rect = rect.translate(egui::vec2(0.0, blocking.top() - MARGIN - rect.bottom()));
     }
-    rect
+    // Stacked obstacles in a short view must not push it out of the top.
+    rect.translate(egui::vec2(0.0, (view.top() - rect.top()).max(0.0)))
 }
 
 /// The device in a corner of the 3D view (`rect`, from `corner_rect`), see-through so it doesn't hide the design:

@@ -131,7 +131,7 @@ fn each_step_starts_at_rest_and_eases_out_to_full() {
 
 #[test]
 fn the_corner_picture_goes_where_it_is_told_and_clears_the_bars() {
-    use crate::prefs::SpaceMouseGhost::{Current, Left, Right};
+    use crate::prefs::SpaceMouseGhost::{LeftViewport as Current, LeftWindow as Left, RightViewport as Right};
     let view = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(800.0, 600.0));
     let size = egui::vec2(160.0, 120.0);
     // Free: lower left for Current and Left, lower right for Right.
@@ -164,4 +164,17 @@ fn the_corner_picture_goes_where_it_is_told_and_clears_the_bars() {
     assert!(corner_rect(tiny, Right, &[]).left() >= tiny.left());
     // An empty bar is no bar.
     assert_eq!(corner_rect(view, Left, &[egui::Rect::NOTHING]), corner_rect(view, Left, &[]));
+}
+
+#[test]
+fn stacked_bars_in_a_short_view_do_not_push_the_picture_out_of_it() {
+    use crate::prefs::SpaceMouseGhost::{LeftViewport, LeftWindow, RightViewport};
+    let view = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(500.0, 220.0));
+    let history = egui::Rect::from_min_max(egui::pos2(0.0, 180.0), egui::pos2(500.0, 220.0));
+    let navigation = egui::Rect::from_min_max(egui::pos2(0.0, 130.0), egui::pos2(500.0, 170.0));
+    let chip = egui::Rect::from_min_max(egui::pos2(0.0, 80.0), egui::pos2(500.0, 120.0));
+    for position in [LeftViewport, RightViewport, LeftWindow] {
+        let rect = corner_rect(view, position, &[history, navigation, chip]);
+        assert!(rect.top() >= view.top() && view.contains_rect(rect), "{position:?}: {rect:?} is outside {view:?}");
+    }
 }

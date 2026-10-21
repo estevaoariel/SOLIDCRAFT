@@ -9,12 +9,19 @@ use crate::theme::Tokens;
 use crate::ui_kit;
 
 /// Whether to offer calibration for `device`: 3D mouse navigation is on, there is a device, it
-/// has no calibration saved, and the offer has not been made (and dismissed) for it. The 3Dconnexion
+/// has no calibration saved, the offer has not been made (and dismissed) for it, and the user has
+/// not asked never to see it (`never`). The 3Dconnexion
 /// driver (macOS, key `3dxware`) already applies its own settings, so calibration isn't offered
 /// for it.
-pub fn should_offer(device: Option<&str>, calibrated: bool, offered: &BTreeSet<String>, enabled: bool) -> bool {
+pub fn should_offer(device: Option<&str>, calibrated: bool, offered: &BTreeSet<String>, enabled: bool, never: bool) -> bool {
     let Some(device) = device else { return false };
-    enabled && !calibrated && !offered.contains(device) && !device.starts_with("3dxware")
+    enabled && !never && !calibrated && !offered.contains(device) && !device.starts_with("3dxware")
+}
+
+/// Whether the card offers to swap to the direct (hidraw) reader: the 3D mouse is being read through
+/// spacenavd and a direct device is there to read instead.
+pub fn swap_offered(device: &str, drivers: Option<crate::space_mouse::DriversPresent>) -> bool {
+    device == "spacenavd" && drivers.is_some_and(|present| present.direct)
 }
 
 /// How long the notice stays when nobody is pointing at it: long enough to read it, find the
@@ -50,8 +57,13 @@ pub fn toast(app: &mut SolveApp, ui: &egui::Ui, free: &mut egui::Rect) {
     let ctx = ui.ctx();
     let calibrated = app.space_mouse.device.as_ref().is_some_and(|device| app.preferences.space_mouse_calibrations.contains_key(device));
     let Some(device) = app.space_mouse.device.clone().filter(|device| {
-        should_offer(Some(device), calibrated, &app.preferences.space_mouse_offered, app.preferences.space_mouse_enabled)
-            && !app.space_mouse.offer_hidden.contains(device)
+        should_offer(
+            Some(device),
+            calibrated,
+            &app.preferences.space_mouse_offered,
+            app.preferences.space_mouse_enabled,
+            app.preferences.space_mouse_offer_never,
+        ) && !app.space_mouse.offer_hidden.contains(device)
     }) else {
         return;
     };
@@ -76,7 +88,8 @@ pub fn toast(app: &mut SolveApp, ui: &egui::Ui, free: &mut egui::Rect) {
         app.space_mouse.offer_hidden.insert(device);
         return;
     }
-    let (mut calibrate, mut close) = (false, false);
+    let (mut calibrate, mut close, mut never, mut swap) = (false, false, false, false);
+    let can_swap = swap_offered(&device, app.space_mouse.drivers);
     let width = (free.width() - 2.0 * t.space_8).clamp(120.0, 380.0);
     let shown = crate::frame::area(egui::Id::new("sc_space_mouse_offer"))
         .order(egui::Order::Foreground)
@@ -86,9 +99,14 @@ pub fn toast(app: &mut SolveApp, ui: &egui::Ui, free: &mut egui::Rect) {
             crate::frame::shell_card(t.dialog_body).inner_margin(t.space_12).show(ui, |ui| {
                 ui.set_width(width - 2.0 * t.space_12);
                 ui_kit::text(ui, app.tr("ui.space_mouse_offer"), ui_kit::Text::Report("space_mouse_offer", false));
-                ui.horizontal(|ui| {
+                // Up to four buttons, wrapping under each other where the card is narrow.
+                ui.horizontal_wrapped(|ui| {
                     calibrate = ui_kit::button(ui, app.tr("ui.space_mouse_calibrate"), ui_kit::Button::Normal).clicked();
                     close = ui_kit::button(ui, app.tr("ui.close"), ui_kit::Button::Normal).clicked();
+                    never = ui_kit::button(ui, app.tr("ui.space_mouse_offer_never"), ui_kit::Button::Normal).clicked();
+                    if can_swap {
+                        swap = ui_kit::button(ui, app.tr("ui.space_mouse_offer_swap"), ui_kit::Button::Normal).clicked();
+                    }
                 });
             });
         });
@@ -105,6 +123,17 @@ pub fn toast(app: &mut SolveApp, ui: &egui::Ui, free: &mut egui::Rect) {
     {
         app.preferences.space_mouse_offered.insert(device);
     }
+    if never {
+        app.preferences.space_mouse_offer_never = true;
+        app.space_mouse.offer_since = None;
+    }
+    if swap {
+        // The same setting as Preferences, read live by the reader. The device is not marked offered:
+        // read directly it has its own key, and it may still want a calibration.
+        app.preferences.space_mouse_driver = crate::prefs::SpaceMouseDriver::Direct;
+        app.space_mouse.offer_since = None;
+        app.space_mouse.offer_hidden.insert(device);
+    }
     if calibrate {
         // The calibration window lives with Preferences, at Navigation.
         crate::prefs::open_at(app, 1);
@@ -118,6 +147,7 @@ mod tests {
 
     #[test]
     fn the_offer_is_made_once_to_an_uncalibrated_device_with_navigation_on() {
+        let should_offer = |device, calibrated, offered: &BTreeSet<String>, enabled| should_offer(device, calibrated, offered, enabled, false);
         let none = BTreeSet::new();
         let seen: BTreeSet<String> = ["hid 046d:c62b".to_string()].into();
         for device in [Some("hid 046d:c62b"), Some("spacenavd"), Some("web 256f:c63a"), None] {
@@ -132,6 +162,31 @@ mod tests {
         }
         // The driver on macOS has its own settings; there is nothing to calibrate.
         assert!(!should_offer(Some("3dxware"), false, &none, true));
+    }
+
+    #[test]
+    fn never_show_again_stops_every_offer() {
+        let none = BTreeSet::new();
+        assert!(should_offer(Some("hid 046d:c62b"), false, &none, true, false));
+        for device in ["hid 046d:c62b", "spacenavd", "web 256f:c63a"] {
+            assert!(!should_offer(Some(device), false, &none, true, true), "{device}");
+        }
+    }
+
+    #[test]
+    fn the_swap_to_direct_is_offered_only_on_spacenavd_with_a_direct_device_there() {
+        use crate::space_mouse::DriversPresent;
+        for device in ["spacenavd", "hid 046d:c62b", "hid 256f:c63a", "3dxware", "web 256f:c63a"] {
+            for drivers in [
+                None,
+                Some(DriversPresent { spacenavd: true, direct: false }),
+                Some(DriversPresent { spacenavd: true, direct: true }),
+                Some(DriversPresent { spacenavd: false, direct: true }),
+            ] {
+                let expected = device == "spacenavd" && drivers.is_some_and(|d| d.direct);
+                assert_eq!(swap_offered(device, drivers), expected, "{device} {drivers:?}");
+            }
+        }
     }
 
     fn press(h: &mut crate::scenario::Harness, widget: &str) {
@@ -344,5 +399,49 @@ mod preferences_tests {
             assert!(h.app.space_mouse.offer_since.is_none() || how == "expire");
             assert_eq!(state(&h), before, "{how}: going away changes nothing else");
         }
+    }
+
+    fn spacenavd_harness() -> crate::scenario::Harness {
+        let mut h = crate::scenario::Harness::new();
+        h.app.home.open = false;
+        h.app.space_mouse.device = Some("spacenavd".into());
+        h.app.space_mouse.drivers = Some(crate::space_mouse::DriversPresent { spacenavd: true, direct: true });
+        h.frames(4);
+        h
+    }
+
+    #[test]
+    fn swapping_to_the_direct_driver_sets_it_and_leaves_the_offered_set_alone() {
+        let mut h = spacenavd_harness();
+        assert!(h.app.space_mouse.offer_since.is_some(), "the card is up");
+        h.step(&serde_json::json!({"widget": "Swap to Hidraw (Direct Driver)"})).unwrap();
+        h.frames(3);
+        assert_eq!(h.app.preferences.space_mouse_driver, crate::prefs::SpaceMouseDriver::Direct);
+        assert!(h.app.preferences.space_mouse_offered.is_empty(), "the new source may still be offered");
+        assert!(h.app.space_mouse.offer_since.is_none());
+        // Without a direct device there is no such button.
+        let mut h = spacenavd_harness();
+        h.app.space_mouse.drivers = Some(crate::space_mouse::DriversPresent { spacenavd: true, direct: false });
+        h.frames(3);
+        assert!(h.step(&serde_json::json!({"widget": "Swap to Hidraw (Direct Driver)"})).is_err());
+    }
+
+    #[test]
+    fn never_show_again_is_saved_and_stops_the_card() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.home.open = false;
+        h.app.space_mouse.device = Some("hid 046d:c62b".into());
+        h.frames(4);
+        h.step(&serde_json::json!({"widget": "Never show again"})).unwrap();
+        h.frames(4);
+        assert!(h.app.preferences.space_mouse_offer_never);
+        assert!(h.app.preferences.space_mouse_offered.is_empty(), "not just this device");
+        assert!(h.app.space_mouse.offer_since.is_none());
+        // Saved with the other settings, and no other device brings the card back.
+        let saved = serde_json::to_value(&h.app.preferences).unwrap();
+        assert_eq!(saved["space_mouse_offer_never"], true);
+        h.app.space_mouse.device = Some("hid 256f:c63a".into());
+        h.frames(4);
+        assert!(h.app.space_mouse.offer_since.is_none());
     }
 }

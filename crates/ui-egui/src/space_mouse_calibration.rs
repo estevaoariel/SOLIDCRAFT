@@ -1,5 +1,5 @@
 //! The 3D mouse calibration window, opened from Preferences › Navigation. It asks what kind of
-//! device it is (a cap that springs back, or a trackball), then asks the user to leave it still and
+//! device it is (Return to Center, or a trackball), then asks the user to leave it still and
 //! to move it along each axis both ways, moving on by itself after each
 //! (`solidcraft_space_mouse::Wizard`), and saves what it found for the device it started with.
 //! The window closes with Preferences, and when another device (or none) is read instead.

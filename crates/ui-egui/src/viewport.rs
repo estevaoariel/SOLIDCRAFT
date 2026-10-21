@@ -2999,21 +2999,15 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         // The agent chip (an agent command computing off the window thread) sits at the lower left
         // too: the picture stays clear of it.
         let chip = app.agent_computing().map(|_| Rect::from_min_size(agent_chip_anchor(app, rect), vec2(400.0, 34.0)));
-        let picture = if position == SpaceMouseGhost::Current {
-            // In the content area, and above the History bar that floats over its bottom.
-            crate::space_mouse_model::corner_rect(
-                crate::shell::content_rect(app, rect),
-                position,
-                &[bar, chip].into_iter().flatten().collect::<Vec<_>>(),
-            )
-        } else {
-            // In the corner of the whole view, clear of the History bar and the navigation bar.
-            let navigation = app.viewport.layout.as_ref().map(|layout| layout.navigation);
-            crate::space_mouse_model::corner_rect(rect, position, &[bar, navigation, chip].into_iter().flatten().collect::<Vec<_>>())
-        };
+        let navigation = app.viewport.layout.as_ref().map(|layout| layout.navigation);
+        let obstacles = [bar, navigation, chip].into_iter().flatten().collect::<Vec<_>>();
+        // The Viewport positions sit in the content area (right of the browser, above the History bar
+        // that floats over its bottom); Left Window in the corner of the whole window.
+        let area = if position == SpaceMouseGhost::LeftWindow { rect } else { crate::shell::content_rect(app, rect) };
+        let picture = crate::space_mouse_model::corner_rect(area, position, &obstacles);
         crate::space_mouse_model::corner(ui, picture, calibration, app.space_mouse.raw.into());
         // At the lower right, where the notices go: they stack above it.
-        ghost = (position == SpaceMouseGhost::Right).then_some(picture);
+        ghost = (position == SpaceMouseGhost::RightViewport).then_some(picture);
     }
     agent_chip(app, ui, rect);
     transient_messages(app, ui, rect, ghost);

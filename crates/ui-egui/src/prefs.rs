@@ -298,17 +298,21 @@ pub enum SpaceMouseDriver {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SpaceMouseGhost {
-    /// Lower left of the free view, beside the browser (how it was first made).
+    /// The lower left corner of the viewport area, right of the browser (how it was first made).
+    /// Saved as `current` by the first build, which is still read.
     #[default]
-    Current,
-    /// The lower left corner of the view.
-    Left,
-    /// The lower right corner of the view.
-    Right,
+    #[serde(alias = "current")]
+    LeftViewport,
+    /// The lower right corner of the viewport area. Saved as `right` by the first build.
+    #[serde(alias = "right")]
+    RightViewport,
+    /// The lower left corner of the whole window, under the browser. Saved as `left` by the first build.
+    #[serde(alias = "left")]
+    LeftWindow,
 }
 
 impl SpaceMouseGhost {
-    pub const ALL: [Self; 3] = [Self::Current, Self::Left, Self::Right];
+    pub const ALL: [Self; 3] = [Self::LeftViewport, Self::RightViewport, Self::LeftWindow];
 }
 
 impl SpaceMouseDriver {
@@ -428,6 +432,10 @@ preference_settings! {
     space_mouse_driver: SpaceMouseDriver = SpaceMouseDriver::default(), 1;
     /// Where the 3D mouse picture sits in the 3D view, when it is shown there (`space_mouse_in_view`).
     space_mouse_ghost_position: SpaceMouseGhost = SpaceMouseGhost::default(), 1;
+    /// The user turned the calibration offer off for good ("Never show again"). Unlike closing the
+    /// card, which only records that device, this stops every offer; like the settings beside it, the
+    /// page's Restore Defaults puts it back.
+    space_mouse_offer_never: bool = false, 1;
     /// Per 3D mouse (`space_mouse::Input::device`), the calibration that puts its axes on
     /// 3Dconnexion's. A device without one is read as it reports. Page resets keep calibrations.
     #[serde(deserialize_with = "calibrations_that_read")]
@@ -1445,9 +1453,9 @@ fn space_mouse_section(app: &mut SolveApp, ui: &mut egui::Ui) {
         setting::space_mouse_in_view(app, ui).on_hover_text(crate::i18n::tr("ui.space_mouse_show_in_view_tip"));
         // Where the picture goes, a choice that waits on the checkbox above.
         let names: Vec<(SpaceMouseGhost, String)> = [
-            (SpaceMouseGhost::Current, "ui.space_mouse_ghost_current"),
-            (SpaceMouseGhost::Left, "ui.space_mouse_ghost_left"),
-            (SpaceMouseGhost::Right, "ui.space_mouse_ghost_right"),
+            (SpaceMouseGhost::LeftViewport, "ui.space_mouse_ghost_left_viewport"),
+            (SpaceMouseGhost::RightViewport, "ui.space_mouse_ghost_right_viewport"),
+            (SpaceMouseGhost::LeftWindow, "ui.space_mouse_ghost_left_window"),
         ]
         .map(|(position, key)| (position, app.tr(key).to_owned()))
         .into();
@@ -2135,7 +2143,7 @@ pub fn set(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::Valu
 mod tests {
     #[test]
     fn the_ghost_position_defaults_round_trips_and_reads_tolerantly() {
-        use super::SpaceMouseGhost::{Current, Left, Right};
+        use super::SpaceMouseGhost::{LeftViewport as Current, LeftWindow as Left, RightViewport as Right};
         assert_eq!(serde_json::from_value::<super::Prefs>(serde_json::json!({})).unwrap().space_mouse_ghost_position, Current);
         for position in [Current, Left, Right] {
             let prefs = super::Prefs { space_mouse_ghost_position: position, ..Default::default() };
@@ -2143,6 +2151,11 @@ mod tests {
             assert_eq!(again.space_mouse_ghost_position, position);
         }
         // A value from a newer build costs that setting only.
+        for (old, position) in [("current", Current), ("left", Left), ("right", Right)] {
+            let read = serde_json::from_value::<super::Prefs>(serde_json::json!({ "space_mouse_ghost_position": old })).unwrap();
+            assert_eq!(read.space_mouse_ghost_position, position, "{old}");
+        }
+        assert_eq!(serde_json::to_value(Left).unwrap(), "left_window");
         let read = super::lenient(&serde_json::json!({ "space_mouse_ghost_position": "top", "space_mouse_speed": 2.0 }));
         assert_eq!((read.space_mouse_ghost_position, read.space_mouse_speed), (Current, 2.0));
     }
