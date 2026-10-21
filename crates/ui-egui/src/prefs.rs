@@ -433,8 +433,9 @@ preference_settings! {
     /// Where the 3D mouse picture sits in the 3D view, when it is shown there (`space_mouse_in_view`).
     space_mouse_ghost_position: SpaceMouseGhost = SpaceMouseGhost::default(), 1;
     /// The user turned the calibration offer off for good ("Never show again"). Unlike closing the
-    /// card, which only records that device, this stops every offer; like the settings beside it, the
-    /// page's Restore Defaults puts it back.
+    /// card, which only records that device, this stops every offer, for every device: it is one flag,
+    /// not kept per device key. Like the settings beside it, the dialog's Restore Defaults puts it back
+    /// (the 3D mouse section's own restore leaves it).
     space_mouse_offer_never: bool = false, 1;
     /// Per 3D mouse (`space_mouse::Input::device`), the calibration that puts its axes on
     /// 3Dconnexion's. A device without one is read as it reports. Page resets keep calibrations.

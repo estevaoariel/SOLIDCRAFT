@@ -8,7 +8,7 @@ use crate::SolveApp;
 
 /// Whether to offer calibration for `device`: 3D mouse navigation is on, there is a device, it
 /// has no calibration saved, the offer has not been made (and dismissed) for it, and the user has
-/// not asked never to see it (`never`). The 3Dconnexion
+/// not asked never to see it (`never`, one flag for every device, not kept per device). The 3Dconnexion
 /// driver (macOS, key `3dxware`) already applies its own settings, so calibration isn't offered
 /// for it.
 pub fn should_offer(device: Option<&str>, calibrated: bool, offered: &BTreeSet<String>, enabled: bool, never: bool) -> bool {
@@ -546,6 +546,33 @@ mod preferences_tests {
         run(&mut h, 3.0);
         assert!(!card_up(&h));
         assert!(h.app.preferences.space_mouse_offered.is_empty());
+    }
+
+    /// A status toast takes the offer's place for the run, and the 3D mouse picture in the view keeps
+    /// clear of whichever toast is up: the offer card, then the status that replaced it.
+    #[test]
+    fn the_picture_keeps_clear_of_the_toast_that_is_up_and_a_status_replaces_the_offer() {
+        use crate::prefs::SpaceMouseGhost::{LeftViewport, LeftWindow, RightViewport};
+        // Wide, and narrow enough that the toast reaches across the corners the picture sits in.
+        for (position, width) in [LeftViewport, RightViewport, LeftWindow].into_iter().flat_map(|position| [(position, 1600), (position, 760)]) {
+            let mut h = spacenavd_harness();
+            h.call("ui.resize", serde_json::json!({"width": width, "height": 700}));
+            h.app.preferences.space_mouse_in_view = true;
+            h.app.preferences.space_mouse_ghost_position = position;
+            run(&mut h, 3.0);
+            assert!(card_up(&h), "{position:?}");
+            let rect = |name| crate::scenario::rect_of(name).unwrap_or_else(|| panic!("{position:?}: no {name}"));
+            let (card, picture) = (rect("toast:space_mouse_offer"), rect("space_mouse:corner"));
+            eprintln!("RECTS {width} {position:?} card {card:?} picture {picture:?}");
+            assert!(!card.intersects(picture), "{position:?}: the picture {picture:?} overlaps the card {card:?}");
+            h.app.status = Some(("Done".into(), crate::now_ms(), false));
+            run(&mut h, 1.0);
+            assert!(!card_up(&h), "{position:?}: the offer went");
+            assert!(crate::scenario::rect_of("toast:space_mouse_offer").is_none());
+            let (toast, picture) = (rect("toast"), rect("space_mouse:corner"));
+            eprintln!("RECTS {width} {position:?} toast {toast:?} picture {picture:?}");
+            assert!(!toast.intersects(picture), "{position:?}: the picture {picture:?} overlaps the status toast {toast:?}");
+        }
     }
 
     /// A different device key while the offer is up gets its own offer (its own calibration key); the

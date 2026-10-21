@@ -231,6 +231,7 @@ pub(crate) fn corner(ui: &mut egui::Ui, rect: egui::Rect, calibration: Option<&C
         }
     };
     let travel = still_unless_moving(kind, travel, moving);
+    crate::scenario::publish_rect("space_mouse:corner", rect);
     let mut corner = ui.new_child(egui::UiBuilder::new().id_salt("sc_space_mouse_corner").max_rect(rect));
     corner.set_opacity(0.6);
     draw(&corner, "corner", rect, kind, travel, moving);
