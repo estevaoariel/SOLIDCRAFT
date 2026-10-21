@@ -70,6 +70,8 @@ pub struct Input {
     /// (egui time), and the devices it went away from for this run ().
     pub offer_since: Option<(String, f64)>,
     pub offer_hidden: std::collections::BTreeSet<String>,
+    /// When the offer was last looked at (egui time): a long gap is time away, not time shown.
+    pub offer_seen: f64,
     /// The driver mapping navigation used last frame, which says what each axis does to the view.
     pub mapping: Option<DriverMapping>,
     /// Which of the Linux readers exist, as the app's reader last saw them; none where there is

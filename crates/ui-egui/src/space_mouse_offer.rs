@@ -26,6 +26,9 @@ pub fn swap_offered(device: &str, drivers: Option<crate::space_mouse::DriversPre
 /// mouse and decide, which 15 seconds was too short for.
 const SHOW_SECONDS: f64 = 30.0;
 
+/// A longer gap than this between two looks at the offer means it was not on screen meanwhile.
+const AWAY_SECONDS: f64 = 2.0;
+
 /// Whether the notice, first shown or last pointed at `since`, has been up long enough at `now`.
 pub fn expired(since: f64, now: f64) -> bool {
     now - since >= SHOW_SECONDS
@@ -115,8 +118,12 @@ pub fn due(app: &mut SolveApp, ctx: &egui::Context) -> Option<Offer> {
         return None;
     }
     let now = ctx.input(|i| i.time);
+    // Time away does not count as time shown: after a gap (the window was in the background, Preferences
+    // or the start page was up, the toast could not be drawn) the 30 seconds start again.
+    let away = now - app.space_mouse.offer_seen > AWAY_SECONDS;
+    app.space_mouse.offer_seen = now;
     let since = match &app.space_mouse.offer_since {
-        Some((shown, since)) if *shown == device => *since,
+        Some((shown, since)) if *shown == device && !away => *since,
         _ => now,
     };
     app.space_mouse.offer_since = Some((device.clone(), since));
@@ -468,5 +475,74 @@ mod preferences_tests {
         h.app.space_mouse.device = Some("hid 256f:c63a".into());
         h.frames(4);
         assert!(h.app.space_mouse.offer_since.is_none());
+    }
+
+    /// Frames of the harness are 1/60 s: this many make `seconds`.
+    fn run(h: &mut crate::scenario::Harness, seconds: f64) {
+        for _ in 0..(seconds * 60.0).round() as usize {
+            h.frame();
+        }
+    }
+
+    fn card_up(h: &crate::scenario::Harness) -> bool {
+        h.app.space_mouse.offer_since.is_some() && crate::scenario::rect_of("toast:space_mouse_offer").is_some()
+    }
+
+    /// The offer stays its own 30 seconds whatever else comes and goes around it: status toasts
+    /// arriving and expiring over it, and time away (Preferences open) is not time shown.
+    #[test]
+    fn the_offer_stays_its_thirty_seconds_beside_status_toasts_and_after_time_away() {
+        let mut h = spacenavd_harness();
+        run(&mut h, 2.0);
+        for second in 0..26 {
+            if second % 5 == 0 {
+                let now = crate::now_ms();
+                h.app.status = Some(("Done".into(), now, false));
+            }
+            run(&mut h, 1.0);
+            assert!(card_up(&h), "second {second}: the offer is gone");
+            assert!(
+                crate::scenario::rect_of("toast").is_none()
+                    || h.app.status.is_some()
+                    || crate::scenario::rect_of("toast:space_mouse_offer").is_some()
+            );
+        }
+        // Over its own time it goes, for this run only: no record.
+        run(&mut h, 5.0);
+        assert!(!card_up(&h));
+        assert!(h.app.preferences.space_mouse_offered.is_empty());
+        // Time away: Preferences open for 45 s must not use the time up.
+        let mut h = spacenavd_harness();
+        run(&mut h, 3.0);
+        assert!(card_up(&h));
+        h.app.prefs_window.open = true;
+        run(&mut h, 45.0);
+        h.app.prefs_window.open = false;
+        run(&mut h, 3.0);
+        assert!(card_up(&h), "the offer waited for Preferences to close");
+        run(&mut h, 25.0);
+        assert!(card_up(&h), "and has its 30 seconds again");
+    }
+
+    /// A different device key while the offer is up gets its own offer (its own calibration key); the
+    /// first one is left alone, with no record made for either.
+    #[test]
+    fn a_new_device_key_gets_its_own_offer_and_leaves_the_old_one_alone() {
+        let mut h = spacenavd_harness();
+        run(&mut h, 10.0);
+        assert!(card_up(&h));
+        h.app.space_mouse.device = Some("hid 256f:c63a".into());
+        run(&mut h, 1.0);
+        assert!(card_up(&h));
+        assert_eq!(h.app.space_mouse.offer_since.as_ref().map(|(device, _)| device.as_str()), Some("hid 256f:c63a"));
+        assert!(h.app.preferences.space_mouse_offered.is_empty() && h.app.space_mouse.offer_hidden.is_empty());
+        // Back to the first within its 30 seconds: shown again, its timer starting afresh.
+        h.app.space_mouse.device = Some("spacenavd".into());
+        run(&mut h, 1.0);
+        assert!(card_up(&h));
+        // Switching the driver in Preferences while it is up changes nothing by itself.
+        h.app.preferences.space_mouse_driver = crate::prefs::SpaceMouseDriver::Direct;
+        run(&mut h, 2.0);
+        assert!(card_up(&h));
     }
 }
