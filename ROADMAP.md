@@ -70,7 +70,7 @@ pointer movement orbits without a mouse button, and vertical scrolling zooms. Ot
 retain their saved two-finger scroll preference; camera motion is available through
 `view.navigate` and modifier-aware `ui.move` automation.
 
-M11 precursor: File → Export Current View as DXF exports shown placed bodies from the current
+M11 precursor: File → Export Current View as DXF exports shown placed bodies and sketches from the current
 camera as a 2D millimetre drawing, with hidden edges omitted or dashed. Vector occlusion splits
 partly hidden edges and includes curved silhouettes. Repeated part meshes and triangle
 hierarchies are shared; bounded desktop preparation and occlusion use up to eight workers.

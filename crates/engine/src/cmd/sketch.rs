@@ -115,7 +115,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .params(concat!("p0, p1: overall ends, width", connect_doc!(), created_doc!())),
     CommandSpec::new("sketch.point", "Point", draw_point).at("SKETCH", "CREATE").icon("point").enabled(in_sketch).params(concat!("point: [x,y] (each a number or an expression over the design's parameters: the point is then fixed where it comes to and follows them), id?", connect_doc!(), created_doc!())),
     CommandSpec::new("sketch.dimension", "Sketch Dimension", dimension).at("SKETCH", "CREATE").icon("dimension").key("D").enabled(in_sketch).params(
-        "entities: [refs], type?: auto|distance|horizontal|vertical|length|radius|diameter|angle, value?: number or expression (default: current; a bare number is in the design's units, e.g. 2 means 2 in in an inch design; give a unit such as \"50 mm\" to override); text_at?: [x, y]. Two points or a line off the axes: with auto, text_at across from them is the distance between them, above or below them horizontal, beside them vertical. Two lines: the angle between them (acute, or 180° − it when the value is nearer that) unless text_at picks a sector. A line and a circle or arc: the distance from the line to its edge (the gap, or how far the edge reaches past a line that cuts it; 0 is tangent); dimension the centre point for the distance to the centre. A dimension the sketch already determines is refused (naming what determines it); if_redundant?: \"driven\" places it as a driven (reference) dimension instead. scale_sketch?: bool (the dimension tool sends true): when this is the sketch's first length dimension and nothing in the sketch fixes a size (no other driving length dimension, nothing fixed or projected), the whole sketch scales about its origin to the value instead of distorting. Returns measured in unit (mm or deg), and scaled: the factor when the sketch was scaled",
+        "entities: [refs], type?: auto|distance|horizontal|vertical|length|radius|diameter|angle, value?: number or expression (default: current; a bare number is in the design's units, e.g. 2 means 2 in in an inch design; give a unit such as \"50 mm\" to override), or `name = expression` (e.g. \"width = 40\"), which adds the user parameter `name` with that expression and dimensions with `name` (refused when the name is taken or reserved; the reply's `defined` names it); text_at?: [x, y]. Two points or a line off the axes: with auto, text_at across from them is the distance between them, above or below them horizontal, beside them vertical. Two lines: the angle between them (acute, or 180° − it when the value is nearer that) unless text_at picks a sector. A line and a circle or arc: the distance from the line to its edge (the gap, or how far the edge reaches past a line that cuts it; 0 is tangent); dimension the centre point for the distance to the centre. A dimension the sketch already determines is refused (naming what determines it); if_redundant?: \"driven\" places it as a driven (reference) dimension instead. scale_sketch?: bool (the dimension tool sends true): when this is the sketch's first length dimension and nothing in the sketch fixes a size (no other driving length dimension, nothing fixed or projected), the whole sketch scales about its origin to the value instead of distorting. Returns measured in unit (mm or deg), and scaled: the factor when the sketch was scaled",
     ),
     CommandSpec::new("sketch.constraint.horizontal_vertical", "Horizontal/Vertical", c_horizontal_vertical)
         .at("SKETCH", "CONSTRAINTS")
@@ -2095,6 +2095,19 @@ fn dimension(s: &mut Session, p: &Value) -> Result<Value> {
     let value = expr(p, "value");
     let text_at = p.get("text_at").and_then(vec2);
     let driven = bool_(p, "driven").unwrap_or(false);
+    // `name = expression` defines the user parameter `name` and dimensions with it (#2916).
+    let (defines, value) = match value.as_ref().and_then(|v| solidcraft_doc::expr::definition(v.as_str())) {
+        Some((name, rhs)) => {
+            if rhs.is_empty() {
+                return Err(bad(cmd, format!("value: `{name} =` needs a value after the `=`")));
+            }
+            if driven {
+                return Err(bad(cmd, format!("value: a driven dimension has no value, so it cannot define `{name}`")));
+            }
+            (Some((name.to_string(), rhs.to_string())), Some(solidcraft_doc::expr::Expr::new(name)))
+        }
+        None => (None, value),
+    };
     let scale_sketch = bool_(p, "scale_sketch").unwrap_or(false);
     let mut scaled = None;
     let mut before = None;
@@ -2260,7 +2273,21 @@ fn dimension(s: &mut Session, p: &Value) -> Result<Value> {
         }
         let (unit, default_expr) =
             if is_angle { ("deg", format!("{} deg", round6(cur.to_degrees()))) } else { ("mm", format!("{} mm", round6(cur))) };
-        let e = value.as_ref().map(|e| doc.with_design_unit(e, if is_angle { Kind::Angle } else { Kind::Length })).unwrap_or(default_expr);
+        let kind = if is_angle { Kind::Angle } else { Kind::Length };
+        if let Some((name, rhs)) = &defines {
+            // The new user parameter reads a bare number as the dimension would (the design's
+            // unit for a length, degrees for an angle), and carries that unit.
+            if let Some(problem) = solidcraft_doc::Document::param_name_problem(name) {
+                return Err(bad(cmd, format!("value: {problem}")));
+            }
+            if doc.param(name).is_some() {
+                return Err(bad(cmd, format!("value: there is already a parameter `{name}`: type `{name}` to use it, or change it in Parameters")));
+            }
+            let rhs = doc.with_design_unit(rhs, kind);
+            let unit = if is_angle { "deg".to_string() } else { solidcraft_doc::expr::length_unit_or_mm(&doc.units).to_string() };
+            doc.add_user_param(name, &rhs, Some(&unit), None).map_err(|e| bad(cmd, format!("value: {e}")))?;
+        }
+        let e = value.as_ref().map(|e| doc.with_design_unit(e, kind)).unwrap_or(default_expr);
         let pname = doc.new_model_param(&e, unit);
         // The value must evaluate.
         let (vals, errs) = doc.param_values();
@@ -2325,6 +2352,9 @@ fn dimension(s: &mut Session, p: &Value) -> Result<Value> {
     let mut out = json!({"param": param, "type": kind_name, "expression": v, "measured": current.0, "unit": current.1, "sketch": info});
     if let Some(factor) = scaled {
         out["scaled"] = json!(round6(factor));
+    }
+    if let Some((name, _)) = defines {
+        out["defined"] = json!(name);
     }
     Ok(out)
 }
