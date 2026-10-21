@@ -15,7 +15,7 @@ use solidcraft_engine::doc::joints::JointKind;
 use solidcraft_engine::geom::Vec3;
 
 use crate::SolveApp;
-use crate::dialogs::{Dialog, Kind, combo, field, form_row, row_label};
+use crate::dialogs::{Dialog, Kind, combo, form_row};
 use crate::explode_gizmo::ExplodePick;
 use crate::selection::{BODIES, SelInput};
 use crate::theme::Tokens;
@@ -772,9 +772,9 @@ fn explode_rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Mo, t: Tokens) {
         let labels: Vec<&str> = std::iter::once(crate::i18n::tr_label("New view")).chain(names.iter().map(String::as_str)).collect();
         let was = view.and_then(|id| views.iter().position(|v| v.get("id").and_then(Value::as_u64) == Some(id))).map_or(0, |i| i + 1);
         let mut pick = was;
-        row_label(ui, "View");
-        combo(ui, "explode_view", &labels, &mut pick);
-        ui.end_row();
+        form_row(ui, "View", |ui| {
+            combo(ui, "explode_view", &labels, &mut pick);
+        });
         if pick != was {
             match pick.checked_sub(1).and_then(|i| views.get(i)) {
                 Some(v) => {
@@ -793,22 +793,22 @@ fn explode_rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Mo, t: Tokens) {
             *shown = None;
         }
     }
-    row_label(ui, "Name");
-    ui.text_edit_singleline(name);
-    ui.end_row();
-    row_label(ui, "Easing");
-    combo(ui, "explode_easing", &EASING_LABELS, easing);
-    ui.end_row();
-    row_label(ui, "Trail lines");
-    crate::dialogs::check(ui, trail_lines);
-    ui.end_row();
+    form_row(ui, "Name", |ui| {
+        ui.text_edit_singleline(name);
+    });
+    form_row(ui, "Easing", |ui| {
+        combo(ui, "explode_easing", &EASING_LABELS, easing);
+    });
+    form_row(ui, "Trail lines", |ui| {
+        crate::dialogs::check(ui, trail_lines);
+    });
     // The automatic explosion fills the first step; a view whose steps were edited by hand keeps
     // them, so the scale is only offered for a new view.
     if view.is_none() {
-        row_label(ui, "Explode");
-        ui.spacing_mut().slider_width = 160.0;
-        ui.add(egui::Slider::new(scale, 0.0..=2.0).fixed_decimals(2));
-        ui.end_row();
+        form_row(ui, "Explode", |ui| {
+            ui.spacing_mut().slider_width = 160.0;
+            ui.add(egui::Slider::new(scale, 0.0..=2.0).fixed_decimals(2));
+        });
         if *auto != Some(*scale) {
             *auto = Some(*scale);
             match automatic_moves(app, *scale) {
@@ -824,49 +824,50 @@ fn explode_rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Mo, t: Tokens) {
     }
     // Playback: to start, step back, play/pause, step on, to end; loop and speed.
     let total = total_ms(steps);
-    row_label(ui, "Playback");
-    ui.horizontal(|ui| {
-        if transport(ui, Transport::Start, crate::i18n::tr_label("To the start")).clicked() {
-            *time = 0.0;
-            *playing = false;
-        }
-        if transport(ui, Transport::Back, crate::i18n::tr_label("Step back")).clicked() {
-            *time = (*time - 100.0).max(0.0);
-            *playing = false;
-        }
-        let (what, tip) = if *playing { (Transport::Stop, crate::i18n::tr_label("Pause")) } else { (Transport::Play, crate::i18n::tr_label("Play")) };
-        if transport(ui, what, tip).clicked() {
-            // Play from the start again when at the end.
-            if !*playing && *time >= total {
+    form_row(ui, "Playback", |ui| {
+        ui.horizontal(|ui| {
+            if transport(ui, Transport::Start, crate::i18n::tr_label("To the start")).clicked() {
                 *time = 0.0;
+                *playing = false;
             }
-            *playing = !*playing;
-        }
-        if transport(ui, Transport::Forward, crate::i18n::tr_label("Step on")).clicked() {
-            *time = (*time + 100.0).min(total);
-            *playing = false;
-        }
-        if transport(ui, Transport::End, crate::i18n::tr_label("To the end")).clicked() {
-            *time = total;
-            *playing = false;
-        }
-        ui.add_space(6.0);
-        ui.checkbox(looping, crate::i18n::tr_label("Loop"));
-        let names: Vec<String> = SPEEDS.iter().map(|x| format!("{x}×")).collect();
-        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
-        combo(ui, "explode_speed", &refs, speed);
+            if transport(ui, Transport::Back, crate::i18n::tr_label("Step back")).clicked() {
+                *time = (*time - 100.0).max(0.0);
+                *playing = false;
+            }
+            let (what, tip) =
+                if *playing { (Transport::Stop, crate::i18n::tr_label("Pause")) } else { (Transport::Play, crate::i18n::tr_label("Play")) };
+            if transport(ui, what, tip).clicked() {
+                // Play from the start again when at the end.
+                if !*playing && *time >= total {
+                    *time = 0.0;
+                }
+                *playing = !*playing;
+            }
+            if transport(ui, Transport::Forward, crate::i18n::tr_label("Step on")).clicked() {
+                *time = (*time + 100.0).min(total);
+                *playing = false;
+            }
+            if transport(ui, Transport::End, crate::i18n::tr_label("To the end")).clicked() {
+                *time = total;
+                *playing = false;
+            }
+            ui.add_space(6.0);
+            ui.checkbox(looping, crate::i18n::tr_label("Loop"));
+            let names: Vec<String> = SPEEDS.iter().map(|x| format!("{x}×")).collect();
+            let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+            combo(ui, "explode_speed", &refs, speed);
+        });
     });
-    ui.end_row();
     // The scrubber over the whole sequence: 0 is assembled, the end fully exploded.
-    row_label(ui, "Sequence");
-    ui.horizontal(|ui| {
-        ui.spacing_mut().slider_width = 240.0;
-        if ui.add(egui::Slider::new(time, 0.0..=total.max(1.0)).show_value(false)).dragged() {
-            *playing = false;
-        }
-        ui.label(RichText::new(format!("{:.0} / {total:.0} ms", time)).color(t.text_dim));
+    form_row(ui, "Sequence", |ui| {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().slider_width = 240.0;
+            if ui.add(egui::Slider::new(time, 0.0..=total.max(1.0)).show_value(false)).dragged() {
+                *playing = false;
+            }
+            ui.label(RichText::new(format!("{:.0} / {total:.0} ms", time)).color(t.text_dim));
+        });
     });
-    ui.end_row();
     // The steps, in order, with their moves.
     let occs = occurrences(app);
     let occ_names: Vec<String> = occs.iter().map(|(_, n)| n.clone()).collect();
@@ -877,60 +878,60 @@ fn explode_rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Mo, t: Tokens) {
     let mut move_step: Option<(usize, bool)> = None;
     let mut remove_move: Option<(usize, usize)> = None;
     let mut add_move: Option<usize> = None;
-    row_label(ui, "");
-    egui::ScrollArea::vertical().id_salt("explode_steps").max_height(240.0).show(ui, |ui| {
-        for (i, step) in steps.iter_mut().enumerate() {
-            ui.horizontal(|ui| {
-                if ui.selectable_label(*selected == i, format!("{}", i + 1)).on_hover_text(crate::i18n::tr_label("Edit this step")).clicked() {
-                    *selected = i;
-                }
-                ui.add(egui::TextEdit::singleline(&mut step.name).desired_width(110.0));
-                ui.label(RichText::new("ms").color(t.text_dim));
-                ui.add(egui::DragValue::new(&mut step.duration_ms).range(0..=MAX_STEP_MS).speed(10.0));
-                if ui.small_button("↑").on_hover_text(crate::i18n::tr_label("Move earlier")).clicked() {
-                    move_step = Some((i, true));
-                }
-                if ui.small_button("↓").on_hover_text(crate::i18n::tr_label("Move later")).clicked() {
-                    move_step = Some((i, false));
-                }
-                if ui.small_button("×").on_hover_text(crate::i18n::tr_label("Delete the step")).clicked() {
-                    remove_step = Some(i);
-                }
-            });
-            for (j, mv) in step.moves.iter_mut().enumerate() {
+    form_row(ui, "", |ui| {
+        egui::ScrollArea::vertical().id_salt("explode_steps").max_height(240.0).show(ui, |ui| {
+            for (i, step) in steps.iter_mut().enumerate() {
                 ui.horizontal(|ui| {
-                    let mut pos = occs.iter().position(|(id, _)| *id == mv.occurrence).unwrap_or(0);
-                    combo(ui, &format!("explode_move_{i}_{j}"), &occ_refs, &mut pos);
-                    if let Some((id, _)) = occs.get(pos) {
-                        mv.occurrence = *id;
+                    if ui.selectable_label(*selected == i, format!("{}", i + 1)).on_hover_text(crate::i18n::tr_label("Edit this step")).clicked() {
+                        *selected = i;
                     }
-                    for k in 0..3 {
-                        ui.add(crate::prefs::length_drag(&mut mv.translate[k], &units, decimals));
+                    ui.add(egui::TextEdit::singleline(&mut step.name).desired_width(110.0));
+                    ui.label(RichText::new("ms").color(t.text_dim));
+                    ui.add(egui::DragValue::new(&mut step.duration_ms).range(0..=MAX_STEP_MS).speed(10.0));
+                    if ui.small_button("↑").on_hover_text(crate::i18n::tr_label("Move earlier")).clicked() {
+                        move_step = Some((i, true));
                     }
-                    if ui.small_button("×").on_hover_text(crate::i18n::tr_label("Remove the move")).clicked() {
-                        remove_move = Some((i, j));
+                    if ui.small_button("↓").on_hover_text(crate::i18n::tr_label("Move later")).clicked() {
+                        move_step = Some((i, false));
+                    }
+                    if ui.small_button("×").on_hover_text(crate::i18n::tr_label("Delete the step")).clicked() {
+                        remove_step = Some(i);
                     }
                 });
-            }
-            ui.horizontal(|ui| {
-                if ui.small_button(crate::i18n::tr_label("Add move")).clicked() {
-                    add_move = Some(i);
+                for (j, mv) in step.moves.iter_mut().enumerate() {
+                    ui.horizontal(|ui| {
+                        let mut pos = occs.iter().position(|(id, _)| *id == mv.occurrence).unwrap_or(0);
+                        combo(ui, &format!("explode_move_{i}_{j}"), &occ_refs, &mut pos);
+                        if let Some((id, _)) = occs.get(pos) {
+                            mv.occurrence = *id;
+                        }
+                        for k in 0..3 {
+                            crate::ui_kit::length_field(ui, &mut mv.translate[k], &units, decimals);
+                        }
+                        if ui.small_button("×").on_hover_text(crate::i18n::tr_label("Remove the move")).clicked() {
+                            remove_move = Some((i, j));
+                        }
+                    });
                 }
-            });
-            ui.separator();
-        }
+                ui.horizontal(|ui| {
+                    if ui.small_button(crate::i18n::tr_label("Add move")).clicked() {
+                        add_move = Some(i);
+                    }
+                });
+                ui.separator();
+            }
+        });
     });
-    ui.end_row();
-    row_label(ui, "");
-    ui.horizontal(|ui| {
-        if ui.button(crate::i18n::tr_label("Add step")).on_hover_text(crate::i18n::tr_label("Add a step at the end of the sequence")).clicked()
-            && steps.len() < MAX_STEPS
-        {
-            steps.push(ExplodeStep { id: 0, name: format!("Step {}", steps.len() + 1), moves: Vec::new(), duration_ms: DEFAULT_STEP_MS });
-            *selected = steps.len() - 1;
-        }
+    form_row(ui, "", |ui| {
+        ui.horizontal(|ui| {
+            if ui.button(crate::i18n::tr_label("Add step")).on_hover_text(crate::i18n::tr_label("Add a step at the end of the sequence")).clicked()
+                && steps.len() < MAX_STEPS
+            {
+                steps.push(ExplodeStep { id: 0, name: format!("Step {}", steps.len() + 1), moves: Vec::new(), duration_ms: DEFAULT_STEP_MS });
+                *selected = steps.len() - 1;
+            }
+        });
     });
-    ui.end_row();
     if let Some(i) = remove_step {
         steps.remove(i);
         *selected = (*selected).min(steps.len().saturating_sub(1));
@@ -981,9 +982,9 @@ fn explode_rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Mo, t: Tokens) {
         ui.ctx().request_repaint();
     }
     if let Some(e) = error {
-        row_label(ui, "");
-        ui.label(RichText::new(e.as_str()).color(t.error));
-        ui.end_row();
+        form_row(ui, "", |ui| {
+            ui.label(RichText::new(e.as_str()).color(t.error));
+        });
     }
 }
 

@@ -270,9 +270,31 @@ pub(crate) fn owns_pointer(app: &SolveApp, proj: &Proj, p: Pos2) -> bool {
     // The triad only registers an egui hit widget after a handle is under the pointer.
     // Test its geometry before navigation, including the first frame entering a handle.
     app.dialog.as_ref().and_then(|d| crate::dialogs_move::triad(app, d)).is_some_and(|t| crate::gizmo::contains_pointer(proj, &t, p))
+        || explode_gizmo_under(app, proj, p)
         || (app.dialog.is_none()
             && app.tool.is_none()
             && crate::browser::occurrence_triad_model(app).is_some_and(|t| crate::gizmo::contains_pointer(proj, &t, p)))
+}
+
+/// Whether the exploded view's gizmo has a handle under this point.
+fn explode_gizmo_under(app: &SolveApp, proj: &Proj, p: Pos2) -> bool {
+    app.explode_pick.is_some_and(|pick| crate::gizmo::contains_pointer(proj, &crate::explode_gizmo::triad(&pick), p))
+}
+
+/// The exploded view's gizmo: the triad at the occurrence the dialog has picked, drawn while the
+/// Exploded View dialog is open. Dragging one of its arrows pulls the occurrence along that axis:
+/// the drag is the current step's move for that occurrence, and the dialog takes it. The gizmo
+/// moves the view's step, never the occurrence's own placement.
+fn explode_gizmo(app: &mut SolveApp, ui: &mut egui::Ui, painter: &egui::Painter, proj: &Proj) {
+    let Some(pick) = app.explode_pick else { return };
+    let triad = crate::explode_gizmo::triad(&pick);
+    let drag = crate::gizmo::show(ui, painter, proj, egui::Id::new("sc_explode_triad"), &triad, snap_step(app.cam.half_height()));
+    // The state between the frames of a drag: what it began from, and the drag to publish.
+    let id = egui::Id::new("sc_explode_state");
+    let mut state = ui.data(|d| d.get_temp::<crate::explode_gizmo::State>(id)).unwrap_or_default();
+    let published = state.publish(Some(&pick), drag.as_ref());
+    ui.data_mut(|d| d.insert_temp(id, state));
+    app.explode_drag = published;
 }
 
 /// Draw the manipulator and the value box (called by the viewport after the model is drawn).
@@ -296,6 +318,13 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui, painter: &egui::Painter, proj
     }
     if let Kind::Measure { result: Some(r), show, .. } = &d.kind {
         measure_line(app, painter, proj, r, *show);
+        app.dialog = Some(d);
+        return;
+    }
+    // The Exploded View dialog: its gizmo pulls the picked occurrence along an axis, and the
+    // dialog takes the drag into the current step.
+    if matches!(d.kind, Kind::Motion(crate::dialogs_motion::Mo::Explode { .. })) {
+        explode_gizmo(app, ui, painter, proj);
         app.dialog = Some(d);
         return;
     }
@@ -1376,6 +1405,67 @@ fn arrow(painter: &egui::Painter, a: Pos2, b: Pos2, col: Color32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Millimetres per screen pixel at a point, as the gizmo measures it.
+    fn mm_per_px(proj: &Proj, c: Vec3) -> f64 {
+        let (_, view) = proj.ray(proj.to_screen(c).unwrap());
+        let u = view.any_perp().normalized().unwrap();
+        let (a, b) = (proj.to_screen(c).unwrap(), proj.to_screen(c + u).unwrap());
+        1.0 / f64::from(a.distance(b))
+    }
+
+    /// An app with the exploded view's gizmo on the given occurrence.
+    fn app_with_pick(pick: crate::explode_gizmo::ExplodePick) -> SolveApp {
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
+        app.explode_pick = Some(pick);
+        app
+    }
+
+    /// The exploded view's gizmo sits at the occurrence the dialog picked, and the pointer
+    /// belongs to it while a handle is under it.
+    #[test]
+    fn the_explode_gizmo_sits_at_the_picked_occurrence() {
+        let rect = egui::Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0));
+        let cam = solidcraft_engine::render::Camera::default();
+        let proj = Proj { cam, vp: cam.view_proj(4.0 / 3.0, 100.0), rect };
+        let center = Vec3::new(10.0, 0.0, 0.0);
+        let pick = crate::explode_gizmo::ExplodePick { occurrence: 3, center, move_vec: Vec3::ZERO };
+        // The triad is drawn at the occurrence's place, with the translation handles only.
+        let t = crate::explode_gizmo::triad(&pick);
+        assert_eq!(t.center, center);
+        assert!(t.translate && !t.rotate);
+        let app = app_with_pick(pick);
+        // The X arrow of the triad is under the pointer: the gizmo owns it, so the camera does
+        // not move instead.
+        let l = mm_per_px(&proj, center) * crate::gizmo::LEN_PX;
+        let on_arrow = proj.to_screen(center + Vec3::X * (0.6 * l)).unwrap();
+        assert!(explode_gizmo_under(&app, &proj, on_arrow), "the arrow of the triad is the gizmo's");
+        // A point far from the triad is not.
+        assert!(!explode_gizmo_under(&app, &proj, Pos2::new(6.0, 6.0)));
+        // Without a pick there is no gizmo at all.
+        let mut bare = app_with_pick(pick);
+        bare.explode_pick = None;
+        assert!(!explode_gizmo_under(&bare, &proj, on_arrow));
+    }
+
+    /// The drag of the exploded view's gizmo moves the occurrence along one axis only, and the
+    /// other axes keep the move they had.
+    #[test]
+    fn a_drag_of_the_explode_gizmo_moves_one_axis_only() {
+        use crate::explode_gizmo::{ExplodePick, State};
+        use crate::gizmo::{Change, Drag, Handle};
+        let pick = ExplodePick { occurrence: 7, center: Vec3::ZERO, move_vec: Vec3::new(1.0, 2.0, 3.0) };
+        let mut state = State::default();
+        let drag = Drag { handle: Handle::Axis(0), change: Change::Translate(Vec3::new(5.0, 0.0, 0.0)), started: true, done: false };
+        let Some(p) = state.publish(Some(&pick), Some(&drag)) else { panic!("the drag is published") };
+        assert_eq!(p.occurrence, 7);
+        // The X axis follows the drag; Y and Z keep the move the step had.
+        assert_eq!(p.move_vec, Vec3::new(6.0, 2.0, 3.0));
+        // A drag of the plane square moves nothing: the gizmo pulls along the axes only.
+        let mut state = State::default();
+        let plane = Drag { handle: Handle::Plane(0), change: Change::Translate(Vec3::new(5.0, 0.0, 0.0)), started: true, done: false };
+        assert!(state.publish(Some(&pick), Some(&plane)).is_none());
+    }
 
     #[test]
     fn offset_plane_preview_stays_within_its_square() {
