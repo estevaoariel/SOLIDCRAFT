@@ -1795,7 +1795,7 @@
   "ui.space_mouse_reading": "Reading",
   "ui.space_mouse_reset_axes": "Reset axis assignment",
   "ui.space_mouse_reset_view": "Reset View",
-  "ui.space_mouse_restore": "Restore 3D mouse defaults",
+  "ui.space_mouse_restore": "Restore 3D Mouse Defaults",
   "ui.space_mouse_restore_ask": "Restore the driver, speed, each axis's invert, speed and assignment, and the picture's position and whether it shows in the 3D view to their defaults? Your calibration, button mapping and the test model are kept.",
   "ui.space_mouse_section": "3D mouse",
   "ui.space_mouse_show_in_view": "Show the 3D mouse in the 3D view",

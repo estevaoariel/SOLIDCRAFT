@@ -1759,7 +1759,7 @@
   "ui.space_mouse_offer_swap": "Váltás Hidrawra (közvetlen illesztőprogram)",
   "ui.space_mouse_reading": "Beolvasás",
   "ui.space_mouse_reset_view": "Nézet visszaállítása",
-  "ui.space_mouse_restore": "3D-s egér alapértékei",
+  "ui.space_mouse_restore": "3D-s egér alapértékeinek visszaállítása",
   "ui.space_mouse_restore_ask": "Visszaállítja az alapértékeket: illesztőprogram, sebesség, az egyes tengelyek megfordítása, sebessége és hozzárendelése, a kép helye, valamint hogy megjelenjen-e a 3D nézetben? A kalibráció, a gombkiosztás és a tesztmodell megmarad.",
   "ui.space_mouse_step_lift": "Emelje fel a kupakot, tartsa, majd engedje el.",
   "ui.space_mouse_step_press": "Nyomja le a kupakot, tartsa, majd engedje el.",

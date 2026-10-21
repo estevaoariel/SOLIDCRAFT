@@ -2591,7 +2591,7 @@ mod tests {
     fn cancelling_the_restore_question_changes_nothing() {
         let mut h = changed_3d_mouse_settings(Some("hid 046d:c62b"));
         let before = h.app.preferences.clone();
-        scroll_to_and_click(&mut h, "dialog:button::Restore 3D mouse defaults");
+        scroll_to_and_click(&mut h, "dialog:button::Restore 3D Mouse Defaults");
         assert!(h.app.space_mouse.restore_pending, "the first click only asks");
         assert_eq!(h.app.preferences, before, "asking changes nothing");
         scroll_to_and_click(&mut h, "dialog:button::Cancel");
@@ -2605,8 +2605,8 @@ mod tests {
     fn restoring_with_no_device_works_and_a_later_connection_brings_nothing_back() {
         let mut h = changed_3d_mouse_settings(None);
         let calibrations = h.app.preferences.space_mouse_calibrations.clone();
-        scroll_to_and_click(&mut h, "dialog:button::Restore 3D mouse defaults");
-        scroll_to_and_click(&mut h, "dialog:button::Restore 3D mouse defaults");
+        scroll_to_and_click(&mut h, "dialog:button::Restore 3D Mouse Defaults");
+        scroll_to_and_click(&mut h, "dialog:button::Restore 3D Mouse Defaults");
         assert!(!h.app.space_mouse.restore_pending);
         let d = Prefs::default();
         let restored = |h: &crate::scenario::Harness| {
@@ -2637,7 +2637,7 @@ mod tests {
     fn closing_preferences_with_the_restore_question_up_does_not_leave_it_armed() {
         let mut h = changed_3d_mouse_settings(Some("hid 046d:c62b"));
         let before = h.app.preferences.clone();
-        scroll_to_and_click(&mut h, "dialog:button::Restore 3D mouse defaults");
+        scroll_to_and_click(&mut h, "dialog:button::Restore 3D Mouse Defaults");
         assert!(h.app.space_mouse.restore_pending);
         h.step(&serde_json::json!({"click": {"handle": "dialog:cancel"}})).unwrap();
         h.frames(6);
@@ -2655,8 +2655,8 @@ mod tests {
         let mut h = changed_3d_mouse_settings(Some("hid 046d:c62b"));
         let calibrations = h.app.preferences.space_mouse_calibrations.clone();
         assert!(!section_is_at_defaults(&h.app));
-        scroll_to_and_click(&mut h, "dialog:button::Restore 3D mouse defaults");
-        scroll_to_and_click(&mut h, "dialog:button::Restore 3D mouse defaults");
+        scroll_to_and_click(&mut h, "dialog:button::Restore 3D Mouse Defaults");
+        scroll_to_and_click(&mut h, "dialog:button::Restore 3D Mouse Defaults");
         assert!(!h.app.space_mouse.restore_pending && section_is_at_defaults(&h.app));
         let saved = h.app.prefs();
         let mut next = crate::scenario::Harness::new();

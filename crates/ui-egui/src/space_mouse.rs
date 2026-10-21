@@ -74,7 +74,7 @@ pub struct Input {
     pub offer_seen: f64,
     /// The device last written to the log (one line per connect), `None` for none.
     pub logged_device: Option<String>,
-    /// "Restore 3D mouse defaults" was clicked and waits for its answer.
+    /// "Restore 3D Mouse Defaults" was clicked and waits for its answer.
     pub restore_pending: bool,
     /// The motion `navigate_frame` handed the view this frame (calibrated, reassigned, inverted and
     /// scaled), for the test model on the Preferences page to move with; none when the view got none.
