@@ -2551,6 +2551,76 @@ mod tests {
         assert!(crate::i18n::tr("ui.space_mouse_circles_help").contains("test model"));
     }
 
+    /// The folded header says what it awaits before the first reading, and the hint is a visible line
+    /// as well as a tooltip; both only while a reader is reachable and silent.
+    #[test]
+    fn the_header_and_a_visible_line_say_what_the_3d_mouse_waits_for() {
+        assert_eq!(crate::i18n::tr("ui.space_mouse_waiting"), "Waiting for Movement");
+        assert_eq!(crate::i18n::tr("ui.space_mouse_reset_view"), "Reset View");
+        let mut h = crate::scenario::Harness::new();
+        h.app.home.open = false;
+        h.app.space_mouse.device = None;
+        h.app.space_mouse.drivers = Some(crate::space_mouse::DriversPresent { spacenavd: true, direct: false });
+        h.call("ui.resize", serde_json::json!({"width": 1600, "height": 4000}));
+        crate::prefs::open_at(&mut h.app, 1);
+        h.frames(5);
+        assert!(crate::scenario::rect_of("dialog:section:3D mouse:count").is_some(), "the folded header has the badge");
+        // Confirmed: the badge names the device. Nothing reachable: no badge.
+        h.app.space_mouse.device = Some("spacenavd".into());
+        h.frames(3);
+        assert!(crate::scenario::rect_of("dialog:section:3D mouse:count").is_some());
+        h.app.space_mouse.device = None;
+        h.app.space_mouse.drivers = Some(crate::space_mouse::DriversPresent { spacenavd: false, direct: false });
+        h.frames(3);
+        assert!(crate::scenario::rect_of("dialog:section:3D mouse:count").is_none());
+    }
+
+    /// The boat's Reset View puts the boat back and nothing else: calibration, sensitivity, axis
+    /// assignment and the document's camera stay.
+    #[test]
+    fn reset_view_is_scoped_to_the_test_model() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.home.open = false;
+        let axes =
+            std::array::from_fn(|source| solidcraft_space_mouse::AxisCalibration { source, reversed: false, rest: 0, dead_zone: 0, full: [350; 2] });
+        let calibration = solidcraft_space_mouse::Calibration { dead_zone_share: 0.0, kind: solidcraft_space_mouse::Kind::ReturnToCenter, axes };
+        h.app.space_mouse.device = Some("hid 046d:c62b".into());
+        h.app.preferences.space_mouse_calibrations.insert("hid 046d:c62b".into(), calibration);
+        h.app.preferences.space_mouse_speed = 1.7;
+        h.app.preferences.space_mouse_reverse[2] = true;
+        h.app.preferences.space_mouse_axis_speed[1] = 0.5;
+        h.app.preferences.space_mouse_axis_source = [1, 0, 2, 3, 4, 5];
+        h.frames(3);
+        // The boat has been turned.
+        let mut boat = crate::test_boat::Boat::new(30.0);
+        boat.cam.yaw += 1.0;
+        h.app.space_mouse.boat = Some(boat);
+        let before = (h.app.cam, h.app.preferences.clone());
+        // What the button does (the page's scroll area hides it from the harness, which cannot scroll).
+        crate::test_boat::reset(&mut h.app.space_mouse.boat);
+        h.frames(3);
+        assert!(h.app.space_mouse.boat.is_none(), "the boat is back");
+        assert_eq!(h.app.cam, before.0, "the document's camera");
+        assert_eq!(h.app.preferences, before.1, "every setting, calibration included");
+        assert_eq!(crate::i18n::tr("ui.space_mouse_reset_view"), "Reset View");
+        assert!(
+            include_str!("prefs.rs").contains("ui_kit::button(ui, crate::i18n::tr(\"ui.space_mouse_reset_view\"), ui_kit::Button::Normal).clicked()")
+        );
+    }
+
+    /// The "wiggle it" hint exists in every catalog, and is what the status line carries when no
+    /// device is confirmed.
+    #[test]
+    fn the_wiggle_hint_has_text_and_is_used_by_the_device_line() {
+        assert_eq!(crate::i18n::tr("ui.space_mouse_wiggle"), "If you have one plugged in, wiggle it.");
+        for catalog in crate::i18n::LOCALES {
+            let text = crate::i18n::Locale::for_language(catalog.id).text("ui.space_mouse_wiggle");
+            assert!(!text.is_empty() && text != "ui.space_mouse_wiggle", "{}", catalog.id);
+        }
+        let source = include_str!("prefs.rs");
+        assert!(source.contains("status_line.on_hover_text(app.tr(\"ui.space_mouse_wiggle\"))"));
+    }
+
     /// The first screen of the calibration (which kind of device) fits at the window's widths:
     /// both pictures are inside it, side by side or one under the other.
     #[test]
