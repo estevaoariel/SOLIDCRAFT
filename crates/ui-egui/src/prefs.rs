@@ -1061,6 +1061,8 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     }
     if !app.prefs_window.open {
         app.prefs_window.snapshot = None;
+        // A question left up when the dialog closed is not still asked when it opens again.
+        app.space_mouse.restore_pending = false;
         // Calibration opens from here and ends with it, so the cap moves the view again.
         app.space_mouse.calibrating = None;
         return;
@@ -1756,7 +1758,7 @@ fn waiting_for_a_record(drivers: Option<crate::space_mouse::DriversPresent>) -> 
 /// assignment, where the picture goes and whether it shows. Not the calibration (it has its own
 /// Forget), the button mapping, the offered set, "never show again", "Navigate with the 3D mouse" or
 /// the test model.
-pub(crate) fn restore_space_mouse_defaults(app: &mut SolveApp) {
+pub fn restore_space_mouse_defaults(app: &mut SolveApp) {
     let d = Prefs::default();
     let p = &mut app.preferences;
     p.space_mouse_driver = d.space_mouse_driver;
@@ -2620,6 +2622,51 @@ mod tests {
         h.frames(30);
         assert!(restored(&h), "still the defaults after the device connected");
         assert_eq!(h.app.preferences.space_mouse_calibrations, calibrations, "its calibration is kept");
+    }
+
+    /// What a restore sets, and what the prefs file holds of it.
+    fn section_is_at_defaults(app: &SolveApp) -> bool {
+        let (p, d) = (&app.preferences, Prefs::default());
+        (p.space_mouse_driver, p.space_mouse_speed, p.space_mouse_reverse, p.space_mouse_axis_speed, p.space_mouse_axis_source)
+            == (d.space_mouse_driver, d.space_mouse_speed, d.space_mouse_reverse, d.space_mouse_axis_speed, d.space_mouse_axis_source)
+            && (p.space_mouse_ghost_position, p.space_mouse_in_view) == (d.space_mouse_ghost_position, d.space_mouse_in_view)
+    }
+
+    /// Restore, then closing the dialog with its own Cancel while the question is up: the question is not
+    /// still asked when the dialog opens again, and nothing was changed.
+    #[test]
+    fn closing_preferences_with_the_restore_question_up_does_not_leave_it_armed() {
+        let mut h = changed_3d_mouse_settings(Some("hid 046d:c62b"));
+        let before = h.app.preferences.clone();
+        scroll_to_and_click(&mut h, "dialog:button::Restore 3D mouse defaults");
+        assert!(h.app.space_mouse.restore_pending);
+        h.step(&serde_json::json!({"click": {"handle": "dialog:cancel"}})).unwrap();
+        h.frames(6);
+        assert!(!h.app.prefs_window.open, "the dialog closed");
+        crate::prefs::open_at(&mut h.app, 1);
+        h.frames(6);
+        assert!(!h.app.space_mouse.restore_pending, "the question is not asked again on its own");
+        assert_eq!(h.app.preferences, before);
+    }
+
+    /// Confirming with the real buttons is what the prefs file holds afterwards: a new run that loads it
+    /// has the defaults for the section and the calibration still there.
+    #[test]
+    fn a_confirmed_restore_is_what_the_next_run_loads() {
+        let mut h = changed_3d_mouse_settings(Some("hid 046d:c62b"));
+        let calibrations = h.app.preferences.space_mouse_calibrations.clone();
+        assert!(!section_is_at_defaults(&h.app));
+        scroll_to_and_click(&mut h, "dialog:button::Restore 3D mouse defaults");
+        scroll_to_and_click(&mut h, "dialog:button::Restore 3D mouse defaults");
+        assert!(!h.app.space_mouse.restore_pending && section_is_at_defaults(&h.app));
+        let saved = h.app.prefs();
+        let mut next = crate::scenario::Harness::new();
+        next.app.preferences.space_mouse_speed = 2.5;
+        assert!(!section_is_at_defaults(&next.app));
+        next.app.load_prefs(&saved);
+        assert!(section_is_at_defaults(&next.app), "the defaults are what was saved");
+        assert_eq!(next.app.preferences.space_mouse_calibrations, calibrations, "and the calibration with them");
+        assert!(!next.app.space_mouse.restore_pending);
     }
 
     /// The circles say what the view does with their axes in the rows' own words, and keep saying it
