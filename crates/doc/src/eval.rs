@@ -3551,6 +3551,36 @@ fn hole_position(vals: &BTreeMap<String, Value>, position: &crate::FacePick, at:
     Ok(p)
 }
 
+// Pick an actual cylindrical wall, not a depth derived from its radius: a large pipe bore can
+// be shallow or pass through a thin plate. Sampling its finite face also skips a wider entry
+// pocket and keeps metadata attached to the narrow cylindrical bore.
+fn parallel_tapped_wall(st: &ModelState, entry: Vec3, inward: Vec3, radius: f64) -> Option<Vec3> {
+    let tol = (radius * 1e-6).max(1e-6);
+    let mut best: Option<(f64, Vec3)> = None;
+    for body in &st.bodies {
+        let mesh = body.mesh();
+        for face in 0..body.body.face_count() {
+            let Some(c) = kernel::cylinder_face(&body.body, &mesh, face) else { continue };
+            let offset = entry - c.axis_point;
+            if !c.internal
+                || (c.radius - radius).abs() > tol
+                || c.axis.dot(inward).abs() < 1.0 - 1e-8
+                || (offset - c.axis * offset.dot(c.axis)).len() > tol
+            {
+                continue;
+            }
+            let a = (c.axis_point + c.axis * c.start - entry).dot(inward);
+            let b = (c.axis_point + c.axis * c.end - entry).dot(inward);
+            let lo = a.min(b).max(0.0);
+            let hi = a.max(b);
+            if hi > lo + 1e-9 && best.as_ref().is_none_or(|(old, _)| lo < *old) {
+                best = Some((lo, entry + inward * ((lo + hi) * 0.5) + inward.any_perp() * radius));
+            }
+        }
+    }
+    best.map(|(_, wall)| wall)
+}
+
 /// The cutting tools of a hole feature at every spot, each with its exact geometry when it is a
 /// straight cylinder (see [`hole_tools_and_prisms`]).
 fn hole_feature_tools(vals: &BTreeMap<String, Value>, st: &ModelState, f: &Feature) -> Result<Vec<(Traced, Option<more::PrimitivePrism>)>> {
@@ -5886,10 +5916,10 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
                 apply_beside_sheet_cut(st, f, tools, Operation::Cut, &[], &handled)?;
             }
             if let Some(d) = thread {
-                // A point on each hole's wall, a little below the entry.
+                // Find the bore beyond any entry recess, including shallow and through holes.
                 let r = val(vals, diameter, Kind::Length)? / 2.0;
                 for p in spots {
-                    let wall = p + dir.any_perp() * r + dir * (r * 0.5);
+                    let wall = parallel_tapped_wall(st, p, dir, r).unwrap_or(p + dir.any_perp() * r + dir * (r * 0.5));
                     let mut t = thread_on(st, f.id, wall, Some(d), None, false)?;
                     if let Some(depth) = thread_depth {
                         let available = t.end - t.start;
