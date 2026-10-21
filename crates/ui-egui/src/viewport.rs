@@ -45,6 +45,8 @@ pub enum NavMode {
 
 #[derive(Default)]
 pub struct ViewportState {
+    /// The arrow turning the view that is still down (`navigation::step_key_hold`).
+    pub(crate) key_hold: Option<crate::navigation::KeyHold>,
     /// A two-point drawing tool's first point was placed by a press (here) that became a drag:
     /// the release places the second (#1630), unless it lands within [`DRAW_DRAG_MIN`] of the
     /// press. Such a drag was a click that moved on the way (#2448): the release places the

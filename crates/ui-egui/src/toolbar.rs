@@ -1790,6 +1790,11 @@ pub const ESCAPE_TWICE_S: f64 = 0.4;
 
 /// Global keyboard shortcuts (when no text field has focus).
 pub fn shortcuts(app: &mut SolveApp, ctx: &egui::Context) {
+    if design_shown(app) {
+        crate::navigation::step_key_hold(app, ctx);
+    } else {
+        app.viewport.key_hold = None;
+    }
     if app.file_load.busy() {
         return;
     }
@@ -1803,8 +1808,11 @@ pub fn shortcuts(app: &mut SolveApp, ctx: &egui::Context) {
         return;
     }
     let (keys, mods) = ctx.input(|i| {
-        let keys: Vec<egui::Key> =
-            i.events.iter().filter_map(|e| if let egui::Event::Key { key, pressed: true, .. } = e { Some(*key) } else { None }).collect();
+        let keys: Vec<(egui::Key, bool)> = i
+            .events
+            .iter()
+            .filter_map(|e| if let egui::Event::Key { key, pressed: true, repeat, .. } = e { Some((*key, *repeat)) } else { None })
+            .collect();
         (keys, i.modifiers)
     });
     // Home hides the design: only New, Open and Preferences work there.
@@ -1814,13 +1822,13 @@ pub fn shortcuts(app: &mut SolveApp, ctx: &egui::Context) {
     } else {
         crate::edit_clipboard::flush(ctx);
     }
-    for k in keys {
+    for (k, repeat) in keys {
         use egui::Key;
         // Only Esc pressed twice in a row finishes a sketch: any other key in between resets it.
         if k != Key::Escape {
             app.last_escape = None;
         }
-        if shown && crate::navigation::view_key(app, ctx, k, mods) {
+        if shown && crate::navigation::view_key(app, ctx, k, mods, repeat) {
             continue;
         }
         if mods.command {

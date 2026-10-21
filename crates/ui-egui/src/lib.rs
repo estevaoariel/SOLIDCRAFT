@@ -506,6 +506,8 @@ pub struct SolveApp {
     applied_fonts_language: String,
     /// The interface font the fonts were last set up with (`Prefs::ui_font`).
     applied_ui_font: String,
+    /// The fonts installed include the system's fallback faces.
+    applied_system_fonts: bool,
 }
 
 impl SolveApp {
@@ -607,6 +609,7 @@ impl SolveApp {
             docs: documents::Documents::default(),
             applied_fonts_language: "en".into(),
             applied_ui_font: String::new(),
+            applied_system_fonts: false,
         }
     }
 
@@ -1504,10 +1507,18 @@ impl SolveApp {
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         expression_complete::begin_frame(ui.ctx());
         let t0 = now_ms();
-        if self.preferences.language != self.applied_fonts_language || self.preferences.ui_font != self.applied_ui_font {
+        // The first frames draw with the bundled faces while the system's CJK, Hangul and Thai
+        // faces are read on a thread; the fonts are installed again once they are there.
+        crate::fonts::load_system_fonts_in_background(ui.ctx());
+        let system_fonts = crate::fonts::system_fonts_ready();
+        if self.preferences.language != self.applied_fonts_language
+            || self.preferences.ui_font != self.applied_ui_font
+            || (system_fonts && !self.applied_system_fonts)
+        {
             self.applied_fonts_language.clone_from(&self.preferences.language);
             self.applied_ui_font.clone_from(&self.preferences.ui_font);
-            crate::fonts::setup_fonts_for(ui.ctx(), &self.preferences.language, &self.preferences.ui_font);
+            self.applied_system_fonts = system_fonts;
+            crate::fonts::setup_fonts_without_waiting(ui.ctx(), &self.preferences.language, &self.preferences.ui_font);
         }
         let _language = crate::i18n::scope(&self.preferences.language);
         let mut report_input = None;

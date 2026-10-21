@@ -627,8 +627,8 @@ impl Dialog {
                 Kind::Align { flip: false },
                 vec![
                     SelInput::new("Bodies", BODIES, true),
-                    SelInput::new("From", FACES | EDGES | selection::VERTICES, false),
-                    SelInput::new("To", FACES | EDGES | selection::VERTICES, false),
+                    SelInput::new("From", FACES | EDGES | selection::VERTICES | PLANES | selection::ORIGIN, false),
+                    SelInput::new("To", FACES | EDGES | selection::VERTICES | PLANES | selection::ORIGIN, false),
                 ],
             ),
             "solid.remove" => Dialog::new(Kind::Remove, vec![SelInput::new("Bodies", BODIES, true)]),
@@ -3445,8 +3445,12 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
                     }
                     (Some(Sel::Face { point, .. }), _) => p[format!("{key}_face")] = pt(*point),
                     (Some(Sel::Edge { point, .. }), _) => p[key] = json!({"snap": "edge_mid", "at": pt(*point)}),
+                    // The origin point (a vertex of no body) stays the origin.
+                    (Some(Sel::Vertex { body, .. }), _) if body.is_empty() => p[key] = json!("origin"),
                     (Some(Sel::Vertex { point, .. }), _) => p[key] = pt(*point),
-                    _ => return Err("pick faces, edges or vertices".into()),
+                    // A plane stays a plane, so the bodies follow it when it moves.
+                    (Some(Sel::Plane { name }), _) => p[format!("{key}_plane")] = json!(name),
+                    _ => return Err("pick faces, edges, vertices or planes".into()),
                 }
             }
             ("solid.align", p)
