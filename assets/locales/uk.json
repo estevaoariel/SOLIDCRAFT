@@ -1825,6 +1825,7 @@
   "ui.space_mouse_view_roll": "Крен",
   "ui.space_mouse_view_unmapped": "Вісь {n}",
   "ui.space_mouse_view_zoom": "Масштаб",
+  "ui.space_mouse_wiggle": "Якщо він підключений, трохи порухайте ним.",
   "ui.spacing": "Крок",
   "ui.spacing_2": "Крок 2",
   "ui.sphere": "Куля",

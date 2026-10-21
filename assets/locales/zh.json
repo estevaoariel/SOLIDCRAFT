@@ -1833,6 +1833,7 @@
   "ui.space_mouse_view_roll": "滚转",
   "ui.space_mouse_view_unmapped": "轴 {n}",
   "ui.space_mouse_view_zoom": "缩放",
+  "ui.space_mouse_wiggle": "如果已插上，请轻轻晃动一下。",
   "ui.spacing": "间距",
   "ui.spacing_2": "间距 2",
   "ui.sphere": "球体",

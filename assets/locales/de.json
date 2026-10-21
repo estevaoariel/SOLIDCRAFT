@@ -1825,6 +1825,7 @@
   "ui.space_mouse_view_roll": "Rollen",
   "ui.space_mouse_view_unmapped": "Achse {n}",
   "ui.space_mouse_view_zoom": "Zoom",
+  "ui.space_mouse_wiggle": "Falls eine angeschlossen ist, bewegen Sie sie kurz.",
   "ui.spacing": "Abstand",
   "ui.spacing_2": "Abstand 2",
   "ui.sphere": "Sphäre",

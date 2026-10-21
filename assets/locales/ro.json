@@ -1768,6 +1768,7 @@
   "ui.space_mouse_step_tilt_right": "Înclinați capacul spre dreapta (marginea dreaptă în jos), țineți-l, apoi eliberați-l.",
   "ui.space_mouse_step_twist_clockwise": "Răsuciți capacul în sensul acelor de ceasornic, țineți-l, apoi eliberați-l.",
   "ui.space_mouse_step_twist_counterclockwise": "Răsuciți capacul în sens invers acelor de ceasornic, țineți-l, apoi eliberați-l.",
+  "ui.space_mouse_wiggle": "Dacă ai unul conectat, mișcă-l puțin.",
   "ui.spacing": "Spațiere",
   "ui.spacing_2": "Spațierea 2",
   "ui.sphere": "Sferă",

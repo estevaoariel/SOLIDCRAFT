@@ -1648,7 +1648,11 @@ fn space_mouse_section(app: &mut SolveApp, ui: &mut egui::Ui) {
                 (Some(device), true) => format!("{} ({device})", app.tr("ui.space_mouse_calibrated")),
                 (Some(device), false) => format!("{} ({device})", app.tr("ui.space_mouse_not_calibrated")),
             };
-            ui_kit::text(ui, &status, ui_kit::Text::Report("calibration_status", false));
+            let status_line = ui_kit::text(ui, &status, ui_kit::Text::Report("calibration_status", false));
+            // Nothing confirmed yet (none found, or waiting for the first record): a hint to try.
+            if device.is_none() {
+                status_line.on_hover_text(app.tr("ui.space_mouse_wiggle"));
+            }
         });
 
         let enabled = app.preferences.space_mouse_enabled;
@@ -2397,6 +2401,19 @@ mod tests {
             let _ = form;
         }
         assert!(flips.is_empty(), "the row changed form when the section was unfolded or folded: {flips:?}");
+    }
+
+    /// The "wiggle it" hint exists in every catalog, and is what the status line carries when no
+    /// device is confirmed.
+    #[test]
+    fn the_wiggle_hint_has_text_and_is_used_by_the_device_line() {
+        assert_eq!(crate::i18n::tr("ui.space_mouse_wiggle"), "If you have one plugged in, wiggle it.");
+        for catalog in crate::i18n::LOCALES {
+            let text = crate::i18n::Locale::for_language(catalog.id).text("ui.space_mouse_wiggle");
+            assert!(!text.is_empty() && text != "ui.space_mouse_wiggle", "{}", catalog.id);
+        }
+        let source = include_str!("prefs.rs");
+        assert!(source.contains("status_line.on_hover_text(app.tr(\"ui.space_mouse_wiggle\"))"));
     }
 
     /// The first screen of the calibration (which kind of device) fits at the window's widths:

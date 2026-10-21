@@ -1833,6 +1833,7 @@
   "ui.space_mouse_view_roll": "ロール",
   "ui.space_mouse_view_unmapped": "軸 {n}",
   "ui.space_mouse_view_zoom": "ズーム",
+  "ui.space_mouse_wiggle": "接続している場合は、少し動かしてみてください。",
   "ui.spacing": "間隔",
   "ui.spacing_2": "間隔 2",
   "ui.sphere": "球",

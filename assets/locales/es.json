@@ -1825,6 +1825,7 @@
   "ui.space_mouse_view_roll": "Girar sobre la vista",
   "ui.space_mouse_view_unmapped": "Eje {n}",
   "ui.space_mouse_view_zoom": "Zoom",
+  "ui.space_mouse_wiggle": "Si tienes uno conectado, muévelo un poco.",
   "ui.spacing": "Espaciado",
   "ui.spacing_2": "Espaciado 2",
   "ui.sphere": "Esfera",

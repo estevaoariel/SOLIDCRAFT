@@ -1825,6 +1825,7 @@
   "ui.space_mouse_view_roll": "롤",
   "ui.space_mouse_view_unmapped": "축 {n}",
   "ui.space_mouse_view_zoom": "확대/축소",
+  "ui.space_mouse_wiggle": "연결되어 있다면 살짝 움직여 보세요.",
   "ui.spacing": "간격",
   "ui.spacing_2": "간격 2",
   "ui.sphere": "구",

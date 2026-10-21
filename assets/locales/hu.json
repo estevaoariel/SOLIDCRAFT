@@ -1768,6 +1768,7 @@
   "ui.space_mouse_step_tilt_right": "Billentse jobbra a kupakot (a jobb él lefelé), tartsa, majd engedje el.",
   "ui.space_mouse_step_twist_clockwise": "Csavarja el a kupakot az óramutató járásával megegyezően, tartsa, majd engedje el.",
   "ui.space_mouse_step_twist_counterclockwise": "Csavarja el a kupakot az óramutató járásával ellentétesen, tartsa, majd engedje el.",
+  "ui.space_mouse_wiggle": "Ha van csatlakoztatva egy, mozgassa meg egy kicsit.",
   "ui.spacing": "Térköz",
   "ui.spacing_2": "2. térköz",
   "ui.sphere": "Gömb",

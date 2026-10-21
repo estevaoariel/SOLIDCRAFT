@@ -1768,6 +1768,7 @@
   "ui.space_mouse_step_tilt_right": "向右傾斜搖桿帽（右緣向下），保持住，然後鬆開。",
   "ui.space_mouse_step_twist_clockwise": "順時針扭轉搖桿帽，保持住，然後鬆開。",
   "ui.space_mouse_step_twist_counterclockwise": "逆時針扭轉搖桿帽，保持住，然後鬆開。",
+  "ui.space_mouse_wiggle": "如果已插上，請輕輕晃動一下。",
   "ui.spacing": "間距",
   "ui.spacing_2": "間距 2",
   "ui.sphere": "球體",

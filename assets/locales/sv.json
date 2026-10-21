@@ -1768,6 +1768,7 @@
   "ui.space_mouse_step_tilt_right": "Luta knappen åt höger (högerkanten nedåt), håll den och släpp sedan.",
   "ui.space_mouse_step_twist_clockwise": "Vrid knappen medurs, håll den och släpp sedan.",
   "ui.space_mouse_step_twist_counterclockwise": "Vrid knappen moturs, håll den och släpp sedan.",
+  "ui.space_mouse_wiggle": "Om du har en ansluten, rör lite på den.",
   "ui.spacing": "Avstånd",
   "ui.spacing_2": "Avstånd 2",
   "ui.sphere": "Sfär",

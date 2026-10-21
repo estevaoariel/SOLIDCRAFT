@@ -1833,6 +1833,7 @@
   "ui.space_mouse_view_roll": "Roll",
   "ui.space_mouse_view_unmapped": "Axis {n}",
   "ui.space_mouse_view_zoom": "Zoom",
+  "ui.space_mouse_wiggle": "If you have one plugged in, wiggle it.",
   "ui.spacing": "Spacing",
   "ui.spacing_2": "Spacing 2",
   "ui.sphere": "Sphere",

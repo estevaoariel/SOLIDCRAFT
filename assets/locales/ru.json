@@ -1825,6 +1825,7 @@
   "ui.space_mouse_view_roll": "Крен",
   "ui.space_mouse_view_unmapped": "Ось {n}",
   "ui.space_mouse_view_zoom": "Масштаб",
+  "ui.space_mouse_wiggle": "Если он подключён, немного подвигайте его.",
   "ui.spacing": "Интервал",
   "ui.spacing_2": "Интервал 2",
   "ui.sphere": "Сфера",
