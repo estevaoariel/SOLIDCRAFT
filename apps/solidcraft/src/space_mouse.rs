@@ -222,11 +222,20 @@ struct Reading {
     held: bool,
     /// The buttons that are down: bit N for button N + 1, as the device (or spacenavd) numbers them.
     buttons: u32,
+    /// The buttons that went down since the UI last looked, even if they came up again before it
+    /// did: a quick tap between two frames is still a press.
+    taps: u32,
 }
 
 impl Reading {
+    /// The buttons that are down now; those that just went down are kept as taps until taken.
+    fn set_buttons(&mut self, buttons: u32) {
+        self.taps |= buttons & !self.buttons;
+        self.buttons = buttons;
+    }
+
     fn new(now: Instant) -> Self {
-        Self { device: None, axes: Axes::default(), at: [now; 6], held: false, buttons: 0 }
+        Self { device: None, axes: Axes::default(), at: [now; 6], held: false, buttons: 0, taps: 0 }
     }
 
     /// The axes at `now`. One with nothing fresh reads as `rest`: the device's own rest when it
@@ -290,7 +299,7 @@ fn decode_report(report: &[u8], layout: Layout, reading: &mut Reading, now: Inst
     }
     // A report that carries buttons says which are down, all up included.
     if let Some(buttons) = decoded.buttons {
-        reading.buttons = buttons;
+        reading.set_buttons(buttons);
     }
     true
 }
@@ -311,7 +320,7 @@ fn publish(ctx: &Context, shared: &Mutex<Reading>, layout: Layout, report: &[u8]
 #[cfg(target_os = "linux")]
 fn publish_held(ctx: &Context, shared: &Mutex<Reading>, axes: Axes) {
     if let Ok(mut reading) = shared.lock() {
-        *reading = Reading { device: reading.device, axes, held: true, buttons: reading.buttons, ..Reading::new(Instant::now()) };
+        *reading = Reading { device: reading.device, axes, held: true, buttons: reading.buttons, taps: reading.taps, ..Reading::new(Instant::now()) };
         ctx.request_repaint();
     }
 }
@@ -320,7 +329,8 @@ fn publish_held(ctx: &Context, shared: &Mutex<Reading>, axes: Axes) {
 #[cfg(target_os = "linux")]
 fn publish_button(ctx: &Context, shared: &Mutex<Reading>, button: u32, down: bool) {
     if let (Ok(mut reading), Some(bit)) = (shared.lock(), 1_u32.checked_shl(button)) {
-        reading.buttons = if down { reading.buttons | bit } else { reading.buttons & !bit };
+        let buttons = if down { reading.buttons | bit } else { reading.buttons & !bit };
+        reading.set_buttons(buttons);
         ctx.request_repaint();
     }
 }
@@ -584,7 +594,7 @@ fn start_driver_client(ctx: &Context, shared: &Arc<Mutex<Reading>>) {
             }
             Event::Buttons(buttons) => {
                 if let Ok(mut reading) = shared.lock() {
-                    reading.buttons = buttons;
+                    reading.set_buttons(buttons);
                     ctx.request_repaint();
                 }
             }
@@ -670,9 +680,13 @@ impl SpaceMouse {
         self.wheel.filter(moving, now.duration_since(self.started).as_secs_f64(), &mut raw.events);
     }
 
-    /// The buttons down on the device being read, one bit each (bit N for button N + 1).
-    pub fn buttons(&self) -> u32 {
-        self.shared.lock().map(|reading| reading.buttons).unwrap_or(0)
+    /// The device being read, the buttons down on it (bit N for button N + 1) and those that went
+    /// down since the last call, all from one look at the reading, so a button never gets a
+    /// device it did not come from.
+    pub fn buttons(&self) -> solidcraft_ui_egui::space_mouse::Buttons {
+        let Ok(mut reading) = self.shared.lock() else { return Default::default() };
+        let taps = std::mem::take(&mut reading.taps);
+        solidcraft_ui_egui::space_mouse::Buttons { device: reading.device.map(Source::key), down: reading.buttons, taps }
     }
 
     pub fn tick(&mut self, app: &mut SolveApp, ctx: &Context) {
@@ -922,6 +936,19 @@ mod tests {
             assert_eq!(held.current(now + HELD_SETTLE_AFTER - Duration::from_millis(1), Axes::default()), axes);
             assert_eq!(held.current(now + HELD_SETTLE_AFTER, Axes::default()), Axes::default());
         }
+    }
+
+    #[test]
+    fn a_tap_between_two_frames_is_still_a_press_and_ends_with_nothing_held() {
+        let mut reading = Reading::new(Instant::now());
+        // Down and up before the UI looks: the mask is back to zero, the press is not lost.
+        reading.set_buttons(0b100);
+        reading.set_buttons(0);
+        assert_eq!((reading.buttons, reading.taps), (0, 0b100));
+        // Holding, then more taps, accumulate until taken; held buttons are not new taps.
+        reading.set_buttons(0b001);
+        reading.set_buttons(0b001);
+        assert_eq!(reading.taps, 0b101);
     }
 
     #[test]

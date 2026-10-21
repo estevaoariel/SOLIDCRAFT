@@ -63,6 +63,8 @@ pub struct Input {
     pub keyboard: egui::Modifiers,
     /// The device `seen` is about, and the device and calibration `settle` is about.
     pub read_device: Option<String>,
+    /// The device `buttons` are of, as the reader said with them.
+    pub buttons_device: Option<String>,
     pub settled_for: Option<Calibration>,
     /// The device the calibration notice is up for and when it was shown or last pointed at
     /// (egui time), and the devices it went away from for this run ().
@@ -80,6 +82,16 @@ pub struct Input {
 pub struct DriversPresent {
     pub spacenavd: bool,
     pub direct: bool,
+}
+
+/// What the reader saw of the buttons, taken in one look: the device they came from, those down
+/// now (bit N for button N + 1) and those that went down since the last look, even when they
+/// came up again before it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Buttons {
+    pub device: Option<String>,
+    pub down: u32,
+    pub taps: u32,
 }
 
 /// A key a 3D mouse button can stand in for.
@@ -166,8 +178,16 @@ fn buttons_active(app: &SolveApp, ctx: &egui::Context, focused: bool) -> bool {
 /// frame's input: each button just pressed does its job, and those standing in for Shift, Ctrl or
 /// Alt hold them while down. Nothing runs where navigation wouldn't (`buttons_active`), so pressing
 /// a button in Preferences finds it in the list instead, and a press made then isn't run later.
-pub fn buttons_hook(app: &mut SolveApp, ctx: &egui::Context, buttons: u32, raw: &mut egui::RawInput) {
-    let pressed = buttons & !app.space_mouse.buttons;
+pub fn buttons_hook(app: &mut SolveApp, ctx: &egui::Context, seen: Buttons, raw: &mut egui::RawInput) {
+    // The device the buttons came from, not the one the last frame ended with: a switch of device
+    // (or a first one) starts the button history afresh, so a press on the new device runs its
+    // own mapping, and a button still down from the old one is not a press.
+    if app.space_mouse.buttons_device != seen.device {
+        app.space_mouse.buttons_device = seen.device.clone();
+        app.space_mouse.buttons = 0;
+    }
+    let buttons = seen.down;
+    let pressed = (buttons & !app.space_mouse.buttons) | seen.taps;
     app.space_mouse.buttons = buttons;
     app.space_mouse.seen |= buttons;
     // The keyboard's own modifiers, from what the window was told before anything is added to it.
@@ -187,18 +207,18 @@ pub fn buttons_hook(app: &mut SolveApp, ctx: &egui::Context, buttons: u32, raw: 
     }
     let keyboard = app.space_mouse.keyboard;
     let mut held = egui::Modifiers::NONE;
-    let device = app.space_mouse.device.clone().filter(|_| buttons_active(app, ctx, focused));
+    let device = seen.device.clone().filter(|_| buttons_active(app, ctx, focused));
     let jobs = device.map(|device| button_jobs(app, &device)).unwrap_or_default();
     let before = std::mem::replace(&mut app.space_mouse.held, egui::Modifiers::NONE);
     for (number, job) in jobs {
         let Some(bit) = number.checked_sub(1).and_then(|index| 1_u32.checked_shl(u32::from(index))) else { continue };
-        if buttons & bit == 0 {
+        if (buttons | seen.taps) & bit == 0 {
             continue;
         }
         match job {
-            ButtonJob::Key(ButtonKey::Shift) => held.shift = true,
-            ButtonJob::Key(ButtonKey::Alt) => held.alt = true,
-            ButtonJob::Key(ButtonKey::Ctrl) => {
+            ButtonJob::Key(ButtonKey::Shift) if buttons & bit != 0 => held.shift = true,
+            ButtonJob::Key(ButtonKey::Alt) if buttons & bit != 0 => held.alt = true,
+            ButtonJob::Key(ButtonKey::Ctrl) if buttons & bit != 0 => {
                 held.ctrl = true;
                 // Ctrl is the command key everywhere but on a Mac.
                 held.command |= !cfg!(target_os = "macos");
@@ -565,13 +585,22 @@ mod tests {
     /// One frame of the window: the hook sees the frame's input, then egui runs it, as the app does.
     fn press(app: &mut SolveApp, ctx: &egui::Context, buttons: u32, events: Vec<egui::Event>) -> egui::RawInput {
         let mut raw = egui::RawInput { focused: true, events, ..Default::default() };
-        buttons_hook(app, ctx, buttons, &mut raw);
+        let device = app.space_mouse.device.clone();
+        buttons_hook(app, ctx, Buttons { device, down: buttons, taps: 0 }, &mut raw);
         ctx.run_ui(raw.clone(), |_| {}).textures_delta.clear();
         raw
     }
 
     fn escapes(raw: &egui::RawInput) -> usize {
         raw.events.iter().filter(|e| matches!(e, egui::Event::Key { key: egui::Key::Escape, pressed: true, .. })).count()
+    }
+
+    /// One frame with the reader's own snapshot (`taps` included).
+    fn press_seen(app: &mut SolveApp, ctx: &egui::Context, seen: Buttons) -> egui::RawInput {
+        let mut raw = egui::RawInput { focused: true, ..Default::default() };
+        buttons_hook(app, ctx, seen, &mut raw);
+        ctx.run_ui(raw.clone(), |_| {}).textures_delta.clear();
+        raw
     }
 
     const ESC: u32 = 1 << 22;
@@ -609,6 +638,45 @@ mod tests {
 
     /// The keyboard and a button hold the same modifier: it stays down until both let go, whichever
     /// lets go first, for each of Shift, Ctrl and Alt.
+    #[test]
+    fn a_tap_between_two_frames_runs_its_job_once() {
+        let mut app = app();
+        app.space_mouse.device = Some("hid 046d:c62b".into());
+        let ctx = window(true);
+        // Down and up before the hook looked: nothing is held, the press is in `taps`.
+        let tap = Buttons { device: Some("hid 046d:c62b".into()), down: 0, taps: ESC };
+        assert_eq!(escapes(&press_seen(&mut app, &ctx, tap)), 1);
+        assert_eq!(app.space_mouse.buttons, 0);
+        let nothing = Buttons { device: Some("hid 046d:c62b".into()), down: 0, taps: 0 };
+        assert_eq!(escapes(&press_seen(&mut app, &ctx, nothing)), 0, "and not again");
+    }
+
+    #[test]
+    fn a_press_on_a_new_device_runs_that_devices_mapping_whatever_the_frame_before_had() {
+        let (a, b) = ("hid 046d:c62b", "hid 256f:c63a");
+        let device = |name: Option<&str>, down: u32| Buttons { device: name.map(Into::into), down, taps: 0 };
+        let setup = || {
+            let mut app = app();
+            app.preferences.space_mouse_buttons.insert(a.into(), [(1, ButtonJob::Key(ButtonKey::Shift))].into());
+            app.preferences.space_mouse_buttons.insert(b.into(), [(1, ButtonJob::Key(ButtonKey::Esc))].into());
+            (app, window(true))
+        };
+        // A -> B with button 1 down in both: A's Shift lets go and the press on B runs B's Esc once,
+        // though the app's own idea of the device (set by the tick, later) is still A.
+        let (mut app, ctx) = setup();
+        app.space_mouse.device = Some(a.into());
+        press_seen(&mut app, &ctx, device(Some(a), 1));
+        assert!(app.space_mouse.held.shift);
+        assert_eq!(escapes(&press_seen(&mut app, &ctx, device(Some(b), 1))), 1);
+        assert!(!app.space_mouse.held.shift, "A's hold does not carry over");
+        assert_eq!(escapes(&press_seen(&mut app, &ctx, device(Some(b), 1))), 0, "and holding is not pressing again");
+        // None -> B: the first press is not swallowed by there having been no device.
+        let (mut app, ctx) = setup();
+        app.space_mouse.device = None;
+        press_seen(&mut app, &ctx, device(None, 0));
+        assert_eq!(escapes(&press_seen(&mut app, &ctx, device(Some(b), 1))), 1);
+    }
+
     #[test]
     fn a_modifier_the_keyboard_and_a_button_share_stays_down_until_both_let_go() {
         for key in [ButtonKey::Shift, ButtonKey::Ctrl, ButtonKey::Alt] {
