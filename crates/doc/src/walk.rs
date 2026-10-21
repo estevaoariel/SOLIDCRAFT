@@ -443,6 +443,23 @@ impl Walk for AxisDef {
     construct_geometry!();
 }
 
+/// A feature's own reference to the model (a revolve's or circular pattern's axis on an edge or
+/// round face): walked like a construction axis's.
+impl Walk for GeoRef {
+    fn walk_exprs<'a>(&'a self, f: &mut dyn FnMut(ExprItem<'a>)) {
+        plane_exprs(vec![self], f)
+    }
+    fn walk_exprs_mut<'a>(&'a mut self, f: &mut dyn FnMut(ExprItemMut<'a>)) {
+        plane_exprs_mut(vec![self], f)
+    }
+    fn walk_geometry<'a>(&'a self, f: &mut dyn FnMut(GeoItem<'a>)) {
+        f(Geo::Construct(self))
+    }
+    fn walk_geometry_mut<'a>(&'a mut self, f: &mut dyn FnMut(GeoItemMut<'a>)) {
+        f(Geo::Construct(self))
+    }
+}
+
 impl Walk for PointDef {
     fn walk_exprs<'a>(&'a self, f: &mut dyn FnMut(ExprItem<'a>)) {
         match self {

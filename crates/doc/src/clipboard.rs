@@ -118,8 +118,12 @@ fn remap_plane(
         return Err(crate::DocError::Invalid("clone plane reference depth exceeded".into()));
     }
     match p {
-        PlaneRef::Offset { base, .. } | PlaneRef::AtAngle { base, .. } | PlaneRef::Flipped { base, .. } => {
-            remap_plane(base, ids, names, bodies, depth + 1)?
+        PlaneRef::Offset { base, .. } | PlaneRef::Flipped { base, .. } => remap_plane(base, ids, names, bodies, depth + 1)?,
+        PlaneRef::AtAngle { base, line, .. } => {
+            remap_plane(base, ids, names, bodies, depth + 1)?;
+            if let Some(g) = line {
+                remap_geo(g, ids, names, bodies, depth + 1)?;
+            }
         }
         PlaneRef::Construction { name } => mapped_name(&mut name.0, names),
         PlaneRef::Face { name, anchor, .. } => {
@@ -270,6 +274,9 @@ impl crate::Feature {
                     remap_geo(r, ids, names, bodies, 0)?;
                 }
             }
+            K::Revolve { axis: crate::AxisRef::Model { geo }, .. }
+            | K::SurfaceRevolve { axis: crate::AxisRef::Model { geo }, .. }
+            | K::Pattern { pattern: crate::PatternKind::Circular { axis_ref: Some(geo), .. }, .. } => remap_geo(geo, ids, names, bodies, 0)?,
             _ => {}
         }
         Ok(())
