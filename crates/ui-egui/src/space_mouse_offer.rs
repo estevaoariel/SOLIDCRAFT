@@ -28,9 +28,24 @@ pub fn expired(since: f64, now: f64) -> bool {
 
 /// Draws the offer as a small card in the bottom right of `free` (the part of the view the
 /// overlays leave, so above the History bar), and takes the room it uses off `free`. It is due
-/// when `should_offer` says so, the window has focus, no picker or load has the app, and neither
-/// Preferences nor the calibration window is open. It goes after `SHOW_SECONDS` unless the pointer
-/// is on it (then only for this run: it is offered again next time until closed or calibrated).
+/// when `should_offer` says so, the window has focus, no picker or load has the app, no issue
+/// report holds CAD input, and neither Preferences nor the calibration window is open. It goes
+/// after `SHOW_SECONDS` unless the pointer is on it (then only for this run: it is offered again
+/// next time until closed or calibrated).
+///
+/// Everything it reads and writes outside its own state, so a reviewer can check it:
+/// - Reads: the device key, saved calibrations, the offered set and the 3D mouse enable switch
+///   (`app.space_mouse.device`, `app.preferences`); `ctx.input` focus, time and pointer position;
+///   `file_picker_busy`, `file_load.busy`, `prefs_window.open`, `space_mouse.calibrating`,
+///   `issue_report::cad_input_blocked`; the free rect it is given.
+/// - Writes, only its own: `space_mouse.offer_since`, `space_mouse.offer_hidden`, the free rect's
+///   bottom edge; `space_mouse_offered` (preferences) when closed or calibrating; one repaint
+///   request every 500 ms while it is showing (none when hidden, expired, unfocused or blocked).
+/// - Calibrate alone opens Preferences at Navigation and starts the calibration window
+///   (`prefs::open_at`, `space_mouse_calibration::start`), exactly as Preferences does.
+/// - It never touches `ctx.memory`, focus, layer order, keyboard events, `prefs_window` when it
+///   isn't asked to, dialogs, tools, the selection or the document. Its Area (`frame::area`, so
+///   disabled behind an issue report) has its own id and is `Order::Foreground` over its own rect.
 pub fn toast(app: &mut SolveApp, ui: &egui::Ui, free: &mut egui::Rect) {
     let ctx = ui.ctx();
     let calibrated = app.space_mouse.device.as_ref().is_some_and(|device| app.preferences.space_mouse_calibrations.contains_key(device));
@@ -43,6 +58,7 @@ pub fn toast(app: &mut SolveApp, ui: &egui::Ui, free: &mut egui::Rect) {
     if !ctx.input(|i| i.focused)
         || app.file_picker_busy()
         || app.file_load.busy()
+        || crate::issue_report::cad_input_blocked()
         || app.prefs_window.open
         || app.space_mouse.calibrating.is_some()
         || !free.is_finite()
@@ -62,24 +78,19 @@ pub fn toast(app: &mut SolveApp, ui: &egui::Ui, free: &mut egui::Rect) {
     }
     let (mut calibrate, mut close) = (false, false);
     let width = (free.width() - 2.0 * t.space_8).clamp(120.0, 380.0);
-    let shown = egui::Area::new(egui::Id::new("sc_space_mouse_offer"))
+    let shown = crate::frame::area(egui::Id::new("sc_space_mouse_offer"))
         .order(egui::Order::Foreground)
         .pivot(egui::Align2::RIGHT_BOTTOM)
         .fixed_pos(free.right_bottom() - egui::vec2(t.space_8, t.space_8))
         .show(ctx, |ui| {
-            egui::Frame::NONE
-                .fill(t.dialog_body)
-                .stroke(egui::Stroke::new(1.0, t.dialog_rule))
-                .corner_radius(t.radius_lg)
-                .inner_margin(t.space_12)
-                .show(ui, |ui| {
-                    ui.set_width(width - 2.0 * t.space_12);
-                    ui_kit::text(ui, app.tr("ui.space_mouse_offer"), ui_kit::Text::Report("space_mouse_offer", false));
-                    ui.horizontal(|ui| {
-                        calibrate = ui_kit::button(ui, app.tr("ui.space_mouse_calibrate"), ui_kit::Button::Normal).clicked();
-                        close = ui_kit::button(ui, app.tr("ui.close"), ui_kit::Button::Normal).clicked();
-                    });
+            crate::frame::shell_card(t.dialog_body).inner_margin(t.space_12).show(ui, |ui| {
+                ui.set_width(width - 2.0 * t.space_12);
+                ui_kit::text(ui, app.tr("ui.space_mouse_offer"), ui_kit::Text::Report("space_mouse_offer", false));
+                ui.horizontal(|ui| {
+                    calibrate = ui_kit::button(ui, app.tr("ui.space_mouse_calibrate"), ui_kit::Button::Normal).clicked();
+                    close = ui_kit::button(ui, app.tr("ui.close"), ui_kit::Button::Normal).clicked();
                 });
+            });
         });
     let rect = shown.response.rect;
     // Pointing at it keeps it.
@@ -277,6 +288,61 @@ mod preferences_tests {
                     assert!(top.is_some_and(|l| l.id == egui::Id::new("sc_prefs")), "{device:?} frame {frame}: top is {top:?}");
                 }
             }
+        }
+    }
+
+    /// Behind an issue report (CAD input blocked) the offer is not drawn, so it cannot be clicked.
+    #[test]
+    fn the_offer_cannot_be_used_while_an_issue_report_blocks_input() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.home.open = false;
+        h.app.space_mouse.device = Some("hid 046d:c62b".into());
+        crate::issue_report::set_cad_input_blocked_for_test(true);
+        h.frames(6);
+        let hidden = h.app.space_mouse.offer_since.is_none() && crate::scenario::rect_of("toast:space_mouse_offer").is_none();
+        crate::issue_report::set_cad_input_blocked_for_test(false);
+        assert!(hidden, "not drawn while input is blocked");
+        assert!(h.app.space_mouse.calibrating.is_none() && h.app.preferences.space_mouse_offered.is_empty());
+        // And it is there again once the report is gone.
+        h.frames(4);
+        assert!(h.app.space_mouse.offer_since.is_some());
+    }
+
+    /// Showing, expiring and closing the offer changes nothing outside its own state: the open
+    /// dialog, tool, selection, undo history, Preferences and calibration are as they were.
+    #[test]
+    fn showing_expiring_and_closing_the_offer_touch_no_other_window() {
+        let state = |h: &crate::scenario::Harness| {
+            (
+                h.app.dialog.is_some(),
+                h.app.tool.is_some(),
+                h.app.session.selection.len(),
+                h.app.session.undo.len(),
+                h.app.prefs_window.open,
+                h.app.space_mouse.calibrating.is_some(),
+                h.app.keymap.open,
+                h.app.home.open,
+            )
+        };
+        for how in ["expire", "close"] {
+            let mut h = crate::scenario::Harness::new();
+            h.app.home.open = false;
+            h.app.run("solid.box", serde_json::json!({"length": 10, "width": 10, "height": 10})).unwrap();
+            h.app.start("solid.extrude");
+            h.frames(3);
+            let before = state(&h);
+            h.app.space_mouse.device = Some("hid 046d:c62b".into());
+            h.frames(4);
+            assert!(h.app.space_mouse.offer_since.is_some(), "{how}: the offer is up");
+            assert_eq!(state(&h), before, "{how}: showing it changes nothing else");
+            if how == "close" {
+                h.step(&serde_json::json!({"widget": "Close"})).unwrap();
+            } else if let Some((device, _)) = h.app.space_mouse.offer_since.take() {
+                h.app.space_mouse.offer_since = Some((device, -1000.0));
+            }
+            h.frames(4);
+            assert!(h.app.space_mouse.offer_since.is_none() || how == "expire");
+            assert_eq!(state(&h), before, "{how}: going away changes nothing else");
         }
     }
 }
