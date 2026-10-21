@@ -2229,6 +2229,35 @@ mod tests {
         }
     }
 
+    /// The first screen of the calibration (which kind of device) fits at the window's widths:
+    /// both pictures are inside it, side by side or one under the other.
+    #[test]
+    fn the_calibration_choose_screen_fits_at_every_width() {
+        for width in [300.0_f32, 360.0, 520.0, 900.0] {
+            let mut app = crate::SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
+            app.space_mouse.device = Some("hid 046d:c62b".into());
+            crate::space_mouse_calibration::start(&mut app);
+            let ctx = crate::fonts::test_context();
+            for _ in 0..6 {
+                crate::scenario::clear_handles();
+                let input = egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, 900.0))),
+                    focused: true,
+                    ..Default::default()
+                };
+                let mut output = ctx.run_ui(input, |ui| crate::space_mouse_calibration::show(&mut app, ui.ctx()));
+                output.textures_delta.clear();
+            }
+            let window = crate::scenario::rect_of("dialog:window").expect("the window is drawn");
+            let pictures = crate::scenario::rects("space_mouse:picture");
+            assert_eq!(pictures.len(), 2, "width {width}: both kinds are offered");
+            for (_, picture) in &pictures {
+                assert!(window.contains_rect(*picture), "width {width}: {picture:?} is outside {window:?}");
+            }
+            assert!(!pictures[0].1.intersects(pictures[1].1), "width {width}: the pictures overlap");
+        }
+    }
+
     /// The six readings in the calibration window are a clean grid whatever the values: each name
     /// and its number are in their own column, never wrap or overlap, each number is centred under
     /// its name, and the block is the same height for every value, so the window does not jitter.

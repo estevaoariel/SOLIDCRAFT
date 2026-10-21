@@ -196,7 +196,8 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         }
                     }
                     if stage == Stage::Choose {
-                        ui.horizontal(|ui| {
+                        // Side by side where they fit, one under the other where the window is narrow.
+                        ui.horizontal_wrapped(|ui| {
                             for (kind, label) in KINDS {
                                 ui.vertical(|ui| {
                                     crate::space_mouse_model::rest(ui, kind);

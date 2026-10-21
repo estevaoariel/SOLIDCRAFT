@@ -191,6 +191,7 @@ fn draw(ui: &egui::Ui, site: &str, rect: egui::Rect, kind: Kind, travel: [f32; 6
 /// A device of `kind`, still.
 pub(crate) fn rest(ui: &mut egui::Ui, kind: Kind) {
     let (rect, _) = ui.allocate_exact_size(SIZE, egui::Sense::hover());
+    crate::scenario::publish_rect("space_mouse:picture", rect);
     draw(ui, "rest", rect, kind, [0.0; 6], [false; 6]);
 }
 
