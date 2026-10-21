@@ -274,10 +274,10 @@ fn move_shortcut_uses_the_selected_nested_instance_and_pending_position() {
     let baseline = app.session.pending_moves[&child];
     app.run("select.set", json!({"items":[{"type":"occurrence","path":path}]})).unwrap();
     crate::keymap::bind(&mut app, "solid.move", "Shift+M", false).unwrap();
-    crate::keymap::press(&mut app, "M");
+    crate::keymap::press(&mut app, "M", false);
     assert!(app.tree.occurrence_move.is_none(), "the old shortcut was cleared");
     app.ui.tab = "INSPECT".into();
-    crate::keymap::press(&mut app, "Shift+M");
+    crate::keymap::press(&mut app, "Shift+M", false);
     assert_eq!(app.ui.tab, "MODEL", "starting component Move still selects the command's workspace tab");
     let movement = app.tree.occurrence_move.as_ref().expect("component Move opens from its rebound shortcut");
     assert_eq!(movement.occurrence, child);
@@ -295,13 +295,13 @@ fn move_shortcut_respects_grounding_and_keeps_body_selection_as_a_body_move() {
     app.run("solid.box", json!({"length":30,"width":20,"height":10})).unwrap();
     app.run("occurrence.ground", json!({"occurrence":occurrence,"grounded":true})).unwrap();
     app.run("select.set", json!({"items":[{"type":"occurrence","path":[occurrence]}]})).unwrap();
-    crate::keymap::press(&mut app, "M");
+    crate::keymap::press(&mut app, "M", false);
     assert!(app.tree.occurrence_move.is_none(), "a grounded component cannot move");
     assert!(app.dialog.is_none(), "do not fall back to moving the grounded component's bodies");
 
     app.run("occurrence.ground", json!({"occurrence":occurrence,"grounded":false})).unwrap();
     app.run("select.set", json!({"items":[{"type":"body","name":"Body1"}]})).unwrap();
-    crate::keymap::press(&mut app, "M");
+    crate::keymap::press(&mut app, "M", false);
     assert!(app.tree.occurrence_move.is_none(), "a body selection still edits geometry");
     let dialog = app.dialog.as_ref().expect("body Move opens");
     assert!(matches!(dialog.kind, crate::dialogs::Kind::Move { .. }));

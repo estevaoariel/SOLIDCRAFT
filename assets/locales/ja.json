@@ -1951,6 +1951,8 @@
   "ui.sent_to_slicer": "{slicer} に送信しました",
   "ui.sheet_gap": "ギャップ",
   "ui.shell": "シェル",
+  "ui.shortcut_cycles_modes": "ツールのショートカットをもう一度押すとモードを切り替える",
+  "ui.shortcut_cycles_modes_tip": "最初の点を置く前にスケッチツールのショートカットをもう一度押すと、作成モードを順に切り替えます。オフ: ツールを最初から始めます。",
   "ui.show": "表示",
   "ui.showAll": "すべて表示",
   "ui.showAllBodies": "すべてのボディを表示",

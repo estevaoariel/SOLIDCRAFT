@@ -1951,6 +1951,8 @@
   "ui.sent_to_slicer": "Sent to {slicer}",
   "ui.sheet_gap": "Gap",
   "ui.shell": "Shell",
+  "ui.shortcut_cycles_modes": "Pressing a tool's shortcut again switches its mode",
+  "ui.shortcut_cycles_modes_tip": "Before the first point, pressing a sketch tool's shortcut again steps through its creation modes. Off: it starts the tool again.",
   "ui.show": "Show",
   "ui.showAll": "Show All",
   "ui.showAllBodies": "Show All Bodies",

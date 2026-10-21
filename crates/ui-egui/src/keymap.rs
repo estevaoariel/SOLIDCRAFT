@@ -116,10 +116,10 @@ pub fn command_for(app: &SolveApp, key: &str) -> Option<&'static str> {
 /// starts in the new sketch.
 pub fn press(app: &mut SolveApp, key: &str, repeat: bool) {
     if let Some(id) = command_for(app, key) {
-        // Pressed again while a tool of the same family is out (#2459): before its first point,
-        // the family's next mode (wrapping round); once a point is placed, the tool keeps it. A
-        // held key's repeats change nothing.
-        if let Some((family, current, started)) = app.tool.as_ref().and_then(|t| {
+        // Pressed again while a tool of the same family is out, with Preferences › Sketch asking
+        // for it (#2459): before its first point, the family's next mode (wrapping round); once a
+        // point is placed, the tool keeps it. A held key's repeats change nothing.
+        if let Some((family, current, started)) = app.tool.as_ref().filter(|_| app.preferences.shortcut_cycles_modes).and_then(|t| {
             let f = crate::sketch_families::family(t.cmd).filter(|f| f.commands.contains(&id))?;
             Some((f, t.cmd, !t.pts.is_empty() || !t.picks.is_empty()))
         }) {

@@ -149,11 +149,27 @@ fn move_key_keeps_sketch_mode_behavior_and_honors_a_sketch_move_binding() {
     assert!(h.app.tree.occurrence_move.is_none(), "M must not open component Move while editing its sketch");
 }
 
-/// #2459: a tool's shortcut pressed again before the first point steps through its family's
-/// modes and wraps round; a held key's repeats and a shape already begun keep the tool.
+/// #2459: by default a tool's shortcut pressed again starts the tool again, in the mode the key
+/// is bound to; the preference is off.
+#[test]
+fn a_tools_shortcut_pressed_again_restarts_it_by_default() {
+    let mut h = Harness::new();
+    assert!(!h.app.preferences.shortcut_cycles_modes, "off by default");
+    h.app.run("sketch.create", json!({"plane": "XY"})).unwrap();
+    h.settle();
+    press(&mut h, "R");
+    assert_eq!(tool(&h), Some("sketch.rectangle.two_point"));
+    press(&mut h, "R");
+    assert_eq!(tool(&h), Some("sketch.rectangle.two_point"), "the same mode again");
+}
+
+/// #2459: with Preferences › Sketch asking for it, a tool's shortcut pressed again before the
+/// first point steps through its family's modes and wraps round; a held key's repeats and a shape
+/// already begun keep the tool.
 #[test]
 fn a_tools_shortcut_pressed_again_cycles_its_modes() {
     let mut h = Harness::new();
+    h.app.preferences.shortcut_cycles_modes = true;
     h.app.run("sketch.create", json!({"plane": "XY"})).unwrap();
     h.settle();
     press(&mut h, "R");
