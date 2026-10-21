@@ -242,18 +242,21 @@ impl Reading {
     /// is calibrated, so a device that rests off zero calibrates to no motion rather than drifting.
     #[cfg(test)]
     fn current(self, now: Instant, rest: Axes) -> Axes {
-        self.current_with(now, rest, true)
+        self.current_with(now, rest, Some(HELD_SETTLE_BAND))
     }
 
-    /// [`Reading::current`], with the held-reading settle off when `settles` is false: a trackball's
-    /// reading is a speed, and a steady slow roll is meant (`navigate_frame` leaves it alone too).
-    fn current_with(self, now: Instant, rest: Axes, settles: bool) -> Axes {
+    /// [`Reading::current`] with the held-reading settle's `band` (see [`settle_band`]); `None`
+    /// turns it off, as for a trackball, whose reading is a speed and a steady slow roll is meant.
+    ///
+    /// Reads only `self.at[0]` for the age: `publish_held`, the only producer of a held reading,
+    /// stamps all six axes together, so they are never apart.
+    fn current_with(self, now: Instant, rest: Axes, band: Option<u16>) -> Axes {
         let mut axes = self.axes;
         if self.held {
             let values = axes.translation.into_iter().chain(axes.rotation);
             let rests = rest.translation.into_iter().chain(rest.rotation);
-            let near_rest = values.zip(rests).all(|(value, rest)| value.abs_diff(rest) <= HELD_SETTLE_BAND);
-            if settles && near_rest && now.duration_since(self.at[0]) >= HELD_SETTLE_AFTER {
+            let near_rest = band.is_some_and(|band| values.zip(rests).all(|(value, rest)| value.abs_diff(rest) <= band));
+            if near_rest && now.duration_since(self.at[0]) >= HELD_SETTLE_AFTER {
                 return rest;
             }
         } else {
@@ -269,9 +272,19 @@ impl Reading {
 }
 
 /// The raw axes at the device's rest, which calibrate to no motion; 0 without a calibration.
-/// Whether a held reading may settle to rest: not for a trackball, whose reading is a speed.
-fn settles(calibration: Option<Calibration>) -> bool {
-    calibration.is_none_or(|calibration| calibration.kind != solidcraft_space_mouse::Kind::Trackball)
+/// How near rest (raw units) every axis of a held reading must be for it to settle, or `None` for a
+/// device whose steady reading is meant (a trackball). Without a calibration it is
+/// `HELD_SETTLE_BAND`; with one it shrinks in step with the device's shortest calibrated travel (the
+/// band is for a travel of 350), so a cap whose full push is 50 units does not lose a held full push.
+fn settle_band(calibration: Option<Calibration>) -> Option<u16> {
+    let Some(calibration) = calibration else { return Some(HELD_SETTLE_BAND) };
+    if calibration.kind == solidcraft_space_mouse::Kind::Trackball {
+        return None;
+    }
+    let travel =
+        calibration.axes.iter().filter(|axis| axis.source != solidcraft_space_mouse::NO_SOURCE).flat_map(|axis| axis.full).min().unwrap_or(350);
+    let band = u32::from(HELD_SETTLE_BAND) * u32::from(travel) / 350;
+    Some(u16::try_from(band).unwrap_or(HELD_SETTLE_BAND).min(HELD_SETTLE_BAND))
 }
 
 fn at_rest(calibration: Option<Calibration>) -> Axes {
@@ -692,7 +705,7 @@ impl SpaceMouse {
             .map(|reading| {
                 // Only the calibration of the device being read: another's would misjudge it.
                 let calibration = self.calibration.filter(|(source, _)| Some(*source) == reading.device).map(|(_, calibration)| calibration);
-                calibrated(reading.current_with(now, at_rest(calibration), settles(calibration)), calibration).moving()
+                calibrated(reading.current_with(now, at_rest(calibration), settle_band(calibration)), calibration).moving()
             })
             .unwrap_or(false);
         self.wheel.filter(moving, now.duration_since(self.started).as_secs_f64(), &mut raw.events);
@@ -737,7 +750,7 @@ impl SpaceMouse {
         // calibration of another device doesn't count; it ends in `navigate_frame`.
         let calibrating = app.space_mouse.calibrating.as_ref().is_some_and(|(device, _)| app.space_mouse.device.as_ref() == Some(device));
         let rest = if calibrating { Axes::default() } else { at_rest(calibration) };
-        navigate_frame(app, ctx, self.driver_mapping, reading.current_with(now, rest, settles(calibration)), seconds);
+        navigate_frame(app, ctx, self.driver_mapping, reading.current_with(now, rest, settle_band(calibration)), seconds);
     }
 }
 
@@ -976,6 +989,25 @@ mod tests {
     }
 
     #[test]
+    fn the_held_settle_band_follows_the_calibrated_travel() {
+        let axis = |source, full: [u16; 2]| solidcraft_space_mouse::AxisCalibration { source, reversed: false, rest: 0, dead_zone: 0, full };
+        let calibration =
+            |full| Calibration { dead_zone_share: 0.0, kind: Default::default(), axes: std::array::from_fn(|source| axis(source, [full; 2])) };
+        assert_eq!(settle_band(None), Some(HELD_SETTLE_BAND));
+        assert_eq!(settle_band(Some(calibration(350))), Some(HELD_SETTLE_BAND));
+        assert_eq!(settle_band(Some(calibration(3500))), Some(HELD_SETTLE_BAND));
+        assert_eq!(settle_band(Some(calibration(50))), Some(21));
+        // A sustained full push on a cap whose full travel is 50 stays a full push.
+        let now = Instant::now();
+        let push = Axes { translation: [50, 0, 0], rotation: [0; 3] };
+        let held = Reading { axes: push, held: true, ..Reading::new(now) };
+        let later = now + HELD_SETTLE_AFTER * 4;
+        assert_eq!(held.current_with(later, Axes::default(), settle_band(Some(calibration(50)))), push);
+        // While the same reading on an ordinary cap (full 350) is a leftover and settles.
+        assert_eq!(held.current_with(later, Axes::default(), settle_band(Some(calibration(350)))), Axes::default());
+    }
+
+    #[test]
     fn a_tap_between_two_frames_is_still_a_press_and_ends_with_nothing_held() {
         let mut reading = Reading::new(Instant::now());
         // Down and up before the UI looks: the mask is back to zero, the press is not lost.
@@ -1003,7 +1035,7 @@ mod tests {
             (Some(calibration(solidcraft_space_mouse::Kind::ReturnToCenter)), true),
             (Some(calibration(solidcraft_space_mouse::Kind::Trackball)), false),
         ] {
-            let read = held.current_with(later, Axes::default(), settles(calibration));
+            let read = held.current_with(later, Axes::default(), settle_band(calibration));
             assert_eq!(read == Axes::default(), settles_to_rest, "{calibration:?}");
         }
     }
