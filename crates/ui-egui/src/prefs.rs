@@ -1716,9 +1716,7 @@ fn space_mouse_section(app: &mut SolveApp, ui: &mut egui::Ui) {
                 let (boat, motion, reverse) = (&mut app.space_mouse.boat, app.space_mouse.motion, app.preferences.zoom_reverse);
                 // Under each circle's axes, what the view does with them: the rows' own labels.
                 let source = app.preferences.space_mouse_axis_source;
-                let stories: [String; 6] = std::array::from_fn(|motion| {
-                    source.iter().position(|&s| s == motion).and_then(|row| rows.get(row)).map(|(text, _)| text.clone()).unwrap_or_default()
-                });
+                let stories = crate::space_mouse::stories(&app.preferences.language, mapping, source);
                 let help = crate::i18n::tr("ui.space_mouse_circles_help").to_string();
                 let pads = |ui: &mut egui::Ui| {
                     crate::space_mouse_calibration::dead_zone_pads(ui, calibration, raw, false, &stories);
@@ -2667,6 +2665,41 @@ mod tests {
         assert!(section_is_at_defaults(&next.app), "the defaults are what was saved");
         assert_eq!(next.app.preferences.space_mouse_calibrations, calibrations, "and the calibration with them");
         assert!(!next.app.space_mouse.restore_pending);
+    }
+
+    /// The circles' tooltips come from the one function the rows' labels come from, after a
+    /// reassignment, for both kinds of driver mapping (and none), and an inverted axis reads the same.
+    #[test]
+    fn the_circles_tooltips_say_what_the_rows_say_after_a_reassignment() {
+        use crate::space_mouse::{DriverMapping, SAME_AXES, reassign, row_label, stories};
+        let shares = [[0.1_f32, 0.2]; 6];
+        let mut inverted = DriverMapping::object_mode();
+        for rule in &mut inverted.axes {
+            rule.reversed = !rule.reversed;
+        }
+        let mappings = [Some(DriverMapping::default()), Some(DriverMapping::object_mode()), Some(inverted), None];
+        for mapping in mappings {
+            let mut source = SAME_AXES;
+            reassign(&mut source, 2, 1);
+            let said = stories("en", mapping, source);
+            let say = |row: usize| crate::i18n::Locale::for_language("en").format(row_label(mapping, row), &[("n", &(row + 1).to_string())]);
+            // Motion 1 is read by row 2 now, motion 2 by row 1; the others by their own rows.
+            assert_eq!(said[1], say(2), "{mapping:?}");
+            assert_eq!(said[2], say(1), "{mapping:?}");
+            assert_eq!(said[0], say(0));
+            let tip = crate::space_mouse_calibration::pad_tooltip(&shares, (0, 1), &said);
+            assert_eq!(tip, format!("X −10 % +20 % → {}\nY −10 % +20 % → {}", say(0), say(2)), "{mapping:?}");
+            // Invert is not in the story: the same words with every axis inverted.
+            let mut flipped = mapping;
+            if let Some(mapping) = flipped.as_mut() {
+                mapping.axes.iter_mut().for_each(|rule| rule.reversed = !rule.reversed);
+            }
+            assert_eq!(stories("en", flipped, source), said);
+        }
+        // A motion nobody reads says nothing, so no arrow.
+        let none = stories("en", Some(DriverMapping::default()), [0, 0, 0, 0, 0, 0]);
+        assert!(none[3].is_empty());
+        assert_eq!(crate::space_mouse_calibration::pad_tooltip(&shares, (3, 4), &none), "Rx −10 % +20 %\nRy −10 % +20 %");
     }
 
     /// The circles say what the view does with their axes in the rows' own words, and keep saying it

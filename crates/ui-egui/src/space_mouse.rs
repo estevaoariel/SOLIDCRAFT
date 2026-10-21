@@ -454,6 +454,19 @@ pub fn motion_story(mapping: Option<DriverMapping>, source: [usize; 6], motion: 
     source.iter().position(|&s| s == motion).map(|row| row_label(mapping, row))
 }
 
+/// What the circles' tooltips say each calibrated motion does, in `language`: `motion_story`, worded
+/// as the rows are (a motion nothing reads says nothing). It names the view axis the motion drives,
+/// not a direction, so an inverted axis reads the same; the page says the circles are before invert.
+pub(crate) fn stories(language: &str, mapping: Option<DriverMapping>, source: [usize; 6]) -> [String; 6] {
+    std::array::from_fn(|motion| {
+        let row = source.iter().position(|&s| s == motion);
+        motion_story(mapping, source, motion)
+            .zip(row)
+            .map(|(label, row)| crate::i18n::Locale::for_language(language).format(label, &[("n", &(row + 1).to_string())]))
+            .unwrap_or_default()
+    })
+}
+
 /// Which of the cap's motions drives each of its axes (`Prefs::space_mouse_axis_source`): row
 /// `r` reads motion `source[r]`. Each motion drives exactly one row.
 pub const SAME_AXES: [usize; 6] = [0, 1, 2, 3, 4, 5];

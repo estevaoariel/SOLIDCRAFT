@@ -53,6 +53,17 @@ pub(crate) fn dead_zone_slider(ui: &mut egui::Ui, share: &mut f32) -> egui::Resp
     )
 }
 
+/// The tooltip of the circle for axes `(h, v)`: each axis's dead zone on its two sides and, where the
+/// page says (not in the calibration window), the view axis it drives.
+pub(crate) fn pad_tooltip(shares: &[[f32; 2]; 6], (h, v): (usize, usize), stories: &[String; 6]) -> String {
+    const NAMES: [&str; 6] = ["X", "Y", "Z", "Rx", "Ry", "Rz"];
+    let line = |axis: usize| {
+        let percent = format!("{} −{:.0} % +{:.0} %", NAMES[axis], shares[axis][0] * 100.0, shares[axis][1] * 100.0);
+        if stories[axis].is_empty() { percent } else { format!("{percent} → {}", stories[axis]) }
+    };
+    format!("{}\n{}", line(h), line(v))
+}
+
 /// The calibration's dead zones the way a game controller tester shows a stick: per pair of axes,
 /// a circle for the full travel, the dead zone shaded inside it (each direction its own size), and
 /// a dot where the cap is now, before the dead zone, so it's plain when the view starts to move.
@@ -101,10 +112,7 @@ pub(crate) fn dead_zone_pads(ui: &mut egui::Ui, calibration: &Calibration, raw: 
                 let dot = if dot.length() > 1.0 { dot.normalized() } else { dot };
                 let live = moving[h] != 0 || moving[v] != 0;
                 painter.circle_filled(centre + dot * radius, 3.5, if live { visuals.selection.stroke.color } else { faint });
-                let percent = |axis: usize| format!("{} −{:.0} % +{:.0} %", NAMES[axis], shares[axis][0] * 100.0, shares[axis][1] * 100.0);
-                // What the view does with each axis, where the page says (not in the calibration window).
-                let story = |axis: usize| if stories[axis].is_empty() { String::new() } else { format!(" → {}", stories[axis]) };
-                response.on_hover_text(format!("{}{}\n{}{}", percent(h), story(h), percent(v), story(v)));
+                response.on_hover_text(pad_tooltip(&shares, (h, v), stories));
                 // As wide as the circle, so the labels don't push the circles apart.
                 ui.allocate_ui(egui::vec2(SIZE, 0.0), |ui| {
                     crate::ui_kit::text(ui, &format!("{} · {}", NAMES[h], NAMES[v]), crate::ui_kit::Text::Note("space_mouse_pad"));
