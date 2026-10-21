@@ -507,6 +507,9 @@ fn choose(wanted: SpaceMouseDriver, spacenavd: bool, direct: bool) -> Option<Pic
     [first, other].into_iter().find(|&pick| there(pick))
 }
 
+/// A change of driver is only looked at when a read goes idle (every 250 ms of quiet), so a device
+/// that streams without a pause takes the new choice when it next pauses; a held cap goes quiet at
+/// once, a moving one at its next pause, so the wait is bounded by the motion.
 /// Reads the 3D mouse through spacenavd or `/dev/hidrawN`, as `Drivers::choice` says (Automatic
 /// is spacenavd when it runs, so what `spnavcfg` sets, swapped and inverted axes, sensitivity,
 /// dead zones, applies here as in other programs). Both reads wake up when idle to see whether

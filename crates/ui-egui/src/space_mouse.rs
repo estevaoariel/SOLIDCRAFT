@@ -260,6 +260,8 @@ pub fn buttons_hook(app: &mut SolveApp, ctx: &egui::Context, seen: Buttons, raw:
     }
 }
 
+// `modifiers` are the keyboard's own; the Esc event pushed here still gets the modifiers other buttons hold
+// down, because `buttons_hook` adds them to every key event of the frame after all the jobs have run.
 fn run_button_job(app: &mut SolveApp, job: &ButtonJob, modifiers: egui::Modifiers, raw: &mut egui::RawInput) {
     match job {
         // Navigation, where the 3D mouse's section is.
@@ -668,6 +670,22 @@ mod tests {
         press(&mut app, &ctx, 0, vec![]);
         press(&mut app, &ctx, 0b1111, vec![]);
         assert!(app.prefs_window.open);
+    }
+
+    #[test]
+    fn an_esc_button_pressed_while_a_shift_button_is_held_goes_out_shifted() {
+        let device = "hid 046d:c62b";
+        let mut app = app();
+        app.space_mouse.device = Some(device.into());
+        app.preferences
+            .space_mouse_buttons
+            .insert(device.into(), [(1, ButtonJob::Key(ButtonKey::Shift)), (2, ButtonJob::Key(ButtonKey::Esc))].into());
+        let ctx = window(true);
+        press(&mut app, &ctx, 0b01, vec![]);
+        let raw = press(&mut app, &ctx, 0b11, vec![]);
+        let shifted =
+            raw.events.iter().any(|e| matches!(e, egui::Event::Key { key: egui::Key::Escape, pressed: true, modifiers, .. } if modifiers.shift));
+        assert!(shifted, "{:?}", raw.events);
     }
 
     #[test]
