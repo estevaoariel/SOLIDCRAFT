@@ -519,7 +519,6 @@ fn choose(wanted: SpaceMouseDriver, spacenavd: bool, direct: bool) -> Option<Pic
 /// tag, which a rule for the 3D mouse has to add.
 #[cfg(target_os = "linux")]
 fn reader(ctx: Context, shared: Arc<Mutex<Reading>>, drivers: Arc<Drivers>) {
-    use std::os::unix::fs::OpenOptionsExt;
     let look = || DriversPresent { spacenavd: spacenavd::exists(), direct: hidraw::find().is_some() };
     let mut denied = None;
     // When the direct device last failed to open, so a device that is there but unreadable does not
@@ -574,8 +573,7 @@ fn reader(ctx: Context, shared: Arc<Mutex<Reading>>, drivers: Arc<Drivers>) {
                 );
                 reset(&ctx, &shared);
             }
-            (Some(Pick::Direct), _, Some(device)) => match std::fs::OpenOptions::new().read(true).custom_flags(hidraw::O_NONBLOCK).open(&device.path)
-            {
+            (Some(Pick::Direct), _, Some(device)) => match hidraw::open(&device.path) {
                 Ok(file) => {
                     denied = None;
                     log::info!("3D mouse: reading {}", device.path.display());
