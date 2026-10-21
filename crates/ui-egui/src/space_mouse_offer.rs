@@ -45,6 +45,16 @@ pub enum Action {
 }
 
 impl Action {
+    /// What the button is for, which sets its look and place on the toast.
+    pub(crate) fn kind(self) -> crate::viewport::ToastKind {
+        use crate::viewport::ToastKind;
+        match self {
+            Self::Calibrate => ToastKind::Primary,
+            Self::Swap => ToastKind::Secondary,
+            Self::Close | Self::Never => ToastKind::Dismiss,
+        }
+    }
+
     /// The button's text, as a message id.
     pub fn label(self) -> &'static str {
         match self {
@@ -114,10 +124,11 @@ pub fn due(app: &mut SolveApp, ctx: &egui::Context) -> Option<Offer> {
         app.space_mouse.offer_hidden.insert(device);
         return None;
     }
-    let mut actions = vec![Action::Calibrate, Action::Close, Action::Never];
+    let mut actions = vec![Action::Calibrate];
     if swap_offered(&device, app.space_mouse.drivers) {
         actions.push(Action::Swap);
     }
+    actions.extend([Action::Close, Action::Never]);
     Some(Offer { device, actions })
 }
 

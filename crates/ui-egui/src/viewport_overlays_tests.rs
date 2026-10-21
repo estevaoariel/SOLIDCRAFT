@@ -386,7 +386,12 @@ fn the_shared_toast_draws_old_callers_exactly_as_before() {
 /// holds CAD input.
 #[test]
 fn toast_buttons_wrap_inside_the_card_and_are_dead_behind_an_issue_report() {
-    let labels = ["Calibrate…", "Close", "Never show again", "Swap to Hidraw (Direct Driver)"];
+    let labels = [
+        ("Calibrate…", ToastKind::Primary),
+        ("Swap to Hidraw (Direct Driver)", ToastKind::Secondary),
+        ("Close", ToastKind::Dismiss),
+        ("Never show again", ToastKind::Dismiss),
+    ];
     for width in [260.0_f32, 360.0, 600.0, 1000.0] {
         for blocked in [false, true] {
             crate::issue_report::set_cad_input_blocked_for_test(blocked);
@@ -432,6 +437,45 @@ fn toast_buttons_wrap_inside_the_card_and_are_dead_behind_an_issue_report() {
                 hits.sort_unstable();
                 hits.dedup();
                 assert_eq!(hits, [0, 1, 2, 3], "width {width}: every button can be clicked inside the card");
+            }
+        }
+    }
+}
+
+/// The toast's buttons group by purpose and wrap as whole groups: the main action first, then the
+/// alternative, then the dismissals; no button stands alone on a row while its group-mate fits.
+#[test]
+fn toast_buttons_group_by_purpose_and_wrap_as_groups() {
+    use ToastKind::{Dismiss, Primary, Secondary};
+    let four = [(110.0, Primary), (220.0, Secondary), (60.0, Dismiss), (140.0, Dismiss)];
+    let three = [(110.0, Primary), (60.0, Dismiss), (140.0, Dismiss)];
+    for card in [260.0_f32, 360.0, 460.0, 560.0, 700.0, 1000.0] {
+        let row_width = (card - 40.0).min(440.0);
+        for buttons in [&four[..], &three[..]] {
+            let spots = toast_action_spots(buttons, row_width, 8.0, 28.0);
+            let widest = buttons.iter().map(|b| b.0).fold(0.0, f32::max);
+            // Nothing leaves the row (a button wider than the row is cut to it by the painter), and none overlaps.
+            for (i, spot) in spots.iter().enumerate() {
+                assert!(spot.left() >= 0.0 && spot.right() <= row_width.max(widest) + 0.01, "card {card}: {spot:?}");
+                for other in &spots[i + 1..] {
+                    assert!(!spot.intersects(*other), "card {card}: {spot:?} overlaps {other:?}");
+                }
+            }
+            // The primary is first: top left, and no button is above it or left of it on its row.
+            assert!(spots.iter().all(|s| s.top() > spots[0].top() || s.left() >= spots[0].left()), "card {card}: primary first");
+            let mut rows: std::collections::BTreeMap<i32, usize> = Default::default();
+            for spot in &spots {
+                *rows.entry(spot.top() as i32).or_default() += 1;
+            }
+            // Whole groups fit the row: then no row has a button on its own, except the primary of the
+            // three-button set (its group is only itself).
+            let group_fits = if buttons.len() == 4 { 110.0 + 8.0 + 220.0 <= row_width } else { 140.0 + 8.0 + 60.0 <= row_width };
+            if group_fits {
+                let singles = rows.values().filter(|&&n| n == 1).count();
+                assert!(singles <= usize::from(buttons.len() == 3), "card {card}, {} buttons: a button is left alone: {rows:?}", buttons.len());
+            }
+            if row_width >= 110.0 + 8.0 + 220.0 + 8.0 + 60.0 + 8.0 + 140.0 {
+                assert_eq!(rows.len(), 1, "card {card}: one row when everything fits");
             }
         }
     }

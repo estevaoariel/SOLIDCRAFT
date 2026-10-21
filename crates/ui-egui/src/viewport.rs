@@ -3083,7 +3083,7 @@ fn transient_messages(app: &mut SolveApp, ui: &egui::Ui, viewport: Rect) -> Vec<
     // The 3D mouse calibration offer: text and actions from its module, drawn by the shared toast.
     if let Some(offer) = crate::space_mouse_offer::due(app, ui.ctx()) {
         let labels: Vec<String> = offer.actions.iter().map(|action| crate::i18n::tr(action.label()).to_string()).collect();
-        let labels: Vec<&str> = labels.iter().map(String::as_str).collect();
+        let labels: Vec<(&str, ToastKind)> = labels.iter().map(String::as_str).zip(offer.actions.iter().map(|action| action.kind())).collect();
         if let Some((r, clicked)) = paint_toast_with(ui, free, crate::i18n::tr("ui.space_mouse_offer").to_string(), ToastLead::Dot(false), &labels) {
             crate::scenario::publish_rect("toast:space_mouse_offer", r);
             free.max.y = r.top() - t.space_8;
@@ -3127,6 +3127,46 @@ fn transient_messages(app: &mut SolveApp, ui: &egui::Ui, viewport: Rect) -> Vec<
     shown
 }
 
+/// What a toast's button is for, which sets its look and where it goes: the main action first
+/// (the accent button), then an alternative, then the quiet dismissals.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ToastKind {
+    Primary,
+    Secondary,
+    Dismiss,
+}
+
+/// Where each button of a toast goes, relative to the row's top left: `buttons` are (width, kind) in
+/// the order given; the primary and the alternative form one group and the dismissals another.
+/// Groups go side by side while they fit in `row_width` and wrap as a whole, so a button is not
+/// left alone on a row while its group-mate fits beside it; a group wider than the row wraps
+/// button by button.
+fn toast_action_spots(buttons: &[(f32, ToastKind)], row_width: f32, gap: f32, height: f32) -> Vec<Rect> {
+    let mut spots = vec![Rect::NOTHING; buttons.len()];
+    let groups: [Vec<usize>; 2] = [
+        (0..buttons.len()).filter(|&i| buttons[i].1 != ToastKind::Dismiss).collect(),
+        (0..buttons.len()).filter(|&i| buttons[i].1 == ToastKind::Dismiss).collect(),
+    ];
+    let (mut x, mut y) = (0.0_f32, 0.0_f32);
+    for group in groups.iter().filter(|g| !g.is_empty()) {
+        let whole: f32 = group.iter().map(|&i| buttons[i].0).sum::<f32>() + gap * (group.len() - 1) as f32;
+        if x > 0.0 && x + whole > row_width {
+            (x, y) = (0.0, y + height + gap);
+        }
+        for &i in group {
+            let width = buttons[i].0;
+            // Only a group wider than a whole row wraps inside itself.
+            if x > 0.0 && x + width > row_width.max(width) && whole > row_width {
+                (x, y) = (0.0, y + height + gap);
+            }
+            spots[i] = Rect::from_min_size(pos2(x, y), vec2(width, height));
+            x += width + gap;
+        }
+        x += gap;
+    }
+    spots
+}
+
 /// What leads a toast's text: a dot (red for an error) or a spinner.
 #[derive(Clone, Copy)]
 enum ToastLead {
@@ -3144,29 +3184,28 @@ fn paint_toast(ui: &egui::Ui, free: Rect, text: String, error: bool, computing: 
 /// card's rect and which button was clicked, if any. With no actions the card is exactly the status
 /// and computing toast it always was. The buttons are not live while an issue report holds CAD
 /// input; none is laid outside the card, whose width is bounded by `free`.
-fn paint_toast_with(ui: &egui::Ui, free: Rect, text: String, lead: ToastLead, actions: &[&str]) -> Option<(Rect, Option<usize>)> {
+fn paint_toast_with(ui: &egui::Ui, free: Rect, text: String, lead: ToastLead, actions: &[(&str, ToastKind)]) -> Option<(Rect, Option<usize>)> {
     if !free.is_finite() || !free.is_positive() || free.width() <= 40.0 {
         return None;
     }
     let t = Tokens::get();
     let painter = ui.painter().with_clip_rect(free);
     let galley = painter.layout(text, crate::fonts::medium(t.font_label), t.text, (free.width() - 40.0).min(440.0));
-    // The buttons' row: each as wide as its text and a margin, wrapped to the text's width.
-    let row_width = (galley.size().x).max(0.0);
-    let mut spots = Vec::new();
-    let (mut x, mut y, mut widest) = (0.0_f32, 0.0_f32, 0.0_f32);
+    // The buttons: each as wide as its text and a margin, in rows no wider than the text may be.
     let gap = t.space_8;
     let button_height = crate::ui_kit::row_height();
-    for label in actions {
-        let width = painter.layout_no_wrap((*label).to_string(), crate::fonts::medium(t.font_label), t.text).size().x + 2.0 * t.space_12;
-        let width = width.min((free.width() - 40.0).max(0.0));
-        if x > 0.0 && x + width > row_width.max(width) {
-            (x, y) = (0.0, y + button_height + gap);
-        }
-        spots.push(egui::Rect::from_min_size(pos2(x, y), vec2(width, button_height)));
-        x += width + gap;
-        widest = widest.max(x - gap);
-    }
+    let row_width = (free.width() - 40.0).clamp(0.0, 440.0);
+    let sizes: Vec<(f32, ToastKind)> = actions
+        .iter()
+        .map(|(label, kind)| {
+            let padding = if *kind == ToastKind::Primary { t.space_16 } else { t.space_12 };
+            let width = painter.layout_no_wrap((*label).to_string(), crate::fonts::medium(t.font_label), t.text).size().x + 2.0 * padding;
+            (width.min(row_width), *kind)
+        })
+        .collect();
+    let spots = toast_action_spots(&sizes, row_width, gap, button_height);
+    let widest = spots.iter().map(|spot| spot.right()).fold(0.0, f32::max);
+    let y = spots.iter().map(|spot| spot.top()).fold(0.0, f32::max);
     let actions_height = if spots.is_empty() { 0.0 } else { y + button_height + gap };
     let content = vec2(galley.size().x.max(widest), galley.size().y + actions_height);
     let size = content + vec2(40.0, 16.0);
@@ -3188,7 +3227,7 @@ fn paint_toast_with(ui: &egui::Ui, free: Rect, text: String, lead: ToastLead, ac
     painter.galley(text_top, galley.clone(), t.text);
     let mut clicked = None;
     let origin = text_top + vec2(0.0, galley.size().y + gap);
-    for (index, (label, spot)) in actions.iter().zip(&spots).enumerate() {
+    for (index, ((label, kind), spot)) in actions.iter().zip(&spots).enumerate() {
         let at = spot.translate(origin.to_vec2());
         // A UI of its own on the viewport's layer, so the toast needs no `&mut Ui`.
         let mut button_ui = egui::Ui::new(
@@ -3198,7 +3237,11 @@ fn paint_toast_with(ui: &egui::Ui, free: Rect, text: String, lead: ToastLead, ac
         );
         button_ui.set_clip_rect(button_ui.clip_rect().intersect(r));
         let response = button_ui
-            .add_enabled_ui(!crate::issue_report::cad_input_blocked(), |ui| crate::ui_kit::button(ui, *label, crate::ui_kit::Button::Normal))
+            .add_enabled_ui(!crate::issue_report::cad_input_blocked(), |ui| match kind {
+                ToastKind::Primary => crate::ui_kit::primary_button(ui, label),
+                ToastKind::Secondary => crate::ui_kit::button(ui, *label, crate::ui_kit::Button::Normal),
+                ToastKind::Dismiss => crate::ui_kit::button(ui, *label, crate::ui_kit::Button::Small),
+            })
             .inner;
         if response.clicked() {
             clicked = Some(index);
