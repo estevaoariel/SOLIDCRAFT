@@ -9,9 +9,10 @@ fn boat() -> &'static Model {
 #[test]
 fn test_boat_asset_reads_with_its_counts_and_bounds() {
     let m = boat();
-    assert!(m.triangles.len() >= 4_000 && m.triangles.len() <= 12_000, "{} triangles", m.triangles.len());
-    assert!(m.vertices.len() > 2_000 && m.vertices.len() < m.triangles.len(), "{} vertices", m.vertices.len());
-    assert!(DATA.len() < 200_000, "{} bytes", DATA.len());
+    assert!(m.triangles.len() >= 500 && m.triangles.len() <= 2_000, "{} triangles", m.triangles.len());
+    // Smooth shading: vertices are shared where the surface is smooth, and split at creases.
+    assert!(m.vertices.len() > m.triangles.len() / 3 && m.vertices.len() <= m.triangles.len() * 3, "{} vertices", m.vertices.len());
+    assert!(DATA.len() < 100_000, "{} bytes", DATA.len());
     // About 60 mm long, centred on the origin.
     let (low, high) = m.vertices.iter().fold((Vec3::new(1e9, 1e9, 1e9), Vec3::new(-1e9, -1e9, -1e9)), |(lo, hi), v| (lo.min(*v), hi.max(*v)));
     let size = high - low;
@@ -19,6 +20,7 @@ fn test_boat_asset_reads_with_its_counts_and_bounds() {
     assert!((m.radius - 30.0).abs() < 15.0 && m.radius >= 25.0, "radius {}", m.radius);
     // Every normal is a unit vector.
     assert!(m.normals.iter().all(|n| (n.len() - 1.0).abs() < 1e-6));
+    assert!(m.vertex_normals.iter().all(|n| (n.len() - 1.0).abs() < 1e-6));
 }
 
 #[test]
@@ -94,16 +96,35 @@ fn test_boat_draws_inside_its_box_at_every_size_and_pose() {
             for _ in 0..200 {
                 step(&mut cam, motion(translation, rotation), 0.05, f64::from(h), m.radius, aspect, false);
             }
-            let drawn = project(m, &cam, rect.shrink(1.0));
-            assert!(!drawn.is_empty(), "{w}x{h}: something is drawn");
-            for (corners, shade) in &drawn {
-                assert!((0.0..=1.0).contains(shade));
-                for corner in corners {
-                    assert!(rect.expand(0.5).contains(*corner), "{w}x{h}: {corner:?} is outside {rect:?}");
-                }
+            let frame = project(m, &cam, rect.shrink(1.0));
+            assert!(!frame.indices.is_empty(), "{w}x{h}: something is drawn");
+            assert!(frame.shades.iter().all(|s| (0.0..=1.0).contains(s)));
+            for &index in &frame.indices {
+                let corner = frame.points[index as usize];
+                assert!(rect.expand(0.5).contains(corner), "{w}x{h}: {corner:?} is outside {rect:?}");
             }
         }
     }
+}
+
+/// What a frame asks of the painter: every vertex once and the facing triangles' indices, with a
+/// ceiling, and the time it takes to build one (printed; a loose limit so a slow runner is not a failure).
+#[test]
+fn test_boat_costs_a_bounded_amount_to_project_per_frame() {
+    let m = boat();
+    let rect = Rect::from_min_size(pos2(0.0, 0.0), vec2(260.0, 150.0));
+    let cam = Boat::new(m.radius).cam;
+    let started = std::time::Instant::now();
+    let frames = 20;
+    let mut last = None;
+    for _ in 0..frames {
+        last = Some(project(m, &cam, rect));
+    }
+    let per_frame = started.elapsed() / frames;
+    let frame = last.unwrap();
+    eprintln!("BOAT COST {} vertices, {} indices, {per_frame:?} per frame", frame.points.len(), frame.indices.len());
+    assert!(frame.points.len() <= 5_000 && frame.indices.len() <= 3 * 5_000, "{} vertices, {} indices", frame.points.len(), frame.indices.len());
+    assert!(per_frame < std::time::Duration::from_millis(100), "{per_frame:?}");
 }
 
 #[test]
@@ -111,9 +132,9 @@ fn test_boat_far_faces_come_first_and_a_page_opened_again_starts_afresh() {
     let m = boat();
     let cam = Boat::new(m.radius).cam;
     let rect = Rect::from_min_size(pos2(0.0, 0.0), vec2(200.0, 150.0));
-    let drawn = project(m, &cam, rect);
+    let drawn = project(m, &cam, rect).indices.len() / 3;
     // Only the faces turned to the eye: roughly half the triangles of a closed boat.
-    assert!(drawn.len() < m.triangles.len() * 3 / 4 && drawn.len() > m.triangles.len() / 4, "{} of {}", drawn.len(), m.triangles.len());
+    assert!(drawn < m.triangles.len() * 3 / 4 && drawn > m.triangles.len() / 4, "{drawn} of {}", m.triangles.len());
     // The boat comes back with the page: not drawn for a moment, the state starts afresh.
     let ctx = crate::fonts::test_context();
     let mut state = None;

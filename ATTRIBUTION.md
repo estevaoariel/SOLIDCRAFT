@@ -24,8 +24,8 @@ Editable drawing code, native projects and shipped exports are collected under `
 | assets/icons/app/macos/exports/Assets.car | SolidCraft contributors | Apple actool compilation of assets/icons/app/macos/source/SolidCraft.icon for macOS; contains original artwork only | MIT OR Apache-2.0 |
 | assets/archive/icons/macos-v1/source/icon.vectorcraft | SolidCraft contributors | retained editable historical VectorCraft source, with named face and background layers; redundant exports retired | MIT OR Apache-2.0 |
 | assets/icons/app/macos/exports/icon.icns | SolidCraft contributors | macOS fallback compiled by Apple's actool from the approved assets/icons/app/macos/source/SolidCraft.icon composition | MIT OR Apache-2.0 |
-| assets/models/test_boat.bin | 3DBenchy.com | The Benchy (a decimated copy of the model, reduced for the settings window) | Public Domain |
-| assets/models/make_test_boat.py | SolidCraft contributors | original script that reduces and packs the model above | MIT OR Apache-2.0 |
+| assets/models/test_boat.bin | 3DBenchy.com | 3DBenchy.com | Public Domain |
+| assets/models/make_test_boat.py | SolidCraft contributors | original script that packs a model into the compact file above | MIT OR Apache-2.0 |
 | docs/screenshots/class-a-blend.png | SolidCraft contributors | screenshot of SolidCraft itself: two boxes bridged by `surface.blend` (a 40x10 sheet, `solidcraft-cli snapshot` of plan/evidence script ev_blend) | MIT OR Apache-2.0 |
 | docs/screenshots/class-a-crown.png | SolidCraft contributors | screenshot of SolidCraft itself: a patch crowned with `surface.patch crown=0.3` over a saddle rim (`solidcraft-cli snapshot`) | MIT OR Apache-2.0 |
 | docs/screenshots/class-a-boundary.png | SolidCraft contributors | screenshot of SolidCraft itself: a patch through two sketch lines built by `surface.boundary` with `crown: 0.4` (`solidcraft-cli snapshot`) | MIT OR Apache-2.0 |
