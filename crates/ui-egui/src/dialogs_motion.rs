@@ -231,7 +231,7 @@ pub fn start(app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
                 trail_lines: true,
                 scale: 1.0,
                 auto: None,
-                time: 0.0,
+                time: f64::from(DEFAULT_STEP_MS),
                 playing: false,
                 looping: true,
                 speed: 2,
@@ -779,23 +779,23 @@ fn explode_rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Mo, t: Tokens) {
             match pick.checked_sub(1).and_then(|i| views.get(i)) {
                 Some(v) => {
                     let (n, s, e, tr) = read_view(v);
+                    let t = total_ms(&s);
                     (*name, *view, *steps, *easing, *trail_lines) = (n, v.get("id").and_then(Value::as_u64), s, e, tr);
+                    *time = t;
                 }
                 None => {
                     let taken: Vec<String> = views.iter().filter_map(|v| v.get("name").and_then(Value::as_str).map(str::to_string)).collect();
                     (*name, *view, *steps, *easing, *trail_lines) =
                         (free_name(&taken, "Exploded View"), None, vec![new_step()], DEFAULT_EASING, true);
                     *auto = None;
+                    *time = f64::from(DEFAULT_STEP_MS);
                 }
             }
             *selected = 0;
-            *time = 0.0;
             *shown = None;
         }
     }
-    form_row(ui, "Name", |ui| {
-        ui.text_edit_singleline(name);
-    });
+    text_row(ui, "Name", name, "");
     form_row(ui, "Easing", |ui| {
         combo(ui, "explode_easing", &EASING_LABELS, easing);
     });
@@ -806,8 +806,12 @@ fn explode_rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Mo, t: Tokens) {
     // them, so the scale is only offered for a new view.
     if view.is_none() {
         form_row(ui, "Explode", |ui| {
-            ui.spacing_mut().slider_width = 160.0;
-            ui.add(egui::Slider::new(scale, 0.0..=2.0).fixed_decimals(2));
+            crate::ui_kit::slider(
+                ui,
+                scale,
+                0.0..=2.0,
+                crate::ui_kit::Slider { show_value: true, format: |v| format!("{v:.2}"), ..Default::default() },
+            );
         });
         if *auto != Some(*scale) {
             *auto = Some(*scale);
@@ -851,23 +855,20 @@ fn explode_rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Mo, t: Tokens) {
                 *time = total;
                 *playing = false;
             }
-            ui.add_space(6.0);
-            ui.checkbox(looping, crate::i18n::tr_label("Loop"));
+            ui.add_space(t.space_6);
+            crate::ui_kit::checkbox(ui, "Loop", looping);
             let names: Vec<String> = SPEEDS.iter().map(|x| format!("{x}×")).collect();
             let refs: Vec<&str> = names.iter().map(String::as_str).collect();
-            combo(ui, "explode_speed", &refs, speed);
+            ui.allocate_ui(vec2(t.form_label_width, t.control_height), |ui| combo(ui, "explode_speed", &refs, speed));
         });
     });
     // The scrubber over the whole sequence: 0 is assembled, the end fully exploded.
     form_row(ui, "Sequence", |ui| {
-        ui.horizontal(|ui| {
-            ui.spacing_mut().slider_width = 240.0;
-            if ui.add(egui::Slider::new(time, 0.0..=total.max(1.0)).show_value(false)).dragged() {
-                *playing = false;
-            }
-            ui.label(RichText::new(format!("{:.0} / {total:.0} ms", time)).color(t.text_dim));
-        });
+        if crate::ui_kit::slider(ui, time, 0.0..=total.max(1.0), crate::ui_kit::Slider { show_value: false, ..Default::default() }).dragged() {
+            *playing = false;
+        }
     });
+    crate::ui_kit::caption(ui, "Sequence", &format!("{:.0} / {total:.0} ms", time));
     // The steps, in order, with their moves.
     let occs = occurrences(app);
     let occ_names: Vec<String> = occs.iter().map(|(_, n)| n.clone()).collect();
@@ -878,59 +879,58 @@ fn explode_rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Mo, t: Tokens) {
     let mut move_step: Option<(usize, bool)> = None;
     let mut remove_move: Option<(usize, usize)> = None;
     let mut add_move: Option<usize> = None;
-    form_row(ui, "", |ui| {
-        egui::ScrollArea::vertical().id_salt("explode_steps").max_height(240.0).show(ui, |ui| {
-            for (i, step) in steps.iter_mut().enumerate() {
-                ui.horizontal(|ui| {
-                    if ui.selectable_label(*selected == i, format!("{}", i + 1)).on_hover_text(crate::i18n::tr_label("Edit this step")).clicked() {
-                        *selected = i;
-                    }
-                    ui.add(egui::TextEdit::singleline(&mut step.name).desired_width(110.0));
-                    ui.label(RichText::new("ms").color(t.text_dim));
-                    ui.add(egui::DragValue::new(&mut step.duration_ms).range(0..=MAX_STEP_MS).speed(10.0));
-                    if ui.small_button("↑").on_hover_text(crate::i18n::tr_label("Move earlier")).clicked() {
-                        move_step = Some((i, true));
-                    }
-                    if ui.small_button("↓").on_hover_text(crate::i18n::tr_label("Move later")).clicked() {
-                        move_step = Some((i, false));
-                    }
-                    if ui.small_button("×").on_hover_text(crate::i18n::tr_label("Delete the step")).clicked() {
-                        remove_step = Some(i);
-                    }
-                });
-                for (j, mv) in step.moves.iter_mut().enumerate() {
-                    ui.horizontal(|ui| {
-                        let mut pos = occs.iter().position(|(id, _)| *id == mv.occurrence).unwrap_or(0);
-                        combo(ui, &format!("explode_move_{i}_{j}"), &occ_refs, &mut pos);
-                        if let Some((id, _)) = occs.get(pos) {
-                            mv.occurrence = *id;
-                        }
-                        for k in 0..3 {
-                            crate::ui_kit::length_field(ui, &mut mv.translate[k], &units, decimals);
-                        }
-                        if ui.small_button("×").on_hover_text(crate::i18n::tr_label("Remove the move")).clicked() {
-                            remove_move = Some((i, j));
-                        }
-                    });
+    let num_steps = steps.len();
+    egui::ScrollArea::vertical().id_salt("explode_steps").max_height(240.0).show(ui, |ui| {
+        for (i, step) in steps.iter_mut().enumerate() {
+            ui.horizontal(|ui| {
+                let step_no = format!("{}", i + 1);
+                if crate::ui_kit::compact_button(ui, &step_no, "Edit this step", true, *selected == i).clicked() {
+                    *selected = i;
                 }
+                ui.allocate_ui(vec2(110.0, t.control_height), |ui| crate::ui_kit::text_field(ui, &mut step.name, ""));
+                crate::ui_kit::number_field(ui, &mut step.duration_ms, 0..=MAX_STEP_MS, 10.0, " ms");
+                if crate::ui_kit::compact_button(ui, crate::ui_kit::MOVE_UP, "Move earlier", i > 0, false).clicked() {
+                    move_step = Some((i, true));
+                }
+                if crate::ui_kit::compact_button(ui, crate::ui_kit::MOVE_DOWN, "Move later", i + 1 < num_steps, false).clicked() {
+                    move_step = Some((i, false));
+                }
+                if crate::ui_kit::compact_button(ui, "×", "Delete the step", num_steps > 1, false).clicked() {
+                    remove_step = Some(i);
+                }
+            });
+            for (j, mv) in step.moves.iter_mut().enumerate() {
                 ui.horizontal(|ui| {
-                    if ui.small_button(crate::i18n::tr_label("Add move")).clicked() {
-                        add_move = Some(i);
+                    let mut pos = occs.iter().position(|(id, _)| *id == mv.occurrence).unwrap_or(0);
+                    ui.allocate_ui(vec2(120.0, t.control_height), |ui| combo(ui, &format!("explode_move_{i}_{j}"), &occ_refs, &mut pos));
+                    if let Some((id, _)) = occs.get(pos) {
+                        mv.occurrence = *id;
+                    }
+                    for k in 0..3 {
+                        crate::ui_kit::length_field(ui, &mut mv.translate[k], &units, decimals);
+                    }
+                    if crate::ui_kit::compact_button(ui, "×", "Remove the move", true, false).clicked() {
+                        remove_move = Some((i, j));
                     }
                 });
-                ui.separator();
             }
-        });
+            ui.horizontal(|ui| {
+                if crate::ui_kit::button(ui, crate::i18n::tr_label("Add move"), crate::ui_kit::Button::Small).clicked() {
+                    add_move = Some(i);
+                }
+            });
+            ui.separator();
+        }
     });
-    form_row(ui, "", |ui| {
-        ui.horizontal(|ui| {
-            if ui.button(crate::i18n::tr_label("Add step")).on_hover_text(crate::i18n::tr_label("Add a step at the end of the sequence")).clicked()
-                && steps.len() < MAX_STEPS
-            {
-                steps.push(ExplodeStep { id: 0, name: format!("Step {}", steps.len() + 1), moves: Vec::new(), duration_ms: DEFAULT_STEP_MS });
-                *selected = steps.len() - 1;
-            }
-        });
+    ui.horizontal(|ui| {
+        if crate::ui_kit::button(ui, crate::i18n::tr_label("Add step"), crate::ui_kit::Button::Normal)
+            .on_hover_text(crate::i18n::tr_label("Add a step at the end of the sequence"))
+            .clicked()
+            && steps.len() < MAX_STEPS
+        {
+            steps.push(ExplodeStep { id: 0, name: format!("Step {}", steps.len() + 1), moves: Vec::new(), duration_ms: DEFAULT_STEP_MS });
+            *selected = steps.len() - 1;
+        }
     });
     if let Some(i) = remove_step {
         steps.remove(i);
@@ -1362,7 +1362,7 @@ mod tests {
                     trail_lines: true,
                     scale: 1.0,
                     auto: None,
-                    time: 0.0,
+                    time: f64::from(DEFAULT_STEP_MS),
                     playing: false,
                     looping: true,
                     speed: 2,
