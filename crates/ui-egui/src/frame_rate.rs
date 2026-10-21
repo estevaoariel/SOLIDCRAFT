@@ -53,7 +53,7 @@ pub(crate) fn paint(app: &mut SolveApp, ctx: &egui::Context, painter: &egui::Pai
     let size = galley.size() + vec2(16.0, 8.0);
     let r = Rect::from_min_size(pos2(rect.right() - 12.0 - size.x, rect.bottom() - 12.0 - size.y), size);
     painter.rect(r, 4.0, t.overlay, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
-    crate::scenario::publish_handle("viewport:frame_rate", r.center());
+    crate::scenario::publish_target("viewport:frame_rate", r);
     painter.galley(r.center() - galley.size() / 2.0, galley, t.text);
 }
 
