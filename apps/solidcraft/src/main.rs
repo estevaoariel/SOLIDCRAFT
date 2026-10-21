@@ -810,6 +810,7 @@ fn main() -> eframe::Result {
             let saved = solidcraft_ui_egui::prefs::GraphicsChoice { api: graphics.saved.backend.clone(), msaa: u32::from(graphics.saved.msaa) };
             app.graphics = solidcraft_ui_egui::prefs::Graphics {
                 apis: startup::GRAPHICS_APIS.to_vec(),
+                freezes: startup::apis_that_freeze(cfg!(target_os = "windows"), startup::hardware_adapters_once),
                 env_override: std::env::var(startup::WGPU_BACKEND_ENV).ok().filter(|v| !v.trim().is_empty()),
                 trial: trying.then(|| solidcraft_ui_egui::prefs::GraphicsTrial { previous: saved.clone(), shown: 0.0, last_frame: None }),
                 saved,
@@ -929,7 +930,7 @@ fn wgpu_options(cpu: bool, preference: Option<&str>) -> eframe::egui_wgpu::WgpuC
     let mut options = eframe::egui_wgpu::WgpuConfiguration::default();
     if let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut options.wgpu_setup {
         let env_set = std::env::var(startup::WGPU_BACKEND_ENV).is_ok_and(|v| !v.trim().is_empty());
-        if let Some(backends) = startup::choose_backends(cfg!(target_os = "windows"), env_set, cpu, preference, startup::hardware_adapters) {
+        if let Some(backends) = startup::choose_backends(cfg!(target_os = "windows"), env_set, cpu, preference, startup::hardware_adapters_once) {
             eprintln!("SolidCraft graphics: starting {backends:?}");
             setup.instance_descriptor.backends = backends;
         }

@@ -1096,6 +1096,9 @@ pub struct Graphics {
     /// The APIs offered besides Automatic, as `graphics.json` names them. None: no choice
     /// (macOS, which has Metal alone; the browser).
     pub apis: Vec<&'static str>,
+    /// Of those, the ones known to freeze this GPU (D3D12 on AMD integrated graphics): a warning
+    /// shows while one is chosen, as no trial start helps once the whole screen is frozen.
+    pub freezes: Vec<&'static str>,
     /// `WGPU_BACKEND`, which decides the API when it is set.
     pub env_override: Option<String>,
     /// The settings kept for every start (`graphics.json`'s `backend` and `msaa`).
@@ -1127,6 +1130,14 @@ pub fn graphics_api_label(api: &str) -> String {
         "metal" => "Metal".into(),
         other => other.to_string(),
     }
+}
+
+/// The warning under the graphics API while the chosen one is known to freeze this GPU
+/// ([`Graphics::freezes`]); none while `WGPU_BACKEND` decides.
+fn freeze_warning(app: &SolveApp) -> Option<String> {
+    let api = app.preferences.graphics_api.as_str();
+    (app.graphics.env_override.is_none() && app.graphics.freezes.contains(&api))
+        .then(|| crate::i18n::format("settings.graphics_api_freezes", &[("api", &graphics_api_label(api))]))
 }
 
 /// The graphics settings chosen in the preferences.
@@ -1992,6 +2003,27 @@ mod tests {
             assert_eq!(app.preferences.msaa, requested);
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// D3D12 froze AMD integrated GPUs past what a trial start can undo (#3321): choosing it there
+    /// warns first, and nowhere else.
+    #[test]
+    fn choosing_an_api_that_freezes_this_gpu_warns() {
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
+        app.graphics = Graphics { apis: vec!["dx12", "vulkan", "gl"], freezes: vec!["dx12"], ..Default::default() };
+        app.preferences.graphics_api = "vulkan".into();
+        assert_eq!(freeze_warning(&app), None);
+        app.preferences.graphics_api = "dx12".into();
+        assert_eq!(
+            freeze_warning(&app).as_deref(),
+            Some(
+                "On AMD integrated graphics, Direct3D 12 can freeze the screen, sometimes until the computer is restarted. Automatic uses Vulkan here."
+            )
+        );
+        app.graphics.env_override = Some("dx12".into());
+        assert_eq!(freeze_warning(&app), None, "WGPU_BACKEND decides, and its own note says so");
+        app.graphics = Graphics { apis: vec!["dx12", "vulkan", "gl"], ..Default::default() };
+        assert_eq!(freeze_warning(&app), None);
     }
 
     /// The graphics API and anti-aliasing (#4015): a change in the Preferences window is saved as

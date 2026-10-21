@@ -1355,6 +1355,7 @@
   "settings.display_quality_note": "Only the display. Designs and exports are not affected.",
   "settings.frame_rate_note": "Shows frames per second in the view's bottom-right corner. While it is on, the view redraws continuously.",
   "settings.graphics_api_env": "Set by the WGPU_BACKEND environment variable ({value})",
+  "settings.graphics_api_freezes": "On AMD integrated graphics, {api} can freeze the screen, sometimes until the computer is restarted. Automatic uses Vulkan here.",
   "settings.graphics_applies_on_restart": "These apply when SolidCraft starts again. It then asks whether to keep them, and goes back to the current ones if you don't.",
   "settings.graphics_msaa": "{samples}× anti-aliasing",
   "settings.graphics_restart_now": "Restart now",

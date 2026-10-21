@@ -341,6 +341,23 @@ pub const GRAPHICS_APIS: &[&str] = if cfg!(target_os = "windows") {
     &["vulkan", "gl"]
 };
 
+/// The APIs Preferences warns about on this system: D3D12 when its GPUs are all AMD integrated
+/// ones, whose driver it froze, at times until the computer was restarted (#3321).
+pub fn apis_that_freeze(windows: bool, hardware: impl FnOnce(eframe::wgpu::Backends) -> Vec<HardwareAdapter>) -> Vec<&'static str> {
+    if !windows {
+        return Vec::new();
+    }
+    let found = hardware(eframe::wgpu::Backends::DX12);
+    if !found.is_empty() && found.iter().all(HardwareAdapter::hangs_on_d3d12) { vec!["dx12"] } else { Vec::new() }
+}
+
+/// [`hardware_adapters`], keeping D3D12's: the start asks for them ([`choose_backends`]), then
+/// Preferences ([`apis_that_freeze`]).
+pub fn hardware_adapters_once(backends: eframe::wgpu::Backends) -> Vec<HardwareAdapter> {
+    static D3D12: std::sync::OnceLock<Vec<HardwareAdapter>> = std::sync::OnceLock::new();
+    if backends == eframe::wgpu::Backends::DX12 { D3D12.get_or_init(|| hardware_adapters(backends)).clone() } else { hardware_adapters(backends) }
+}
+
 /// Anti-aliasing samples when `graphics.json` has none (or one that isn't 1, 2, 4 or 8).
 pub const DEFAULT_MSAA: u16 = 4;
 
@@ -718,6 +735,16 @@ mod tests {
         for api in GRAPHICS_APIS {
             assert!(!eframe::wgpu::Backends::from_comma_list(api).is_empty(), "{api}");
         }
+    }
+
+    #[test]
+    fn preferences_warn_about_d3d12_only_where_it_froze_the_gpu() {
+        let with = |adapters: Vec<HardwareAdapter>| move |_: eframe::wgpu::Backends| adapters;
+        assert_eq!(apis_that_freeze(true, with(vec![AMD_IGPU])), vec!["dx12"]);
+        assert!(apis_that_freeze(true, with(vec![AMD_IGPU, NVIDIA])).is_empty(), "a graphics card besides");
+        assert!(apis_that_freeze(true, with(vec![NVIDIA])).is_empty());
+        assert!(apis_that_freeze(true, with(Vec::new())).is_empty(), "WARP alone");
+        assert!(apis_that_freeze(false, |_| panic!("only Windows has D3D12")).is_empty());
     }
 
     #[test]

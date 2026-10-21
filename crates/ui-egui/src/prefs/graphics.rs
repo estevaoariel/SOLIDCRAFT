@@ -34,6 +34,9 @@ pub(super) fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                 graphics_api(app, ui, on_trial);
                 ui_kit::settings_badge(ui, app.tr("prefs.applies_on_restart"), true);
             });
+            if let Some(warning) = freeze_warning(app) {
+                ui_kit::text(ui, &warning, ui_kit::Text::Error("graphics_api_freezes"));
+            }
             restart_now(app, ui, on_trial);
         });
     }

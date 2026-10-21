@@ -1355,6 +1355,7 @@
   "settings.display_quality_note": "仅影响显示，不影响设计和导出。",
   "settings.frame_rate_note": "在视图右下角显示每秒帧数。开启时视图会持续重绘。",
   "settings.graphics_api_env": "由环境变量 WGPU_BACKEND 设置（{value}）",
+  "settings.graphics_api_freezes": "在 AMD 集成显卡上，{api} 可能导致屏幕冻结，有时需要重启电脑才能恢复。自动选项在这里使用 Vulkan。",
   "settings.graphics_applies_on_restart": "这些设置在 SolidCraft 下次启动时生效。启动后会询问是否保留；如果不保留，将恢复为当前设置。",
   "settings.graphics_msaa": "{samples}× 抗锯齿",
   "settings.graphics_restart_now": "立即重启",
