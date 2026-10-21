@@ -16,20 +16,6 @@ pub(crate) struct Segments<'a> {
     pub primary: bool,
 }
 
-/// Whether `need` points fit in `have`, answered so that a scrollbar coming and going (it takes
-/// `ui.spacing().scroll.allocated_width()` of the width) does not flip it: what has fitted keeps
-/// fitting until it misses by more than the scrollbar's width, and what has not fitted must fit
-/// outright. With nothing remembered yet it is the generous answer, so the first frame with a
-/// scrollbar and the first without agree. Keyed by `key` within `ui`.
-pub(crate) fn fits_steadily(ui: &Ui, key: impl std::hash::Hash + std::fmt::Debug, need: f32, have: f32) -> bool {
-    let slack = ui.spacing().scroll.allocated_width();
-    let id = ui.make_persistent_id(("fits_steadily", key));
-    let was = ui.data(|data| data.get_temp::<bool>(id)).unwrap_or(true);
-    let fits = need <= have + if was { slack } else { 0.0 };
-    ui.data_mut(|data| data.insert_temp(id, fits));
-    fits
-}
-
 pub(crate) fn segmented(ui: &mut Ui, selected: &mut usize, options: &[&str], config: Segments<'_>) -> bool {
     let Segments { states, compact, primary } = config;
     let t = Tokens::get();
@@ -41,7 +27,7 @@ pub(crate) fn segmented(ui: &mut Ui, selected: &mut usize, options: &[&str], con
         })
         .fold(0.0, f32::max);
     // Judged on the whole row, which is what a scrollbar narrows, not on one segment.
-    if !compact && !fits_steadily(ui, label(ui), (widest + 2.0 * t.space_8) * options.len() as f32, segment_width * options.len() as f32) {
+    if !compact && !super::fits_steadily(ui, label(ui), (widest + 2.0 * t.space_8) * options.len() as f32, segment_width * options.len() as f32) {
         let before = *selected;
         let id = format!("segments_fallback_{}", label(ui));
         dropdown(ui, &id, selected, options);
