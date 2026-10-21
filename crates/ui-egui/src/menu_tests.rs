@@ -567,6 +567,70 @@ fn v_toggles_what_is_selected() {
 }
 
 #[test]
+fn v_flips_what_is_under_the_cursor_without_selecting_it() {
+    use crate::viewport::Hit;
+    use solidcraft_engine::geom::Vec3;
+    let mut app = SolveApp::new(Session::default(), Services::default());
+    app.run("solid.box", json!({"length":10,"width":10,"height":10,"body_name":"A"})).unwrap();
+    app.run("solid.box", json!({"length":10,"width":10,"height":10,"corner":[20,0,0],"operation":"new","body_name":"B"})).unwrap();
+    let hidden = |app: &SolveApp| app.session.visibility.hidden_bodies.clone();
+    let face = |body: &str| Some(Hit::Face { body: body.into(), index: 0, point: Vec3::ZERO });
+    assert!(app.preferences.hide_under_cursor);
+    app.run("select.set", json!({"items": [{"type": "body", "name": "A"}]})).unwrap();
+    // Over an unselected body: that body flips, the selection stays as it was.
+    app.viewport.hover = face("B");
+    context_menu::show_hide_key(&mut app);
+    assert_eq!(hidden(&app), vec!["B".to_string()]);
+    assert_eq!(app.session.selection, vec![solidcraft_engine::Sel::Body { name: "A".into() }]);
+    context_menu::show_hide_key(&mut app);
+    assert!(hidden(&app).is_empty());
+    // Over a selected body (here by one of its edges), or over nothing: the selection flips.
+    app.run("select.set", json!({"items": [{"type": "body", "name": "A"}, {"type": "body", "name": "B"}]})).unwrap();
+    app.viewport.hover = Some(Hit::Edge { body: "A".into(), index: 0, mid: Vec3::ZERO });
+    context_menu::show_hide_key(&mut app);
+    assert_eq!(hidden(&app), vec!["A".to_string(), "B".to_string()]);
+    app.viewport.hover = None;
+    context_menu::show_hide_key(&mut app);
+    assert!(hidden(&app).is_empty());
+    // A Browser row under the pointer flips its bodies.
+    app.run("select.clear", json!({})).unwrap();
+    app.viewport.hover_bodies = vec!["A".into()];
+    context_menu::show_hide_key(&mut app);
+    assert_eq!(hidden(&app), vec!["A".to_string()]);
+    app.viewport.hover_bodies.clear();
+    app.session.visibility.hidden_bodies.clear();
+    // Turned off in Preferences, V acts on the selection only.
+    app.preferences.hide_under_cursor = false;
+    app.run("select.set", json!({"items": [{"type": "body", "name": "A"}]})).unwrap();
+    app.viewport.hover = face("B");
+    context_menu::show_hide_key(&mut app);
+    assert_eq!(hidden(&app), vec!["A".to_string()]);
+}
+
+#[test]
+fn v_over_a_sketch_or_plane_flips_it_but_never_the_sketch_being_edited() {
+    use crate::viewport::Hit;
+    let mut app = sample_app();
+    let sk = app.session.doc.features.iter().find(|f| f.name == "Base").unwrap().id;
+    crate::browser::set_sketch_visible(&mut app, sk, true);
+    app.viewport.hover = Some(Hit::SketchCurve { sketch: sk, id: "l1".into(), straight: true });
+    context_menu::show_hide_key(&mut app);
+    assert!(!crate::browser::sketch_visible(&app, sk));
+    crate::browser::set_sketch_visible(&mut app, sk, true);
+    app.viewport.hover = Some(Hit::Plane { name: "XY".into(), point: solidcraft_engine::geom::Vec3::ZERO });
+    context_menu::show_hide_key(&mut app);
+    assert!(app.session.visibility.hidden_origin.iter().any(|h| h == "XY"));
+    // Editing the sketch, its own curve under the pointer leaves the sketch shown: V acts on
+    // the selection (empty here), as before.
+    app.session.visibility.hidden_origin.clear();
+    app.run("select.clear", json!({})).unwrap();
+    app.session.active_sketch = Some(sk);
+    app.viewport.hover = Some(Hit::SketchCurve { sketch: sk, id: "l1".into(), straight: true });
+    context_menu::show_hide_key(&mut app);
+    assert!(crate::browser::sketch_visible(&app, sk));
+}
+
+#[test]
 fn named_views_save_restore_rename_and_delete() {
     let mut app = sample_app();
     act(&mut app, &Target::NamedViews, "New Named View");

@@ -27,6 +27,8 @@ pub(super) fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     });
     ui_kit::settings_section(ui, "selection", app.tr("prefs.selecting"), |ui| {
         ui_kit::checkbox(ui, crate::i18n::tr_label("Click selects whole bodies"), &mut app.ui.pick_bodies);
+        ui_kit::checkbox(ui, crate::i18n::tr_label("V hides what is under the cursor"), &mut app.preferences.hide_under_cursor)
+            .on_hover_text(crate::i18n::tr_label("On: V shows or hides the body, sketch or plane under the pointer, or the Browser row under it, without selecting it first. Over a selected item or empty space, V acts on the selection."));
         let click = app.tr("prefs.click");
         let shift = app.tr("prefs.shift");
         let ctrl = app.tr("prefs.ctrl_cmd");

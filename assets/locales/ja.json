@@ -1756,6 +1756,8 @@
   "ui.hideOrigin": "原点を非表示",
   "ui.hidePlanes": "平面を非表示",
   "ui.hideProfile": "プロファイルを非表示",
+  "ui.hide_under_cursor": "V でカーソル下の要素を表示/非表示",
+  "ui.hide_under_cursor_tip": "オン: V キーで、ポインター下のボディ、スケッチ、平面、またはブラウザーの行を、先に選択せずに表示/非表示にします。選択済みの要素の上や何もない場所では、V は選択に対して働きます。",
   "ui.history_back": "1ステップ戻る",
   "ui.history_below_browser": "ブラウザーの下",
   "ui.history_edge_hint": "端をダブルクリック",

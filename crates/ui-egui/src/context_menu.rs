@@ -281,8 +281,13 @@ fn sel_sketch(app: &SolveApp) -> Option<u64> {
 
 /// Bodies the selection touches (bodies, and the bodies of selected faces and edges).
 fn touched_bodies(app: &SolveApp) -> Vec<String> {
+    bodies_of(&app.session.selection)
+}
+
+/// The bodies of these items, once each: bodies, and the bodies of faces, edges and vertices.
+fn bodies_of(sel: &[Sel]) -> Vec<String> {
     let mut v: Vec<String> = Vec::new();
-    for s in &app.session.selection {
+    for s in sel {
         let b = match s {
             Sel::Body { name } => name,
             Sel::Face { body, .. } | Sel::Edge { body, .. } | Sel::Vertex { body, .. } => body,
@@ -1318,39 +1323,78 @@ pub fn delete(app: &mut SolveApp) {
     crate::delete::delete_selection(app);
 }
 
+/// The V key. With "V hides what is under the cursor" on (Preferences › Selection, #4128), the
+/// body, sketch, plane or axis under the pointer in the 3D view, or the bodies of the Browser row
+/// under it, flip without being selected. Over something selected, or over nothing, the
+/// selection flips (`toggle_visibility`).
+pub fn show_hide_key(app: &mut SolveApp) {
+    match under_cursor(app) {
+        Some(under) => flip_visibility(app, &under, &[], &[], &[]),
+        None => toggle_visibility(app),
+    }
+}
+
+/// What the V key flips instead of the selection, if anything (`show_hide_key`).
+fn under_cursor(app: &SolveApp) -> Option<Vec<Sel>> {
+    use crate::viewport::Hit;
+    if !app.preferences.hide_under_cursor || app.tool.is_some() {
+        return None;
+    }
+    let under = match &app.viewport.hover {
+        Some(Hit::Face { body, .. } | Hit::Edge { body, .. } | Hit::Vertex { body, .. }) => vec![Sel::Body { name: body.clone() }],
+        // The sketch being edited stays shown.
+        Some(Hit::SketchPoint { sketch, .. } | Hit::SketchCurve { sketch, .. } | Hit::Profile { sketch, .. }) => {
+            if app.session.active_sketch == Some(*sketch) {
+                return None;
+            }
+            vec![Sel::Feature { id: *sketch }]
+        }
+        Some(Hit::Plane { name, .. }) => vec![Sel::Plane { name: name.clone() }],
+        Some(Hit::Axis { name }) => vec![Sel::Axis { name: name.clone() }],
+        None => app.viewport.hover_bodies.iter().map(|name| Sel::Body { name: name.clone() }).collect(),
+    };
+    let selected = bodies_of(&app.session.selection);
+    let in_selection = |s: &Sel| match s {
+        Sel::Body { name } => selected.contains(name),
+        _ => app.session.selection.contains(s),
+    };
+    (!under.is_empty() && !under.iter().any(in_selection)).then_some(under)
+}
+
 /// Show/Hide (the V key): what is selected in the viewport or picked in the browser flips its
 /// visibility (bodies, faces' and edges' bodies, sketches, construction and origin planes and
 /// axes, components' bodies, canvases, joints' glyphs). When some are shown and some hidden, all are hidden.
 pub fn toggle_visibility(app: &mut SolveApp) {
+    let sel = app.session.selection.clone();
+    let (components, canvases, joints) = (app.tree.picked_components.clone(), app.tree.picked_canvases.clone(), app.tree.picked_joints.clone());
+    flip_visibility(app, &sel, &components, &canvases, &joints);
+}
+
+/// `toggle_visibility` for the given items instead of the selection.
+fn flip_visibility(app: &mut SolveApp, sel: &[Sel], components: &[u64], canvases: &[u64], joints: &[u64]) {
     use solidcraft_engine::doc::FeatureKind;
-    let paths: Vec<Vec<u64>> =
-        app.session.selection.iter().filter_map(|s| if let Sel::Occurrence { path } = s { Some(path.clone()) } else { None }).collect();
+    let paths: Vec<Vec<u64>> = sel.iter().filter_map(|s| if let Sel::Occurrence { path } = s { Some(path.clone()) } else { None }).collect();
     if !paths.is_empty() {
         let visible = !paths.iter().any(|p| !app.session.occurrence_hidden(p));
         let _ = app.run("browser.visibility", json!({"visible": visible, "paths": paths}));
     }
-    let mut bodies: Vec<String> = touched_bodies(app);
-    for c in app.tree.picked_components.clone() {
-        bodies.extend(component_bodies(app, c));
+    let mut bodies: Vec<String> = bodies_of(sel);
+    for c in components {
+        bodies.extend(component_bodies(app, *c));
     }
-    let sketches: Vec<u64> = app
-        .session
-        .selection
+    let sketches: Vec<u64> = sel
         .iter()
         .filter_map(|s| if let Sel::Feature { id } = s { Some(*id) } else { None })
         .filter(|id| app.session.doc.feature(*id).is_some_and(|f| matches!(f.kind, FeatureKind::Sketch { .. })))
         .collect();
-    let origin: Vec<String> = app
-        .session
-        .selection
+    let origin: Vec<String> = sel
         .iter()
         .filter_map(|s| match s {
             Sel::Plane { name } | Sel::Axis { name } => Some(name.clone()),
             _ => None,
         })
         .collect();
-    let canvases = app.tree.picked_canvases.clone();
-    let joints = app.tree.picked_joints.clone();
+    let (canvases, joints) = (canvases.to_vec(), joints.to_vec());
     let any_visible = bodies.iter().any(|b| !app.session.visibility.hidden_bodies.contains(b))
         || joints.iter().any(|j| app.session.joint_visible(*j))
         || sketches.iter().any(|s| crate::browser::sketch_visible(app, *s))

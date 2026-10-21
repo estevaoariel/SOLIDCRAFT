@@ -1581,6 +1581,8 @@
   "ui.hideOrigin": "Masquer l'origine",
   "ui.hidePlanes": "Masquer les plans",
   "ui.hideProfile": "Masquer le profil",
+  "ui.hide_under_cursor": "V masque ce qui est sous le curseur",
+  "ui.hide_under_cursor_tip": "Activé : V affiche ou masque le corps, l'esquisse ou le plan sous le pointeur, ou la ligne du navigateur sous lui, sans devoir le sélectionner. Sur un élément sélectionné ou dans le vide, V agit sur la sélection.",
   "ui.history_back": "Reculer d’une étape",
   "ui.history_below_browser": "Sous le navigateur",
   "ui.history_first": "Aller au début",

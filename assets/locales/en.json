@@ -1756,6 +1756,8 @@
   "ui.hideOrigin": "Hide Origin",
   "ui.hidePlanes": "Hide Planes",
   "ui.hideProfile": "Hide Profile",
+  "ui.hide_under_cursor": "V hides what is under the cursor",
+  "ui.hide_under_cursor_tip": "On: V shows or hides the body, sketch or plane under the pointer, or the Browser row under it, without selecting it first. Over a selected item or empty space, V acts on the selection.",
   "ui.history_back": "Go back one step",
   "ui.history_below_browser": "Below browser",
   "ui.history_edge_hint": "double-click the edge",

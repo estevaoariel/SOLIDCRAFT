@@ -1919,7 +1919,7 @@ pub fn shortcuts(app: &mut SolveApp, ctx: &egui::Context) {
             Key::S if !mods.shift && !mods.alt => {
                 app.start("ui.palette");
             }
-            Key::V => crate::context_menu::toggle_visibility(app),
+            Key::V => crate::context_menu::show_hide_key(app),
             Key::R if mods.shift && !mods.alt => {
                 app.repeat_last();
             }
