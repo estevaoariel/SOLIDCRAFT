@@ -786,9 +786,9 @@ fn additional_rows(app: &mut SolveApp, d: &mut Dialog, ui: &mut egui::Ui) -> boo
         Kind::Plastic(k) => enter |= crate::dialogs_plastic::rows(app, ui, k, &d.inputs),
         Kind::Assembly(k) => enter |= crate::dialogs_assembly::rows(app, ui, k, &mut d.inputs, &mut d.active),
         Kind::Measure { result, show, .. } => measure_rows(app, ui, result.as_ref(), show),
-        Kind::Section { offset, flip } => {
+        Kind::Section { offset, flip, hatch } => {
             enter |= expr_row(ui, "Distance", offset);
-            ui_kit::options(ui, "feature_options", &mut [("Flip", flip)]);
+            ui_kit::options(ui, "feature_options", &mut [("Flip", flip), ("Hatch", hatch)]);
         }
         Kind::Rename { name, .. } => {
             form_row(ui, "Name", |ui| {

@@ -234,7 +234,7 @@ pub struct Frame {
     pub size_px: [f32; 2],
     /// Section cut: (normal, d); fragments with normal·p > d are hidden. A zero normal: none.
     pub clip: [f32; 4],
-    /// Colour of the inside of cut bodies (straight sRGBA, 0..1).
+    /// Colour of the inside of cut bodies (straight sRGB, 0..1); alpha 1 hatches it, 0 leaves it plain in the body's colour.
     pub cap: [f32; 4],
     /// Canvases and decals.
     pub images: Vec<GpuImage>,

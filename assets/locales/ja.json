@@ -1486,6 +1486,7 @@
   "ui.grid_follows_view_hint": "側面ビューでは、グリッドを地面ではなく、そのビューに向いた垂直平面に表示します",
   "ui.ground_shadow": "地面の影",
   "ui.groupSelected": "選択をグループ化",
+  "ui.hatch": "ハッチング",
   "ui.heading_add_ins": "アドイン",
   "ui.heading_assemble": "アセンブリ",
   "ui.heading_box": "直方体",

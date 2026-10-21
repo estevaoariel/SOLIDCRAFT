@@ -212,14 +212,16 @@ pub fn request_scope(app: &SolveApp, params: &Value) -> Result<Option<vfs::PathS
 /// mode, the section the viewport shows: an open Section Analysis dialog's preview, a sketch's
 /// Slice), with the grid and the origin's axes as `guides` says.
 pub(crate) fn view_scene(app: &SolveApp, guides: solidcraft_engine::view::Guides) -> solidcraft_engine::render::Scene {
-    solidcraft_engine::view::scene_with_palette_and_guides(
+    let mut scene = solidcraft_engine::view::scene_with_palette_and_guides(
         &app.session,
         &app.cam,
         crate::viewport::section_plane(app),
         solidcraft_engine::view::world_curve_parts,
         &crate::viewport::scene_palette(app.ui.dark, app.preferences.color_vision),
         guides,
-    )
+    );
+    scene.plain_cap = !crate::viewport::section_hatch(app);
+    scene
 }
 
 /// The grid and the origin's axes as the window shows them (the Grid and Origin switches).

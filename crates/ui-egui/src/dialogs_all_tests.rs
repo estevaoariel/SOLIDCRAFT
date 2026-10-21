@@ -134,7 +134,8 @@ fn check_form(command: &str, labels: &[&str]) {
     }
     let checks: &[&str] = match command {
         "solid.shell" => &["Tangent Chain"],
-        "solid.rib" | "solid.web" | "solid.align" | "inspect.section" | "sheet.flange" | "sheet.hem" | "sheet.fold" | "joint.create" => &["Flip"],
+        "solid.rib" | "solid.web" | "solid.align" | "sheet.flange" | "sheet.hem" | "sheet.fold" | "joint.create" => &["Flip"],
+        "inspect.section" => &["Flip", "Hatch"],
         "solid.move" => &["Create Copy"],
         "solid.combine" => &["Keep Tools", "New Component"],
         "solid.thread" => &["Modeled", "Full Length", "Automatic size"],

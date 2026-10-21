@@ -1486,6 +1486,7 @@
   "ui.grid_follows_view_hint": "在侧视图中，将网格显示在朝向该视图的竖直平面上，而不是地面上",
   "ui.ground_shadow": "地面阴影",
   "ui.groupSelected": "将所选编组",
+  "ui.hatch": "剖面线",
   "ui.heading_add_ins": "加载项",
   "ui.heading_assemble": "装配",
   "ui.heading_box": "长方体",
