@@ -1491,16 +1491,18 @@ fn space_mouse_section(app: &mut SolveApp, ui: &mut egui::Ui) {
         // its own under it. Each row decides from the width it is given.
         let enabled = app.preferences.space_mouse_enabled;
         let space_x = ui.spacing().item_spacing.x;
-        let slider_width = |control: f32| {
-            let left = control - AXIS_INVERT_WIDTH - AXIS_DRIVEN_WIDTH - 2.0 * space_x;
-            (left >= AXIS_SLIDER_MIN).then_some(left)
+        // Whether the slider keeps its minimum beside the other columns, steady against a scrollbar
+        // appearing (which narrows every row a little): `key` names the row.
+        let slider_width = |ui: &egui::Ui, key: usize, control: f32| {
+            let fixed = AXIS_INVERT_WIDTH + AXIS_DRIVEN_WIDTH + 2.0 * space_x;
+            ui_kit::fits_steadily(ui, ("axis_row", key), fixed + AXIS_SLIDER_MIN, control).then(|| (control - fixed).max(0.0))
         };
         let cell = |ui: &mut egui::Ui, width: f32, add: &mut dyn FnMut(&mut egui::Ui)| {
             ui.allocate_ui_with_layout(egui::vec2(width, ui_kit::row_height()), egui::Layout::left_to_right(egui::Align::Center), |ui| add(ui))
                 .response
         };
         ui_kit::row(ui, app.tr("ui.space_mouse_view_axis"), |ui| {
-            if let Some(slider) = slider_width(ui.available_width()) {
+            if let Some(slider) = slider_width(ui, usize::MAX, ui.available_width()) {
                 ui.horizontal(|ui| {
                     cell(ui, AXIS_INVERT_WIDTH, &mut |ui| {
                         ui_kit::text(ui, crate::i18n::tr_label("Invert"), ui_kit::Text::Note("space_mouse_col_invert"));
@@ -1538,7 +1540,7 @@ fn space_mouse_section(app: &mut SolveApp, ui: &mut egui::Ui) {
             let mut wrapped = false;
             let group = ui_kit::row(ui, name, |ui| {
                 let control = ui.available_width();
-                let slider = slider_width(control);
+                let slider = slider_width(ui, axis, control);
                 wrapped = slider.is_none();
                 // Invert and speed do nothing on a row the driver turns off. The motion choice
                 // stays live, so a motion can still be swapped out of it.
@@ -1667,13 +1669,13 @@ fn space_mouse_section(app: &mut SolveApp, ui: &mut egui::Ui) {
             // The calibrated device moving as it does, with the test model beside it, then its dead zones.
             ui.add_space(t.space_8);
             let (boat, motion, reverse) = (&mut app.space_mouse.boat, app.space_mouse.motion, app.preferences.zoom_reverse);
-            picture_and_boat(ui, boat, motion, reverse, true, |ui| crate::space_mouse_model::live(ui, calibration, raw));
-            crate::space_mouse_calibration::dead_zone_pads(ui, calibration, raw);
+            let pads = |ui: &mut egui::Ui| crate::space_mouse_calibration::dead_zone_pads(ui, calibration, raw, false);
+            picture_and_boat(ui, boat, motion, reverse, true, |ui| crate::space_mouse_model::live(ui, calibration, raw), pads);
         } else if app.space_mouse.device.is_some() {
             // Not calibrated: the test model alone.
             ui.add_space(t.space_8);
             let (boat, motion, reverse) = (&mut app.space_mouse.boat, app.space_mouse.motion, app.preferences.zoom_reverse);
-            picture_and_boat(ui, boat, motion, reverse, false, |_| {});
+            picture_and_boat(ui, boat, motion, reverse, false, |_| {}, |_| {});
         }
         ui_kit::text(
             ui,
@@ -1697,9 +1699,9 @@ fn waiting_for_a_record(drivers: Option<crate::space_mouse::DriversPresent>) -> 
     drivers.is_some_and(|present| present.spacenavd || present.direct)
 }
 
-/// The device's picture and, to its right where there is room (else under it), a box with a small
-/// model that moves with the 3D mouse as the view does, and a Reset button. Both stay inside the
-/// section at any width.
+/// The device's picture with the coordinate circles under it, and a box with a small model that
+/// moves with the 3D mouse as the view does and a Reset button: to the right of the picture where
+/// there is room, else under the circles. All stay inside the section at any width.
 fn picture_and_boat(
     ui: &mut egui::Ui,
     boat: &mut Option<crate::test_boat::Boat>,
@@ -1707,6 +1709,7 @@ fn picture_and_boat(
     reverse_zoom: bool,
     has_picture: bool,
     picture: impl FnOnce(&mut egui::Ui),
+    pads: impl FnOnce(&mut egui::Ui),
 ) {
     const PICTURE_WIDTH: f32 = 200.0;
     const BOAT_HEIGHT: f32 = 150.0;
@@ -1714,7 +1717,7 @@ fn picture_and_boat(
     const BOAT_MAX: f32 = 260.0;
     let gap = Tokens::get().space_12;
     let room = ui.available_width();
-    let beside = has_picture && room >= PICTURE_WIDTH + gap + BOAT_MIN;
+    let beside = has_picture && ui_kit::fits_steadily(ui, "boat_beside", PICTURE_WIDTH + gap + BOAT_MIN, room);
     let width = if beside { (room - PICTURE_WIDTH - gap).min(BOAT_MAX) } else { room.min(BOAT_MAX) };
     let mut boat_and_reset = |ui: &mut egui::Ui| {
         ui.vertical(|ui| {
@@ -1724,13 +1727,17 @@ fn picture_and_boat(
             }
         });
     };
+    // The coordinate circles stay under the device's picture, from its left edge; the test model is
+    // beside the picture where there is room, else under the circles.
     if beside {
         ui.horizontal(|ui| {
             picture(ui);
             boat_and_reset(ui);
         });
+        pads(ui);
     } else {
         picture(ui);
+        pads(ui);
         boat_and_reset(ui);
     }
 }
@@ -2357,6 +2364,39 @@ mod tests {
         let window = crate::scenario::rect_of("dialog:window").expect("the calibration window is the last window drawn");
         let top = h.ctx.layer_id_at(window.center());
         assert!(top.is_some_and(|layer| layer.id == egui::Id::new("sc_space_mouse_calibration")), "top is {top:?}");
+    }
+
+    /// The Navigation page keeps its "Orbit around" row as three buttons when the 3D mouse section is
+    /// unfolded and the scrollbar appears (it used to turn into a dropdown), at every window width
+    /// either side of where the row stops fitting.
+    #[test]
+    fn unfolding_the_3d_mouse_section_does_not_turn_orbit_around_into_a_dropdown() {
+        let form =
+            |h: &crate::scenario::Harness| crate::scenario::rect_of("dialog:segments:Orbit around").is_some() || h.widget("Orbit around").is_none();
+        let mut flips = Vec::new();
+        for width in (500..=1700).step_by(10) {
+            let mut h = crate::scenario::Harness::new();
+            h.app.home.open = false;
+            h.app.space_mouse.device = Some("hid 046d:c62b".into());
+            // Scrollbars that take their width from the page (the system's solid ones), so that one
+            // appearing narrows every row.
+            h.ctx.all_styles_mut(|style| style.spacing.scroll = egui::style::ScrollStyle::solid());
+            h.call("ui.resize", serde_json::json!({"width": width, "height": 900}));
+            crate::prefs::open_at(&mut h.app, 1);
+            h.frames(5);
+            let folded = crate::scenario::rect_of("dialog:segments:Orbit around").is_some();
+            h.step(&serde_json::json!({"click": {"handle": "dialog:section:3D mouse"}})).unwrap();
+            h.frames(5);
+            let open = crate::scenario::rect_of("dialog:segments:Orbit around").is_some();
+            h.step(&serde_json::json!({"click": {"handle": "dialog:section:3D mouse"}})).unwrap();
+            h.frames(5);
+            let folded_again = crate::scenario::rect_of("dialog:segments:Orbit around").is_some();
+            if folded != open || folded != folded_again {
+                flips.push((width, folded, open, folded_again));
+            }
+            let _ = form;
+        }
+        assert!(flips.is_empty(), "the row changed form when the section was unfolded or folded: {flips:?}");
     }
 
     /// The first screen of the calibration (which kind of device) fits at the window's widths:

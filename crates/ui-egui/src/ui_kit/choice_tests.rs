@@ -43,3 +43,43 @@ fn optional_field_keeps_empty_default_and_options_use_two_columns() {
     frame(&ctx, pointer(first, false), &mut draw);
     assert!(flip && copy);
 }
+
+/// A scrollbar that takes its width from the page, coming and going, narrows the row by that width; the
+/// choice between the segments and the dropdown must not flip because of that, only because the row
+/// really is too narrow.
+#[test]
+fn segments_stay_segments_when_a_scrollbar_appears_and_disappears() {
+    let options = ["Origin", "View centre", "Point under the cursor"];
+    let solid = egui::style::ScrollStyle::solid();
+    let scrollbar = solid.allocated_width();
+    assert!(scrollbar > 0.0);
+    let fresh = || {
+        let ctx = crate::fonts::test_context();
+        ctx.all_styles_mut(|style| style.spacing.scroll = solid);
+        ctx
+    };
+    let form = |ctx: &egui::Context, width: f32| {
+        scenario::clear_handles();
+        let mut selected = 0;
+        frame(ctx, vec![], &mut |ui: &mut Ui| {
+            ui.allocate_ui(egui::vec2(width, 60.0), |ui| {
+                row(ui, "Orbit around", |ui| segmented(ui, &mut selected, &options, Default::default()));
+            });
+        });
+        scenario::rect_of("dialog:segments:Orbit around").is_some()
+    };
+    // The width where the segments just fit, found without any memory of an earlier frame being
+    // anything but the generous start (so it is the width less one scrollbar).
+    let strict = (200..1200).map(|w| w as f32).find(|&w| form(&fresh(), w) && form(&fresh(), w + scrollbar + 1.0)).expect("a width fits");
+    // From wherever it starts, with and without the scrollbar's width taken off, the form holds.
+    for start in [strict + scrollbar, strict + scrollbar + 3.0] {
+        let ctx = fresh();
+        for width in [start, start - scrollbar, start, start - scrollbar, start - scrollbar] {
+            assert!(form(&ctx, width), "start {start}: segments at {width}");
+        }
+    }
+    // Really too narrow (more than the scrollbar short), it is the dropdown, and it comes back when widened.
+    let ctx = fresh();
+    assert!(!form(&ctx, strict - 3.0 * scrollbar) && !form(&ctx, strict - 3.0 * scrollbar), "far too narrow: the dropdown");
+    assert!(form(&ctx, strict + scrollbar + 3.0), "wide again: segments");
+}

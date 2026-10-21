@@ -56,7 +56,7 @@ pub(crate) fn dead_zone_slider(ui: &mut egui::Ui, share: &mut f32) -> egui::Resp
 /// The calibration's dead zones the way a game controller tester shows a stick: per pair of axes,
 /// a circle for the full travel, the dead zone shaded inside it (each direction its own size), and
 /// a dot where the cap is now, before the dead zone, so it's plain when the view starts to move.
-pub(crate) fn dead_zone_pads(ui: &mut egui::Ui, calibration: &Calibration, raw: [i16; 6]) {
+pub(crate) fn dead_zone_pads(ui: &mut egui::Ui, calibration: &Calibration, raw: [i16; 6], centred: bool) {
     const NAMES: [&str; 6] = ["X", "Y", "Z", "Rx", "Ry", "Rz"];
     // (horizontal axis, its positive way on screen, vertical axis, its positive way down), so the
     // dot moves as the cap does: slid right and pulled toward you, twisted and pressed, tilted.
@@ -66,9 +66,12 @@ pub(crate) fn dead_zone_pads(ui: &mut egui::Ui, calibration: &Calibration, raw: 
     const GAP: f32 = 12.0;
     let visuals = ui.visuals().clone();
     ui.horizontal(|ui| {
-        // The three together, centred, with small gaps.
+        // The three together with small gaps: centred in the calibration window, from the left edge
+        // (under the device's picture) in Preferences.
         ui.spacing_mut().item_spacing.x = GAP;
-        ui.add_space(((ui.available_width() - PADS.len() as f32 * SIZE - (PADS.len() - 1) as f32 * GAP) / 2.0).max(0.0));
+        if centred {
+            ui.add_space(((ui.available_width() - PADS.len() as f32 * SIZE - (PADS.len() - 1) as f32 * GAP) / 2.0).max(0.0));
+        }
         for (h, h_way, v, v_way) in PADS {
             ui.vertical(|ui| {
                 let (rect, response) = ui.allocate_exact_size(egui::vec2(SIZE, SIZE), egui::Sense::hover());
@@ -220,7 +223,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                             (_, Some(Ok(calibration))) => {
                                 let calibration = Calibration { dead_zone_share: dead_zone, ..calibration };
                                 crate::space_mouse_model::live(ui, &calibration, raw);
-                                dead_zone_pads(ui, &calibration, raw);
+                                dead_zone_pads(ui, &calibration, raw, true);
                             }
                             _ => crate::space_mouse_model::rest(ui, kind),
                         }
