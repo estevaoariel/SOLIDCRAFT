@@ -1196,7 +1196,7 @@ mod tests {
         };
         // A window that has run a frame with focus, as the app's always has by now.
         let ctx = Context::default();
-        let _ = ctx.run_ui(egui::RawInput::default(), |_| {});
+        ctx.run_ui(egui::RawInput::default(), |_| {}).textures_delta.clear();
         mouse.tick_at(&mut app, &ctx, now);
         let DeviceMotion { motion, seconds } = app.viewport.device_motion.expect("the frame hands the page its motion");
         assert_eq!(motion, Motion { translation: [0.0; 3], rotation: [0.0, 0.0, -1.0] });

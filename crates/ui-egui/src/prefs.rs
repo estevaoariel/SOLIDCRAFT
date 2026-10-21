@@ -1641,17 +1641,14 @@ fn space_mouse_section(app: &mut SolveApp, ui: &mut egui::Ui) {
                 }
             });
             let status = match (&device, saved) {
+                (None, _) if waiting_for_a_record(app.space_mouse.drivers) => app.tr("ui.space_mouse_calibrate_wait").to_owned(),
                 (None, _) => app.tr("ui.space_mouse_none").to_owned(),
                 (Some(device), true) => format!("{} ({device})", app.tr("ui.space_mouse_calibrated")),
                 (Some(device), false) => format!("{} ({device})", app.tr("ui.space_mouse_not_calibrated")),
             };
             ui_kit::text(ui, &status, ui_kit::Text::Report("calibration_status", false));
         });
-        // No device yet (after a change of driver, say, until the first reading): say what to do rather
-        // than leave a disabled button unexplained.
-        if app.space_mouse.device.is_none() {
-            ui_kit::text(ui, app.tr("ui.space_mouse_calibrate_wait"), ui_kit::Text::Note("space_mouse_calibrate_wait"));
-        }
+
         let enabled = app.preferences.space_mouse_enabled;
         let (label, tip) = (app.tr("ui.space_mouse_dead_zone").to_owned(), app.tr("ui.space_mouse_dead_zone_tip").to_owned());
         let (device, raw) = (app.space_mouse.device.clone(), app.space_mouse.raw.into());
@@ -1692,6 +1689,13 @@ fn space_mouse_section(app: &mut SolveApp, ui: &mut egui::Ui) {
 const AXIS_INVERT_WIDTH: f32 = 76.0;
 const AXIS_DRIVEN_WIDTH: f32 = 140.0;
 const AXIS_SLIDER_MIN: f32 = 150.0;
+
+/// Whether a reader is reachable (spacenavd's socket, or a 3D mouse hidraw lists) that has not yet
+/// sent a record: the device is not confirmed until it does, so Preferences asks for a movement
+/// instead of saying none was found. Nothing reachable at all is "none found".
+fn waiting_for_a_record(drivers: Option<crate::space_mouse::DriversPresent>) -> bool {
+    drivers.is_some_and(|present| present.spacenavd || present.direct)
+}
 
 /// The device's picture and, to its right where there is room (else under it), a box with a small
 /// model that moves with the 3D mouse as the view does, and a Reset button. Both stay inside the
@@ -2306,6 +2310,28 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// What Preferences says of the 3D mouse before one is confirmed: a reachable reader that has sent
+    /// nothing yet asks for a movement; only nothing reachable says none was found.
+    #[test]
+    fn the_device_line_asks_for_a_movement_when_a_reader_is_reachable_and_only_then_says_none_found() {
+        use crate::space_mouse::DriversPresent;
+        let none = DriversPresent { spacenavd: false, direct: false };
+        assert!(!waiting_for_a_record(None) && !waiting_for_a_record(Some(none)));
+        assert!(waiting_for_a_record(Some(DriversPresent { spacenavd: true, direct: false })), "a daemon, no record yet");
+        assert!(waiting_for_a_record(Some(DriversPresent { spacenavd: false, direct: true })), "a readable device, no record yet");
+        assert!(waiting_for_a_record(Some(DriversPresent { spacenavd: true, direct: true })));
+        // The texts differ, and the first one is the Calibrate hint.
+        assert_ne!(crate::i18n::tr("ui.space_mouse_none"), crate::i18n::tr("ui.space_mouse_calibrate_wait"));
+        // A confirmed device is neither (the status names it).
+        let mut h = crate::scenario::Harness::new();
+        h.app.home.open = false;
+        h.app.space_mouse.device = Some("spacenavd".into());
+        h.app.space_mouse.drivers = Some(DriversPresent { spacenavd: true, direct: false });
+        crate::prefs::open_at(&mut h.app, 1);
+        h.frames(3);
+        assert!(h.app.prefs_window.open);
     }
 
     /// Calibration starts while Preferences is open, and its window is on top of it; with no device
