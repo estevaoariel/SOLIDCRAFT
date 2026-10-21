@@ -471,6 +471,18 @@ pub fn drives_each_once(source: [usize; 6]) -> bool {
     source.iter().all(|&from| seen.get_mut(from).is_some_and(|seen| !std::mem::replace(seen, true)))
 }
 
+/// How long the calibration window waits before the next frame: 30 a second while the reading
+/// changes, 10 while it holds still (the wizard goes by elapsed time, so a still reading needs only
+/// enough frames for its timers), and 4 while the window is not in use. Every frame redraws the 3D
+/// view behind the window as well, so this is most of what the window costs.
+pub(crate) fn calibration_repaint_after(reading_changed: bool, focused: bool) -> Duration {
+    Duration::from_millis(match (focused, reading_changed) {
+        (false, _) => 250,
+        (true, true) => 33,
+        (true, false) => 100,
+    })
+}
+
 /// Hands one frame of 3D mouse input, `seconds` after the previous frame, to the page showing
 /// the camera. Nothing happens with navigation switched off, on the start page or while a file
 /// picker is open, or while the reading is inside the dead zone (after calibration, which takes
@@ -479,6 +491,7 @@ pub fn drives_each_once(source: [usize; 6]) -> bool {
 /// reading goes through the device's saved calibration first, when it has one; while the
 /// calibration window is open, the reading goes to it instead and the view stays put.
 pub fn navigate_frame(app: &mut SolveApp, ctx: &egui::Context, mapping: DriverMapping, axes: Axes, seconds: f64) -> bool {
+    let changed = app.space_mouse.raw != axes;
     app.space_mouse.raw = axes;
     app.space_mouse.motion = None;
     app.space_mouse.mapping = Some(mapping);
@@ -496,7 +509,7 @@ pub fn navigate_frame(app: &mut SolveApp, ctx: &egui::Context, mapping: DriverMa
     if let Some((device, wizard)) = &mut app.space_mouse.calibrating {
         if app.space_mouse.device.as_ref() == Some(device) {
             wizard.feed(axes.into(), seconds);
-            ctx.request_repaint_after(Duration::from_millis(33));
+            ctx.request_repaint_after(calibration_repaint_after(changed, ctx.input(|i| i.focused)));
             return false;
         }
         // Another device is being read now, or none: what was recorded isn't its.
@@ -580,6 +593,15 @@ mod tests {
         let mut app = SolveApp::new(Session::default(), Services::default());
         app.home.open = false;
         app
+    }
+
+    #[test]
+    fn the_calibration_window_repaints_fast_only_while_the_reading_moves() {
+        use std::time::Duration;
+        assert_eq!(calibration_repaint_after(true, true), Duration::from_millis(33));
+        assert_eq!(calibration_repaint_after(false, true), Duration::from_millis(100), "a still reading: 10 frames a second");
+        assert_eq!(calibration_repaint_after(true, false), Duration::from_millis(250));
+        assert_eq!(calibration_repaint_after(false, false), Duration::from_millis(250));
     }
 
     #[test]

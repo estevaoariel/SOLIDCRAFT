@@ -224,12 +224,12 @@ const CEILING_SHAPES: usize = 150;
 const CEILING_VERTICES: usize = 4_000;
 
 #[test]
-fn the_demo_repaints_at_30_fps_only_while_it_moves() {
+fn the_demo_repaints_at_20_fps_only_while_it_moves() {
     use std::time::Duration;
     let [out, hold, back, rest] = DEMO_SECONDS;
-    assert_eq!(demo_repaint_after(out / 2.0, true), Duration::from_millis(33), "moving out");
-    assert_eq!(demo_repaint_after(out + hold / 2.0, true), Duration::from_millis(100), "holding");
-    assert_eq!(demo_repaint_after(out + hold + back / 2.0, true), Duration::from_millis(33), "moving back");
-    assert_eq!(demo_repaint_after(out + hold + back + rest / 2.0 - 0.1, true), Duration::from_millis(100), "resting");
+    assert_eq!(demo_repaint_after(out / 2.0, true), Duration::from_millis(50), "moving out");
+    assert_eq!(demo_repaint_after(out + hold / 2.0, true), Duration::from_millis(250), "holding");
+    assert_eq!(demo_repaint_after(out + hold + back / 2.0, true), Duration::from_millis(50), "moving back");
+    assert_eq!(demo_repaint_after(out + hold + back + rest / 2.0 - 0.1, true), Duration::from_millis(250), "resting");
     assert_eq!(demo_repaint_after(out / 2.0, false), Duration::from_millis(500), "not in use");
 }
