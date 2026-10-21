@@ -388,11 +388,24 @@ pub struct HoleOpts {
     pub thread: String,
     /// Custom nominal diameter and pitch being edited, separate from the saved designation.
     pub custom_thread: Option<crate::dialogs_thread::HoleThreadDraft>,
+    /// Use the full useful cylindrical wall, independently of the drill extents.
+    pub thread_full_depth: bool,
+    pub thread_depth: String,
 }
 
 impl Default for HoleOpts {
     fn default() -> Self {
-        HoleOpts { multiple: false, all: false, angled: true, tip_angle: "118 deg".into(), tapped: false, thread: "M5".into(), custom_thread: None }
+        HoleOpts {
+            multiple: false,
+            all: false,
+            angled: true,
+            tip_angle: "118 deg".into(),
+            tapped: false,
+            thread: "M5".into(),
+            custom_thread: None,
+            thread_full_depth: true,
+            thread_depth: "10 mm".into(),
+        }
     }
 }
 
@@ -3663,6 +3676,9 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
                     }
                     solidcraft_engine::doc::parse_metric_thread(&opts.thread).ok_or("select a valid metric thread size")?;
                     params["thread"] = json!(opts.thread.trim());
+                    if !opts.thread_full_depth {
+                        params["thread_depth"] = json!(opts.thread_depth.trim());
+                    }
                 }
                 match *kind {
                     1 => {
@@ -4356,7 +4372,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             d.extra.insert("pull".into(), pt3(pull.0));
             d
         }
-        FeatureKind::Hole { position, at, direction, diameter, depth, hole, points, thread, to } => {
+        FeatureKind::Hole { position, at, direction, diameter, depth, hole, points, thread, thread_depth, to } => {
             let mut d = start("solid.hole")?;
             let mut k = hole_defaults();
             if let Kind::Hole { diameter: dia, depth: dep, kind, cb_diameter, cb_depth, cs_diameter, cs_angle, opts } = &mut k {
@@ -4367,6 +4383,10 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                 if let Some(th) = thread {
                     opts.tapped = true;
                     opts.thread = th.clone();
+                }
+                opts.thread_full_depth = thread_depth.is_none();
+                if let Some(depth) = thread_depth {
+                    opts.thread_depth = depth.to_string();
                 }
                 if let Some(dd) = depth {
                     *dep = dd.to_string();
