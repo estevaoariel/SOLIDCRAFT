@@ -82,11 +82,14 @@ pub struct Offer {
 /// after `SHOW_SECONDS` unless the pointer is on it (`keep`; then only for this run: it is offered
 /// again next time until closed or calibrated).
 ///
+/// A status or computing toast appearing while it is up, or already up, hides it for the run (nothing
+/// is recorded).
+///
 /// Everything it reads and writes outside its own state, so a reviewer can check it:
 /// - Reads: the device key, saved calibrations, the offered set, the never switch and the 3D mouse
 ///   enable switch (`app.space_mouse.device`, `app.preferences`); the readers present
-///   (`space_mouse.drivers`); `ctx.input` focus, time and pointer position; `file_picker_busy`,
-///   `file_load.busy`, `prefs_window.open`, `space_mouse.calibrating`,
+///   (`space_mouse.drivers`); `ctx.input` focus, time and pointer position; `app.status`, `computing_since`,
+///   `file_picker_busy`, `file_load.busy`, `prefs_window.open`, `space_mouse.calibrating`,
 ///   `issue_report::cad_input_blocked`.
 /// - Writes, only its own: `space_mouse.offer_since`, `space_mouse.offer_hidden`;
 ///   `space_mouse_offered` and `space_mouse_offer_never` (preferences) when the user clicks Close,
@@ -115,6 +118,13 @@ pub fn due(app: &mut SolveApp, ctx: &egui::Context) -> Option<Offer> {
         || app.space_mouse.calibrating.is_some()
         || app.home.open
     {
+        return None;
+    }
+    // Once the user is working, a status or computing toast says so: the offer goes for this run (not
+    // recorded, so it can come back next start), and does not show while one is up.
+    if app.status.is_some() || app.computing_since().is_some() {
+        app.space_mouse.offer_hidden.insert(device);
+        app.space_mouse.offer_since = None;
         return None;
     }
     let now = ctx.input(|i| i.time);
@@ -488,24 +498,14 @@ mod preferences_tests {
         h.app.space_mouse.offer_since.is_some() && crate::scenario::rect_of("toast:space_mouse_offer").is_some()
     }
 
-    /// The offer stays its own 30 seconds whatever else comes and goes around it: status toasts
-    /// arriving and expiring over it, and time away (Preferences open) is not time shown.
+    /// The offer stays its own 30 seconds, and time away (Preferences open) is not time shown.
     #[test]
-    fn the_offer_stays_its_thirty_seconds_beside_status_toasts_and_after_time_away() {
+    fn the_offer_stays_its_thirty_seconds_and_time_away_is_not_time_shown() {
         let mut h = spacenavd_harness();
         run(&mut h, 2.0);
         for second in 0..26 {
-            if second % 5 == 0 {
-                let now = crate::now_ms();
-                h.app.status = Some(("Done".into(), now, false));
-            }
             run(&mut h, 1.0);
             assert!(card_up(&h), "second {second}: the offer is gone");
-            assert!(
-                crate::scenario::rect_of("toast").is_none()
-                    || h.app.status.is_some()
-                    || crate::scenario::rect_of("toast:space_mouse_offer").is_some()
-            );
         }
         // Over its own time it goes, for this run only: no record.
         run(&mut h, 5.0);
@@ -522,6 +522,30 @@ mod preferences_tests {
         assert!(card_up(&h), "the offer waited for Preferences to close");
         run(&mut h, 25.0);
         assert!(card_up(&h), "and has its 30 seconds again");
+    }
+
+    /// Once the user is working (a status toast), the offer goes for the run, and nothing is recorded.
+    #[test]
+    fn a_status_toast_dismisses_the_offer_for_the_run_without_a_record() {
+        let mut h = spacenavd_harness();
+        run(&mut h, 3.0);
+        assert!(card_up(&h));
+        h.app.status = Some(("Done".into(), crate::now_ms(), false));
+        run(&mut h, 1.0);
+        assert!(!card_up(&h), "the offer went");
+        assert!(h.app.preferences.space_mouse_offered.is_empty() && !h.app.preferences.space_mouse_offer_never, "nothing recorded");
+        // And it does not come back when the status goes, nor with the key shown again.
+        h.app.status = None;
+        run(&mut h, 10.0);
+        assert!(!card_up(&h));
+        // A status already up when the offer would first show keeps it away too.
+        let mut h = crate::scenario::Harness::new();
+        h.app.home.open = false;
+        h.app.status = Some(("Opened".into(), crate::now_ms(), false));
+        h.app.space_mouse.device = Some("hid 046d:c62b".into());
+        run(&mut h, 3.0);
+        assert!(!card_up(&h));
+        assert!(h.app.preferences.space_mouse_offered.is_empty());
     }
 
     /// A different device key while the offer is up gets its own offer (its own calibration key); the
