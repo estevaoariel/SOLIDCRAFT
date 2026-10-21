@@ -425,7 +425,6 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
     }
     if inside && caps.orbit && trackpad_orbit && raw.shift_pan != egui::Vec2::ZERO {
         app.cancel_view_animation();
-        app.viewport.orbit_snap = None;
         app.viewport.orbit_free = None;
         orbit(app, rect, f64::from(raw.shift_pan.x), f64::from(raw.shift_pan.y), hover);
     }
