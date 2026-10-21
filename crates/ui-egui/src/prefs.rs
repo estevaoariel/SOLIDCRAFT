@@ -1445,7 +1445,13 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
 /// buttons do.
 fn space_mouse_section(app: &mut SolveApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
-    ui_kit::section(ui, "sc_prefs_space_mouse", crate::i18n::tr("ui.space_mouse_section"), false, |ui| {
+    // The folded header says what is awaited before the first record, and then which device it is.
+    let badge = match &app.space_mouse.device {
+        Some(device) => Some(device.clone()),
+        None if waiting_for_a_record(app.space_mouse.drivers) => Some(crate::i18n::tr("ui.space_mouse_waiting").to_string()),
+        None => None,
+    };
+    ui_kit::section_count(ui, "sc_prefs_space_mouse", crate::i18n::tr("ui.space_mouse_section"), false, badge, |ui| {
         setting::space_mouse_enabled(app, ui);
         setting::space_mouse_in_view(app, ui).on_hover_text(crate::i18n::tr("ui.space_mouse_show_in_view_tip"));
         // Where the picture goes, a choice that waits on the checkbox above.
@@ -1649,11 +1655,15 @@ fn space_mouse_section(app: &mut SolveApp, ui: &mut egui::Ui) {
                 (Some(device), false) => format!("{} ({device})", app.tr("ui.space_mouse_not_calibrated")),
             };
             let status_line = ui_kit::text(ui, &status, ui_kit::Text::Report("calibration_status", false));
-            // Nothing confirmed yet (none found, or waiting for the first record): a hint to try.
+            // Nothing confirmed yet (none found, or waiting for the first record): a hint to try, as a
+            // tooltip here and, while a reader is waiting for the first record, as a line below.
             if device.is_none() {
                 status_line.on_hover_text(app.tr("ui.space_mouse_wiggle"));
             }
         });
+        if app.space_mouse.device.is_none() {
+            ui_kit::text(ui, app.tr("ui.space_mouse_wiggle"), ui_kit::Text::Note("space_mouse_wiggle"));
+        }
 
         let enabled = app.preferences.space_mouse_enabled;
         let (label, tip) = (app.tr("ui.space_mouse_dead_zone").to_owned(), app.tr("ui.space_mouse_dead_zone_tip").to_owned());
@@ -1726,7 +1736,7 @@ fn picture_and_boat(
     let mut boat_and_reset = |ui: &mut egui::Ui| {
         ui.vertical(|ui| {
             crate::test_boat::show(ui, boat, motion, reverse_zoom, egui::vec2(width.max(0.0), BOAT_HEIGHT));
-            if ui_kit::button(ui, crate::i18n::tr("ui.reset"), ui_kit::Button::Normal).clicked() {
+            if ui_kit::button(ui, crate::i18n::tr("ui.space_mouse_reset_view"), ui_kit::Button::Normal).clicked() {
                 crate::test_boat::reset(boat);
             }
         });
@@ -2401,6 +2411,63 @@ mod tests {
             let _ = form;
         }
         assert!(flips.is_empty(), "the row changed form when the section was unfolded or folded: {flips:?}");
+    }
+
+    /// The folded header says what it awaits before the first reading, and the hint is a visible line
+    /// as well as a tooltip; both only while a reader is reachable and silent.
+    #[test]
+    fn the_header_and_a_visible_line_say_what_the_3d_mouse_waits_for() {
+        assert_eq!(crate::i18n::tr("ui.space_mouse_waiting"), "Waiting for Movement");
+        assert_eq!(crate::i18n::tr("ui.space_mouse_reset_view"), "Reset View");
+        let mut h = crate::scenario::Harness::new();
+        h.app.home.open = false;
+        h.app.space_mouse.device = None;
+        h.app.space_mouse.drivers = Some(crate::space_mouse::DriversPresent { spacenavd: true, direct: false });
+        h.call("ui.resize", serde_json::json!({"width": 1600, "height": 4000}));
+        crate::prefs::open_at(&mut h.app, 1);
+        h.frames(5);
+        assert!(crate::scenario::rect_of("dialog:section:3D mouse:count").is_some(), "the folded header has the badge");
+        // Confirmed: the badge names the device. Nothing reachable: no badge.
+        h.app.space_mouse.device = Some("spacenavd".into());
+        h.frames(3);
+        assert!(crate::scenario::rect_of("dialog:section:3D mouse:count").is_some());
+        h.app.space_mouse.device = None;
+        h.app.space_mouse.drivers = Some(crate::space_mouse::DriversPresent { spacenavd: false, direct: false });
+        h.frames(3);
+        assert!(crate::scenario::rect_of("dialog:section:3D mouse:count").is_none());
+    }
+
+    /// The boat's Reset View puts the boat back and nothing else: calibration, sensitivity, axis
+    /// assignment and the document's camera stay.
+    #[test]
+    fn reset_view_is_scoped_to_the_test_model() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.home.open = false;
+        let axes =
+            std::array::from_fn(|source| solidcraft_space_mouse::AxisCalibration { source, reversed: false, rest: 0, dead_zone: 0, full: [350; 2] });
+        let calibration = solidcraft_space_mouse::Calibration { dead_zone_share: 0.0, kind: solidcraft_space_mouse::Kind::ReturnToCenter, axes };
+        h.app.space_mouse.device = Some("hid 046d:c62b".into());
+        h.app.preferences.space_mouse_calibrations.insert("hid 046d:c62b".into(), calibration);
+        h.app.preferences.space_mouse_speed = 1.7;
+        h.app.preferences.space_mouse_reverse[2] = true;
+        h.app.preferences.space_mouse_axis_speed[1] = 0.5;
+        h.app.preferences.space_mouse_axis_source = [1, 0, 2, 3, 4, 5];
+        h.frames(3);
+        // The boat has been turned.
+        let mut boat = crate::test_boat::Boat::new(30.0);
+        boat.cam.yaw += 1.0;
+        h.app.space_mouse.boat = Some(boat);
+        let before = (h.app.cam, h.app.preferences.clone());
+        // What the button does (the page's scroll area hides it from the harness, which cannot scroll).
+        crate::test_boat::reset(&mut h.app.space_mouse.boat);
+        h.frames(3);
+        assert!(h.app.space_mouse.boat.is_none(), "the boat is back");
+        assert_eq!(h.app.cam, before.0, "the document's camera");
+        assert_eq!(h.app.preferences, before.1, "every setting, calibration included");
+        assert_eq!(crate::i18n::tr("ui.space_mouse_reset_view"), "Reset View");
+        assert!(
+            include_str!("prefs.rs").contains("ui_kit::button(ui, crate::i18n::tr(\"ui.space_mouse_reset_view\"), ui_kit::Button::Normal).clicked()")
+        );
     }
 
     /// The "wiggle it" hint exists in every catalog, and is what the status line carries when no

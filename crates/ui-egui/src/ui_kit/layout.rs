@@ -124,7 +124,7 @@ pub(crate) fn caption(ui: &mut Ui, aligned_to: &str, text: &str) {
 /// Memory belongs to the enclosing dialog ID; animation is avoided so each row keeps its fixed height.
 /// Persisted disclosure with a rule and uppercase title. Tokens: `control_height, space_2, radius_sm, hover, dialog_rule, form_section_icon_size, form_gap_y, font_caption, font_section_tracking, text_dim`.
 pub(crate) fn section<R>(ui: &mut Ui, id: impl egui::AsIdSalt, title: &str, default_open: bool, add: impl FnOnce(&mut Ui) -> R) -> Option<R> {
-    section_count(ui, id, title, default_open, None, add)
+    section_count(ui, id, title, default_open, None::<usize>, add)
 }
 
 /// Section heading with an optional count badge; disclosure state uses the same identity.
@@ -133,7 +133,7 @@ pub(crate) fn section_count<R>(
     id: impl egui::AsIdSalt,
     title: &str,
     default_open: bool,
-    count: Option<usize>,
+    count: Option<impl std::fmt::Display>,
     add: impl FnOnce(&mut Ui) -> R,
 ) -> Option<R> {
     let t = Tokens::get();
