@@ -1735,4 +1735,70 @@ mod tests {
             assert_eq!(reader.drivers.choice(), driver, "the saved choice is not changed");
         }
     }
+
+    /// After the section's Restore (which puts the driver back to Automatic) the calibration that applies is
+    /// the one for the reader that is read now: the device's own when Automatic reads the device (it does
+    /// whenever it opens, so from Direct or from Spacenavd the device's calibration applies), and none when
+    /// the device cannot be opened and the daemon is read under its own key. Real reader, stand-in machine,
+    /// the app's own tick.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn after_a_restore_the_calibration_that_applies_is_the_one_of_the_reader_being_read() {
+        use machine::{Fake, IDS, Running};
+        let key = Source::Hid(Some(IDS)).key();
+        // (driver before, device opens, calibrated, key read after the restore, calibration applies after)
+        let cases = [
+            (SpaceMouseDriver::Direct, true, true, key.as_str(), true),
+            (SpaceMouseDriver::Direct, true, false, key.as_str(), false),
+            (SpaceMouseDriver::Spacenavd, true, true, key.as_str(), true),
+            (SpaceMouseDriver::Spacenavd, true, false, key.as_str(), false),
+            (SpaceMouseDriver::Direct, false, true, "spacenavd", false),
+        ];
+        for (before, openable, calibrated, expected, applies) in cases {
+            let fake = Fake::default();
+            *fake.world() = machine::World { device: true, daemon: true, openable, ..Default::default() };
+            let reader = Running::start(before, fake.clone());
+            let mut app = SolveApp::new(solidcraft_engine::Session::default(), solidcraft_ui_egui::Services::default());
+            app.home.open = false;
+            app.preferences.space_mouse_driver = before;
+            if calibrated {
+                app.preferences.space_mouse_calibrations.insert(key.clone(), resting_at_100());
+            }
+            let now = Instant::now();
+            let mut mouse = SpaceMouse {
+                shared: Arc::clone(&reader.shared),
+                drivers: Arc::clone(&reader.drivers),
+                last_frame: now,
+                driver_mapping: DriverMapping::object_mode(),
+                mapping_checked_at: now,
+                wheel: WheelGuard::default(),
+                started: now,
+                calibration: None,
+            };
+            let ctx = Context::default();
+            ctx.run_ui(egui::RawInput::default(), |_| {}).textures_delta.clear();
+            let mut settle = |mouse: &mut SpaceMouse, app: &mut SolveApp, want: &str| {
+                let until = Instant::now() + Duration::from_secs(3);
+                loop {
+                    fake.daemon_sends_a_record();
+                    mouse.tick_at(app, &ctx, Instant::now());
+                    if app.space_mouse.device.as_deref() == Some(want) {
+                        return;
+                    }
+                    assert!(Instant::now() < until, "{before:?}/{openable}: reading {:?}, not {want}", app.space_mouse.device);
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+            };
+            // The reader as the setting has it before the restore.
+            let first = if before == SpaceMouseDriver::Direct && openable { key.as_str() } else { "spacenavd" };
+            settle(&mut mouse, &mut app, first);
+            solidcraft_ui_egui::prefs::restore_space_mouse_defaults(&mut app);
+            assert_eq!(app.preferences.space_mouse_driver, SpaceMouseDriver::Automatic);
+            settle(&mut mouse, &mut app, expected);
+            assert_eq!(calibration(&app).is_some(), applies, "{before:?}/{openable}/{calibrated}: the calibration that applies");
+            if applies {
+                assert_eq!(app.preferences.space_mouse_calibrations.len(), 1, "nothing was copied between keys");
+            }
+        }
+    }
 }
