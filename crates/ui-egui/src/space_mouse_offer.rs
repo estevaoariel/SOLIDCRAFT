@@ -138,7 +138,7 @@ mod tests {
     }
 
     #[test]
-    fn the_notice_goes_after_fifteen_seconds() {
+    fn the_notice_goes_after_thirty_seconds() {
         assert!(!expired(100.0, 129.9) && expired(100.0, 130.0));
     }
 
@@ -207,6 +207,76 @@ mod preferences_tests {
             assert!(top.is_some_and(|layer| layer.id == egui::Id::new("sc_prefs")), "{device:?}: the layer on top at the window centre is {top:?}");
             assert!(h.app.prefs_window.open, "{device:?}: still open");
             assert!(crate::scenario::rect_of("dialog:window").is_some_and(|r| r.is_positive()), "{device:?}: the window is drawn");
+        }
+    }
+
+    /// Preferences stays open while the calibration notice comes and goes around it.
+    #[test]
+    fn the_notice_never_closes_preferences() {
+        for (open_first, frames_before) in [(false, 0), (false, 40), (true, 0), (true, 90)] {
+            let mut h = crate::scenario::Harness::new();
+            h.app.home.open = false;
+            h.app.custom_titlebar = true;
+            h.app.space_mouse.device = Some("hid 046d:c62b".into());
+            h.frames(3);
+            if open_first {
+                crate::prefs::open_at(&mut h.app, 1);
+            }
+            for _ in 0..frames_before {
+                h.frame();
+            }
+            if !open_first && frames_before > 0 {
+                assert!(h.app.space_mouse.offer_since.is_some(), "the notice is up before Preferences opens");
+            }
+            if !open_first {
+                h.step(&serde_json::json!({"click": {"handle": "appbar:file"}})).unwrap();
+                h.frames(3);
+                h.step(&serde_json::json!({"widget": "Preferences…"})).unwrap();
+            }
+            for frame in 0..200 {
+                h.frame();
+                assert!(h.app.prefs_window.open, "open_first {open_first}, before {frames_before}: closed at frame {frame}");
+                let window = crate::scenario::rect_of("dialog:window").expect("drawn");
+                // The window sizes itself over its first frames.
+                if frame < 4 {
+                    continue;
+                }
+                for f in [0.1_f32, 0.5, 0.9] {
+                    for g in [0.1_f32, 0.5, 0.9] {
+                        let at = window.min + egui::vec2(window.width() * f, window.height() * g);
+                        let top = h.ctx.layer_id_at(at);
+                        let order = h.ctx.memory(|m| m.areas().visible_layer_ids());
+                        assert!(top.is_some_and(|l| l.id == egui::Id::new("sc_prefs")), "frame {frame} at {at:?}: top is {top:?}; order {order:?}");
+                    }
+                }
+            }
+        }
+    }
+
+    /// The genuine first run: default settings, the start page up, a 3D mouse that connects, then
+    /// File, Preferences… by clicks. It stays open, on top, for 240 frames, with and without a
+    /// device (so with and without the calibration notice).
+    #[test]
+    fn a_fresh_profile_opens_preferences_from_the_start_page_and_keeps_it() {
+        for device in [None, Some("hid 046d:c62b"), Some("spacenavd")] {
+            let mut h = crate::scenario::Harness::new();
+            h.app.custom_titlebar = true;
+            h.app.home.open = true;
+            h.frames(3);
+            h.app.space_mouse.device = device.map(Into::into);
+            h.frames(30);
+            h.step(&serde_json::json!({"click": {"handle": "appbar:file"}})).unwrap();
+            h.frames(3);
+            h.step(&serde_json::json!({"widget": "Preferences…"})).unwrap_or_else(|e| panic!("{device:?}: {e}"));
+            for frame in 0..240 {
+                h.frame();
+                assert!(h.app.prefs_window.open, "{device:?}: closed at frame {frame}");
+                if frame > 4 {
+                    let window = crate::scenario::rect_of("dialog:window").expect("drawn");
+                    let top = h.ctx.layer_id_at(window.center());
+                    assert!(top.is_some_and(|l| l.id == egui::Id::new("sc_prefs")), "{device:?} frame {frame}: top is {top:?}");
+                }
+            }
         }
     }
 }
