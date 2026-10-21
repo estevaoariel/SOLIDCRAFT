@@ -72,6 +72,8 @@ pub struct Input {
     pub offer_hidden: std::collections::BTreeSet<String>,
     /// When the offer was last looked at (egui time): a long gap is time away, not time shown.
     pub offer_seen: f64,
+    /// The device last written to the log (one line per connect), `None` for none.
+    pub logged_device: Option<String>,
     /// The motion `navigate_frame` handed the view this frame (calibrated, reassigned, inverted and
     /// scaled), for the test model on the Preferences page to move with; none when the view got none.
     pub motion: Option<DeviceMotion>,

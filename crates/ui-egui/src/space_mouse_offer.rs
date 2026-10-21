@@ -601,4 +601,50 @@ mod preferences_tests {
         run(&mut h, 2.0);
         assert!(card_up(&h) && h.widget("Swap to Hidraw (Direct Driver)").is_none());
     }
+
+    /// The same device, plugged back in, gets what it had: its saved calibration applies, Preferences
+    /// calls it calibrated, and the offer stays away, whether Preferences was open or not and on whatever
+    /// node it comes up (the key is its ids).
+    #[test]
+    fn an_unplugged_and_replugged_device_keeps_its_calibration_and_is_not_offered_again() {
+        let axes =
+            std::array::from_fn(|source| solidcraft_space_mouse::AxisCalibration { source, reversed: false, rest: 0, dead_zone: 0, full: [350; 2] });
+        let calibration = solidcraft_space_mouse::Calibration { dead_zone_share: 0.0, kind: solidcraft_space_mouse::Kind::ReturnToCenter, axes };
+        for prefs_open in [false, true] {
+            let mut h = crate::scenario::Harness::new();
+            h.app.home.open = false;
+            h.app.preferences.space_mouse_calibrations.insert("hid 046d:c62b".into(), calibration);
+            h.app.space_mouse.device = Some("hid 046d:c62b".into());
+            if prefs_open {
+                crate::prefs::open_at(&mut h.app, 1);
+            }
+            run(&mut h, 2.0);
+            assert_eq!(crate::space_mouse::calibration(&h.app), Some(calibration));
+            // Unplugged (a few seconds), then back, on another node: the same key.
+            h.app.space_mouse.device = None;
+            run(&mut h, 4.0);
+            assert!(crate::space_mouse::calibration(&h.app).is_none(), "nothing to apply while it is away");
+            h.app.space_mouse.device = Some("hid 046d:c62b".into());
+            run(&mut h, 2.0);
+            assert_eq!(crate::space_mouse::calibration(&h.app), Some(calibration), "prefs_open {prefs_open}: the calibration applies again");
+            assert!(!card_up(&h) && h.app.space_mouse.offer_since.is_none(), "no offer for a calibrated device");
+            assert!(h.app.preferences.space_mouse_offered.is_empty() && h.app.preferences.space_mouse_calibrations.contains_key("hid 046d:c62b"));
+        }
+    }
+
+    /// A device that was already offered (closed, say) is not offered again when it is plugged back in.
+    #[test]
+    fn a_device_already_offered_is_not_offered_again_after_a_replug() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.home.open = false;
+        h.app.preferences.space_mouse_offered.insert("hid 046d:c62b".into());
+        h.app.space_mouse.device = Some("hid 046d:c62b".into());
+        run(&mut h, 2.0);
+        assert!(!card_up(&h));
+        h.app.space_mouse.device = None;
+        run(&mut h, 3.0);
+        h.app.space_mouse.device = Some("hid 046d:c62b".into());
+        run(&mut h, 3.0);
+        assert!(!card_up(&h) && h.app.space_mouse.offer_since.is_none());
+    }
 }

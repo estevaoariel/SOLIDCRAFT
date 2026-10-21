@@ -198,6 +198,17 @@ enum Source {
 }
 
 impl Source {
+    /// Which read path the source is, for the log.
+    fn path(self) -> &'static str {
+        match self {
+            Self::Hid(_) => "the hidraw device",
+            #[cfg(target_os = "linux")]
+            Self::Spacenavd => "spacenavd",
+            #[cfg(target_os = "macos")]
+            Self::Driver => "the 3Dconnexion driver",
+        }
+    }
+
     fn key(self) -> String {
         match self {
             Self::Hid(Some((vendor, product))) => format!("hid {vendor:04x}:{product:04x}"),
@@ -522,6 +533,13 @@ fn direct_usable(found: bool, since_failed: Option<Duration>) -> bool {
     found && since_failed.is_none_or(|ago| ago >= UNREADABLE_RETRY)
 }
 
+/// Whether a read of `pick` should end because the direct device, absent when it began, is there now
+/// and would be the choice: the daemon was read for want of the device, and the device is back.
+#[cfg(target_os = "linux")]
+fn switch_back(wanted: SpaceMouseDriver, pick: Option<Pick>, present: DriversPresent, direct_at_start: bool, failed: Option<Duration>) -> bool {
+    !direct_at_start && choose(wanted, present.spacenavd, direct_usable(present.direct, failed)) != pick
+}
+
 /// Which reader to use: the one asked for when it is there, else the other, else none. Automatic
 /// asks for spacenavd, which is what has always been read first.
 #[cfg(target_os = "linux")]
@@ -582,10 +600,16 @@ fn reader(ctx: Context, shared: Arc<Mutex<Reading>>, drivers: Arc<Drivers>) {
         }
         // Asked at every idle moment of a read: has the choice changed, and what is there now.
         let mut looked = Instant::now();
+        let (direct_at_start, failed_at) = (present.direct, unreadable);
         let mut stop = || {
             if looked.elapsed() >= LOOK_EVERY {
                 looked = Instant::now();
-                drivers.publish(look());
+                let now_present = look();
+                drivers.publish(now_present);
+                // The device came back (replugged) while the daemon was being read in its place.
+                if switch_back(wanted, pick, now_present, direct_at_start, failed_at.map(|at| at.elapsed())) {
+                    return true;
+                }
             }
             drivers.choice() != wanted
         };
@@ -775,6 +799,20 @@ impl SpaceMouse {
         }
         let Ok(reading) = self.shared.lock().map(|reading| *reading) else { return };
         app.space_mouse.device = reading.device.map(Source::key);
+        // One line per connect or reconnect: which device, which read path, and what is saved for it.
+        if app.space_mouse.logged_device != app.space_mouse.device {
+            if let (Some(key), Some(source)) = (&app.space_mouse.device, reading.device) {
+                log::info!(
+                    "3D mouse: {key} read through {}; saved calibration: {}; calibration offered before: {}",
+                    source.path(),
+                    app.preferences.space_mouse_calibrations.contains_key(key),
+                    app.preferences.space_mouse_offered.contains(key),
+                );
+            } else {
+                log::info!("3D mouse: no device");
+            }
+            app.space_mouse.logged_device = app.space_mouse.device.clone();
+        }
         let calibration = calibration(app);
         self.calibration = reading.device.zip(calibration);
         // While this device is being calibrated, an axis with nothing fresh reads 0, as a HID
@@ -999,6 +1037,32 @@ mod tests {
             assert_eq!(held.current(now + HELD_SETTLE_AFTER - Duration::from_millis(1), Axes::default()), axes);
             assert_eq!(held.current(now + HELD_SETTLE_AFTER, Axes::default()), Axes::default());
         }
+    }
+
+    /// Unplug and replug under a driver choice of Direct: the daemon is read while the device is
+    /// away, and the read ends when the device is back, so the device's own key, and with it the saved
+    /// calibration, applies again (it stayed on the daemon, whose key has no calibration, before).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_replugged_device_takes_the_reading_back_from_the_daemon_it_fell_back_to() {
+        use SpaceMouseDriver::{Automatic, Direct, Spacenavd};
+        let both = DriversPresent { spacenavd: true, direct: true };
+        let only_daemon = DriversPresent { spacenavd: true, direct: false };
+        // Direct asked for, unplugged: the daemon is read. It comes back: switch.
+        let pick = choose(Direct, true, false);
+        assert_eq!(pick, Some(Pick::Spacenavd));
+        assert!(switch_back(Direct, pick, both, false, None));
+        assert!(!switch_back(Direct, pick, only_daemon, false, None), "still away");
+        // A device that was there at the start (but could not be opened) does not make the read flap.
+        assert!(!switch_back(Direct, pick, both, true, Some(Duration::ZERO)));
+        // Within the backoff after a failed open, not yet.
+        assert!(!switch_back(Direct, pick, both, false, Some(Duration::from_secs(1))));
+        // Automatic and Spacenavd keep the daemon whatever else appears.
+        for wanted in [Automatic, Spacenavd] {
+            assert!(!switch_back(wanted, Some(Pick::Spacenavd), both, false, None), "{wanted:?}");
+        }
+        // The key a replugged device gets is its ids, whatever hidraw node it comes up on.
+        assert_eq!(Source::Hid(Some((0x046d, 0xc62b))).key(), "hid 046d:c62b");
     }
 
     #[cfg(target_os = "linux")]
