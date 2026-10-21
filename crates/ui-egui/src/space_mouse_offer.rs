@@ -575,6 +575,55 @@ mod preferences_tests {
         }
     }
 
+    /// A click that lands after the device changed acts on the device now shown (the card is drawn
+    /// afresh for it) or on nothing: never on the device the card was first drawn for.
+    #[test]
+    fn a_click_after_the_device_changed_acts_on_the_device_now_shown_or_on_nothing() {
+        let (first, second) = ("spacenavd", "hid 256f:c63a");
+        let mut h = spacenavd_harness();
+        run(&mut h, 2.0);
+        assert!(card_up(&h));
+        h.app.space_mouse.device = Some(second.into());
+        h.step(&serde_json::json!({"widget": "Calibrate…"})).unwrap();
+        h.frames(3);
+        // The card is drawn afresh for the new device in the frame of the click, which may or may not take the
+        // click; either way nothing is done for the device it was first drawn for.
+        let wizard = h.app.space_mouse.calibrating.as_ref().map(|(device, _)| device.as_str());
+        assert!(wizard.is_none() || wizard == Some(second), "wizard for {wizard:?}");
+        assert!(!h.app.preferences.space_mouse_offered.contains(first), "nothing recorded for the first device");
+        // The device went away: the click finds no card.
+        let mut h = spacenavd_harness();
+        run(&mut h, 2.0);
+        assert!(card_up(&h));
+        let before = h.app.preferences.clone();
+        h.app.space_mouse.device = None;
+        h.step(&serde_json::json!({"widget": "Calibrate…"})).ok();
+        h.frames(3);
+        assert!(h.app.space_mouse.calibrating.is_none() && !h.app.prefs_window.open, "no wizard for a device that is gone");
+        assert_eq!(h.app.preferences, before);
+    }
+
+    /// Behind a guard that became active after the card was drawn (an issue report taking input), none of the
+    /// card's four buttons does anything.
+    #[test]
+    fn a_click_after_a_guard_became_active_does_nothing_behind_it() {
+        for widget in ["Calibrate…", "Close", "Never show again", "Swap to Hidraw (Direct Driver)"] {
+            let mut h = spacenavd_harness();
+            run(&mut h, 2.0);
+            assert!(card_up(&h), "{widget}");
+            let before = h.app.preferences.clone();
+            crate::issue_report::set_cad_input_blocked_for_test(true);
+            h.step(&serde_json::json!({"widget": widget})).ok();
+            h.frames(3);
+            crate::issue_report::set_cad_input_blocked_for_test(false);
+            assert!(h.app.space_mouse.calibrating.is_none() && !h.app.prefs_window.open, "{widget}: no wizard, no Preferences");
+            assert_eq!(h.app.preferences, before, "{widget}: nothing recorded or changed");
+            // And the card is back once the guard is gone, untouched.
+            run(&mut h, 1.0);
+            assert!(card_up(&h), "{widget}: the card is still offered");
+        }
+    }
+
     /// A different device key while the offer is up gets its own offer (its own calibration key); the
     /// first one is left alone, with no record made for either.
     #[test]

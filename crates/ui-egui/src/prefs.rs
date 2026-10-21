@@ -2667,6 +2667,39 @@ mod tests {
         assert!(!next.app.space_mouse.restore_pending);
     }
 
+    /// The visible Calibrate button on the offer's card and the one in Preferences both open the wizard
+    /// for the device, at its first screen, with Preferences open.
+    #[test]
+    fn the_calibrate_buttons_on_the_card_and_in_preferences_start_the_same_wizard() {
+        let wizard = |h: &crate::scenario::Harness| {
+            h.app.space_mouse.calibrating.as_ref().map(|(device, wizard)| (device.clone(), format!("{:?} {:?}", wizard.stage(), wizard.kind())))
+        };
+        let harness = || {
+            let mut h = crate::scenario::Harness::new();
+            h.app.home.open = false;
+            h.app.space_mouse.device = Some("spacenavd".into());
+            h.call("ui.resize", serde_json::json!({"width": 1600, "height": 4000}));
+            h
+        };
+        // The card's.
+        let mut card = harness();
+        card.frames(120);
+        assert!(card.app.space_mouse.offer_since.is_some() && card.app.space_mouse.calibrating.is_none());
+        card.step(&serde_json::json!({"widget": "Calibrate…"})).unwrap();
+        card.frames(5);
+        // Preferences'.
+        let mut prefs = harness();
+        crate::prefs::open_at(&mut prefs.app, 1);
+        prefs.frames(6);
+        scroll_to_and_click(&mut prefs, "dialog:section:3D mouse");
+        prefs.frames(30);
+        assert!(prefs.app.space_mouse.calibrating.is_none());
+        scroll_to_and_click(&mut prefs, "dialog:button:3D mouse calibration:Calibrate…");
+        assert!(card.app.prefs_window.open && prefs.app.prefs_window.open);
+        assert!(wizard(&card).is_some(), "the card's button started it");
+        assert_eq!(wizard(&card), wizard(&prefs), "and Preferences' starts the same one");
+    }
+
     /// The circles' tooltips come from the one function the rows' labels come from, after a
     /// reassignment, for both kinds of driver mapping (and none), and an inverted axis reads the same.
     #[test]
