@@ -105,10 +105,7 @@ pub(super) fn fixtures() -> Vec<(&'static str, Value)> {
         ("pipe", json!({"type": "pipe", "path_sketch": 1, "path": ["l1"], "diameter": "pipe.diameter", "wall": "pipe.wall"})),
         ("emboss", json!({"type": "emboss", "sketch": 1, "profiles": {"type": "all"}, "depth": "emboss.depth"})),
         ("rib", json!({"type": "rib", "sketch": 1, "curves": ["l1"], "thickness": "rib.thickness", "depth": "rib.depth"})),
-        (
-            "cam_groove",
-            json!({"type": "cam_groove", "sketch": 1, "path": ["l1"], "depth": "cam_groove.depth", "width": "cam_groove.width"}),
-        ),
+        ("cam_groove", json!({"type": "cam_groove", "sketch": 1, "path": ["l1"], "depth": "cam_groove.depth", "width": "cam_groove.width"})),
         ("replace_face", json!({"type": "replace_face", "faces": [o], "target": plane("replace_face")})),
         ("align", json!({"type": "align", "bodies": ["B"], "from": o, "to": o})),
         (

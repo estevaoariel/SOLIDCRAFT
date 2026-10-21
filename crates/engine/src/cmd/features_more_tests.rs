@@ -1698,11 +1698,7 @@ fn a_cam_groove_needs_a_cylindrical_wall() {
 fn a_sketch_wraps_onto_a_cylindrical_wall() {
     let mut s = Session::default();
     run(&mut s, "solid.cylinder", json!({"radius": 10, "height": 20, "body_name": "Sleeve"}));
-    run(
-        &mut s,
-        "sketch.create",
-        json!({"plane": {"origin": [0, 10, 10], "x_dir": [-1, 0, 0], "y_dir": [0, 0, 1]}, "name": "Track"}),
-    );
+    run(&mut s, "sketch.create", json!({"plane": {"origin": [0, 10, 10], "x_dir": [-1, 0, 0], "y_dir": [0, 0, 1]}, "name": "Track"}));
     run(&mut s, "sketch.line", json!({"points": [[-6, -1], [6, 1]]}));
     run(&mut s, "sketch.finish", json!({}));
     let w = run(&mut s, "sketch.wrap", json!({"sketch": "Track", "face": [0, 10, 10]}));
@@ -1734,21 +1730,10 @@ fn a_sketch_wraps_onto_a_cylindrical_wall() {
 fn a_cam_groove_is_cut_on_a_wall_a_collar_interrupts() {
     let mut s = Session::default();
     run(&mut s, "solid.cylinder", json!({"radius": 10, "height": 18, "body_name": "Sleeve"}));
-    run(
-        &mut s,
-        "solid.cylinder",
-        json!({"radius": 8, "height": 2, "base": [0, 0, 18], "operation": "join", "body_name": "Collar"}),
-    );
-    let volume = |s: &Session, name: &str| {
-        s.model.state().body(name).unwrap().body.tessellate_with(1e-4, true).unwrap().measure().volume
-    };
+    run(&mut s, "solid.cylinder", json!({"radius": 8, "height": 2, "base": [0, 0, 18], "operation": "join", "body_name": "Collar"}));
+    let volume = |s: &Session, name: &str| s.model.state().body(name).unwrap().body.tessellate_with(1e-4, true).unwrap().measure().volume;
     let sleeve = volume(&s, "Sleeve");
-    let collar = volume(&s, "Collar");
-    run(
-        &mut s,
-        "sketch.create",
-        json!({"plane": {"origin": [0, 10, 9], "x_dir": [-1, 0, 0], "y_dir": [0, 0, 1]}, "name": "Track"}),
-    );
+    run(&mut s, "sketch.create", json!({"plane": {"origin": [0, 10, 9], "x_dir": [-1, 0, 0], "y_dir": [0, 0, 1]}, "name": "Track"}));
     run(&mut s, "sketch.line", json!({"points": [[-6, -1], [6, 1]]}));
     let sketch = s.active_sketch.unwrap();
     let curve = {
@@ -1756,15 +1741,13 @@ fn a_cam_groove_is_cut_on_a_wall_a_collar_interrupts() {
         st.sketch(sketch).unwrap().sketch.curves[0].id.clone()
     };
     run(&mut s, "sketch.finish", json!({}));
-    run(
-        &mut s,
-        "solid.cam_groove",
-        json!({"sketch": "Track", "path": [curve], "depth": 1, "width": 4, "targets": ["Sleeve"], "name": "Cam Track"}),
-    );
+    run(&mut s, "solid.cam_groove", json!({"sketch": "Track", "path": [curve], "depth": 1, "width": 4, "targets": ["Sleeve"], "name": "Cam Track"}));
     // The groove is cut, and it is the band the path swept out.
     let length = 12.0_f64.hypot(2.0);
     let want = length * 4.0 * 1.0 * (1.0 - 1.0 / (2.0 * 10.0));
     assert!((sleeve - volume(&s, "Sleeve") - want).abs() < 0.05 * want, "{} vs {want}", sleeve - volume(&s, "Sleeve"));
-    // The collar is left alone.
-    assert!((volume(&s, "Collar") - collar).abs() < 1e-6);
+    // The shoulder above is left alone: the groove is in the wall below it.
+    let mesh = s.model.state().body("Sleeve").unwrap().body.tessellate_with(0.01, true).unwrap();
+    assert!(mesh.contains(solidcraft_geom::Vec3::new(0.0, 7.5, 19.0)), "the shoulder was cut into");
+    assert!(!mesh.contains(solidcraft_geom::Vec3::new(0.0, 9.5, 9.0)), "the groove is missing");
 }
