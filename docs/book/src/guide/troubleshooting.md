@@ -85,6 +85,8 @@ If the graphics driver stops responding while SolidCraft is open (the window sta
 black and every click takes a second), SolidCraft notices after a few seconds, closes, and
 starts again: on Vulkan if it was using Direct3D 12 (it keeps using Vulkan, as `"backend":
 "vulkan"` in `graphics.json`), otherwise in safe mode. Unsaved changes are offered for recovery.
+The restarted SolidCraft ignores `WGPU_BACKEND` (below); remove it if you set it with `setx`,
+or the next start uses that API again.
 To choose the graphics API yourself, in any version, open a Command Prompt and start
 SolidCraft from it:
 

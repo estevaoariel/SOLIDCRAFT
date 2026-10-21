@@ -213,11 +213,12 @@ impl App {
 }
 
 /// Start SolidCraft again after the GPU hung on `hung`, with the same arguments: in safe mode, or
-/// on the backend [`remember_backend`] saved.
+/// on the backend [`remember_backend`] saved. `WGPU_BACKEND` is not passed on: it would win over
+/// that backend and start the one that hung again.
 fn restart_after_hang(restart: startup::Restart, hung: eframe::wgpu::Backend) {
     let Ok(exe) = std::env::current_exe() else { return };
     let mut command = std::process::Command::new(exe);
-    command.args(std::env::args_os().skip(1)).env(startup::HUNG_ENV, format!("{hung:?}"));
+    command.args(std::env::args_os().skip(1)).env(startup::HUNG_ENV, format!("{hung:?}")).env_remove(startup::WGPU_BACKEND_ENV);
     if restart == startup::Restart::SafeMode {
         command.arg("--safe-mode");
     }

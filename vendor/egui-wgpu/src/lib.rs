@@ -83,7 +83,9 @@ pub fn stalled_frames() -> u32 {
     STALLED_FRAMES.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-/// The frames in a row that stalled, after one whose texture took `elapsed`.
+/// The frames in a row that stalled, after one whose texture took `elapsed`. Only the `winit`
+/// painter acquires textures.
+#[cfg_attr(not(feature = "winit"), allow(dead_code))]
 fn count_stall(stalled: u32, elapsed: std::time::Duration) -> u32 {
     if elapsed >= STALLED_ACQUIRE {
         stalled.saturating_add(1)
@@ -92,6 +94,7 @@ fn count_stall(stalled: u32, elapsed: std::time::Duration) -> u32 {
     }
 }
 
+#[cfg_attr(not(feature = "winit"), allow(dead_code))]
 pub(crate) fn note_acquire(elapsed: std::time::Duration) {
     let stalled = count_stall(stalled_frames(), elapsed);
     STALLED_FRAMES.store(stalled, std::sync::atomic::Ordering::Relaxed);
