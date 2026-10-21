@@ -1788,7 +1788,7 @@
   "ui.space_mouse_reset_axes": "Restablecer asignación de ejes",
   "ui.space_mouse_reset_view": "Restablecer vista",
   "ui.space_mouse_restore": "Restablecer valores del ratón 3D",
-  "ui.space_mouse_restore_ask": "¿Restablecer los ajustes del ratón 3D a sus valores predeterminados? Se conserva la calibración.",
+  "ui.space_mouse_restore_ask": "¿Restablecer a sus valores predeterminados el controlador, la velocidad, la inversión, la velocidad y la asignación de cada eje, y la posición de la imagen y si se muestra en la vista 3D? La calibración, la asignación de botones y el modelo de prueba se conservan.",
   "ui.space_mouse_section": "Ratón 3D",
   "ui.space_mouse_show_in_view": "Mostrar el ratón 3D en la vista 3D",
   "ui.space_mouse_show_in_view_tip": "Una imagen de tu ratón 3D en la esquina inferior izquierda que se mueve cuando lo mueves.",

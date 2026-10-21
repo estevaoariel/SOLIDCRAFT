@@ -1788,7 +1788,7 @@
   "ui.space_mouse_reset_axes": "축 지정 초기화",
   "ui.space_mouse_reset_view": "보기 초기화",
   "ui.space_mouse_restore": "3D 마우스 기본값 복원",
-  "ui.space_mouse_restore_ask": "3D 마우스 설정을 기본값으로 복원할까요? 보정은 유지됩니다.",
+  "ui.space_mouse_restore_ask": "드라이버, 속도, 각 축의 반전·속도·할당, 그림의 위치, 3D 보기에 표시 여부를 기본값으로 되돌릴까요? 보정, 버튼 할당, 테스트 모델은 유지됩니다.",
   "ui.space_mouse_section": "3D 마우스",
   "ui.space_mouse_show_in_view": "3D 뷰에 3D 마우스 표시",
   "ui.space_mouse_show_in_view_tip": "왼쪽 아래에 3D 마우스 그림을 띄워 움직임을 따라 보여 줍니다.",

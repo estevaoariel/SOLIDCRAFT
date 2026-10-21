@@ -1603,20 +1603,28 @@ fn space_mouse_section(app: &mut SolveApp, ui: &mut egui::Ui) {
             });
             // Restore this section's settings (after asking); the calibration, the button mapping and the
             // test model are not touched.
-            ui_kit::row(ui, "", |ui| {
-                if app.space_mouse.restore_pending {
+            if app.space_mouse.restore_pending {
+                // The question names what is reset and what is kept, on its own line so that it wraps at
+                // any width; the buttons are under it.
+                ui_kit::row(ui, "", |ui| {
                     ui_kit::text(ui, app.tr("ui.space_mouse_restore_ask"), ui_kit::Text::Note("space_mouse_restore_ask"));
-                    if ui_kit::button(ui, app.tr("ui.restore_defaults"), ui_kit::Button::Normal).clicked() {
+                });
+                ui_kit::row(ui, "", |ui| {
+                    if ui_kit::button(ui, app.tr("ui.space_mouse_restore"), ui_kit::Button::Normal).clicked() {
                         restore_space_mouse_defaults(app);
                         app.space_mouse.restore_pending = false;
                     }
                     if ui_kit::button(ui, app.tr("ui.cancel"), ui_kit::Button::Normal).clicked() {
                         app.space_mouse.restore_pending = false;
                     }
-                } else if ui_kit::button(ui, app.tr("ui.space_mouse_restore"), ui_kit::Button::Normal).clicked() {
-                    app.space_mouse.restore_pending = true;
-                }
-            });
+                });
+            } else {
+                ui_kit::row(ui, "", |ui| {
+                    if ui_kit::button(ui, app.tr("ui.space_mouse_restore"), ui_kit::Button::Normal).clicked() {
+                        app.space_mouse.restore_pending = true;
+                    }
+                });
+            }
             // Only where the reader has seen the choice: Linux, with spacenavd and the device both there.
             if let Some(present) = app.space_mouse.drivers.filter(|present| present.spacenavd || present.direct) {
                 let [label, auto, direct, only_spacenavd, only_direct] =
@@ -2426,17 +2434,24 @@ mod tests {
         assert!(top.is_some_and(|layer| layer.id == egui::Id::new("sc_space_mouse_calibration")), "top is {top:?}");
     }
 
-    /// Scrolls the open page until the handle is inside the page body, then clicks it (the harness has
+    /// Scrolls the open page until the handle is well inside the page body (not at its clipped edge), then clicks it (the harness has
     /// no scroll step, so the wheel is sent the way a mouse would).
     fn scroll_to_and_click(h: &mut crate::scenario::Harness, handle: &str) {
-        for _ in 0..60 {
+        for step in 0..60 {
             let body = crate::scenario::rect_of("prefs:page_body").expect("the page body");
+            // Well inside the body while the page can still scroll, at its edge when it cannot.
+            let margin = if step < 30 { 40.0 } else { 0.0 };
             if let Some(at) = crate::scenario::handle_at(handle)
-                && body.contains(egui::pos2(at.x, at.y))
+                && body.shrink(margin).contains(egui::pos2(at.x, at.y))
             {
-                h.step(&serde_json::json!({"click": {"handle": handle}})).unwrap();
-                h.frames(5);
-                return;
+                // The wheel scrolls smoothly: let it come to rest, then click where the handle is now.
+                h.frames(20);
+                let at = crate::scenario::handle_at(handle).unwrap_or(at);
+                if body.contains(egui::pos2(at.x, at.y)) {
+                    h.step(&serde_json::json!({"click": {"handle": handle}})).unwrap();
+                    h.frames(5);
+                    return;
+                }
             }
             h.app.synthetic.push(egui::Event::PointerMoved(body.center()));
             h.app.synthetic.push(egui::Event::MouseWheel {
@@ -2528,6 +2543,82 @@ mod tests {
         // And it asks first: the button only arms it.
         assert!(!h.app.space_mouse.restore_pending);
         assert!(include_str!("prefs.rs").contains("app.space_mouse.restore_pending = true;"));
+    }
+
+    /// Opens Preferences on the Navigation page with the 3D mouse section unfolded and these settings
+    /// changed from their defaults, as a person who changed them would find it.
+    fn changed_3d_mouse_settings(device: Option<&str>) -> crate::scenario::Harness {
+        let mut h = crate::scenario::Harness::new();
+        h.app.home.open = false;
+        h.app.space_mouse.device = device.map(str::to_owned);
+        let axes =
+            std::array::from_fn(|source| solidcraft_space_mouse::AxisCalibration { source, reversed: false, rest: 0, dead_zone: 0, full: [350; 2] });
+        let calibration = solidcraft_space_mouse::Calibration { dead_zone_share: 0.2, kind: solidcraft_space_mouse::Kind::ReturnToCenter, axes };
+        let p = &mut h.app.preferences;
+        p.space_mouse_calibrations.insert("hid 046d:c62b".into(), calibration);
+        p.space_mouse_driver = SpaceMouseDriver::Direct;
+        p.space_mouse_speed = 2.5;
+        p.space_mouse_reverse = [true; 6];
+        p.space_mouse_axis_speed = [0.25; 6];
+        p.space_mouse_axis_source = [1, 0, 2, 3, 4, 5];
+        p.space_mouse_ghost_position = SpaceMouseGhost::LeftWindow;
+        p.space_mouse_in_view = true;
+        h.call("ui.resize", serde_json::json!({"width": 1600, "height": 4000}));
+        crate::prefs::open_at(&mut h.app, 1);
+        h.frames(6);
+        scroll_to_and_click(&mut h, "dialog:section:3D mouse");
+        h.frames(30);
+        h
+    }
+
+    /// The question says what goes back to its default and what stays, in every language.
+    #[test]
+    fn the_restore_question_names_the_settings_it_resets_and_the_ones_it_keeps() {
+        let english = crate::i18n::tr("ui.space_mouse_restore_ask");
+        for word in ["driver", "speed", "invert", "assignment", "position", "3D view", "calibration", "button mapping", "test model"] {
+            assert!(english.contains(word), "{word} is not named in: {english}");
+        }
+        for catalog in crate::i18n::LOCALES {
+            let text = crate::i18n::Locale::for_language(catalog.id).text("ui.space_mouse_restore_ask");
+            assert!(text.chars().count() > 40 && text != "ui.space_mouse_restore_ask", "{}", catalog.id);
+        }
+    }
+
+    /// Cancel on the question leaves every setting as it was, and the question goes away.
+    #[test]
+    fn cancelling_the_restore_question_changes_nothing() {
+        let mut h = changed_3d_mouse_settings(Some("hid 046d:c62b"));
+        let before = h.app.preferences.clone();
+        scroll_to_and_click(&mut h, "dialog:button::Restore 3D mouse defaults");
+        assert!(h.app.space_mouse.restore_pending, "the first click only asks");
+        assert_eq!(h.app.preferences, before, "asking changes nothing");
+        scroll_to_and_click(&mut h, "dialog:button::Cancel");
+        assert!(!h.app.space_mouse.restore_pending);
+        assert_eq!(h.app.preferences, before);
+    }
+
+    /// Accepting works with no device connected, and a device connecting afterwards does not bring the
+    /// old values back (nothing is kept apart from the preferences, and the calibration stays).
+    #[test]
+    fn restoring_with_no_device_works_and_a_later_connection_brings_nothing_back() {
+        let mut h = changed_3d_mouse_settings(None);
+        let calibrations = h.app.preferences.space_mouse_calibrations.clone();
+        scroll_to_and_click(&mut h, "dialog:button::Restore 3D mouse defaults");
+        scroll_to_and_click(&mut h, "dialog:button::Restore 3D mouse defaults");
+        assert!(!h.app.space_mouse.restore_pending);
+        let d = Prefs::default();
+        let restored = |h: &crate::scenario::Harness| {
+            let p = &h.app.preferences;
+            (p.space_mouse_driver, p.space_mouse_speed, p.space_mouse_reverse, p.space_mouse_axis_speed, p.space_mouse_axis_source)
+                == (d.space_mouse_driver, d.space_mouse_speed, d.space_mouse_reverse, d.space_mouse_axis_speed, d.space_mouse_axis_source)
+                && (p.space_mouse_ghost_position, p.space_mouse_in_view) == (d.space_mouse_ghost_position, d.space_mouse_in_view)
+        };
+        assert!(restored(&h), "restored with the device away");
+        // The device connects (and its calibration applies): the defaults stay.
+        h.app.space_mouse.device = Some("hid 046d:c62b".into());
+        h.frames(30);
+        assert!(restored(&h), "still the defaults after the device connected");
+        assert_eq!(h.app.preferences.space_mouse_calibrations, calibrations, "its calibration is kept");
     }
 
     /// The circles say what the view does with their axes in the rows' own words, and keep saying it

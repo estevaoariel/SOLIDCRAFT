@@ -1788,7 +1788,7 @@
   "ui.space_mouse_reset_axes": "Redefinir atribuição de eixos",
   "ui.space_mouse_reset_view": "Redefinir visualização",
   "ui.space_mouse_restore": "Restaurar padrões do mouse 3D",
-  "ui.space_mouse_restore_ask": "Restaurar as configurações do mouse 3D para o padrão? Sua calibração é mantida.",
+  "ui.space_mouse_restore_ask": "Restaurar os padrões do driver, da velocidade, da inversão, da velocidade e da atribuição de cada eixo, e da posição da imagem e de se ela aparece na vista 3D? A calibração, o mapeamento dos botões e o modelo de teste são mantidos.",
   "ui.space_mouse_section": "Mouse 3D",
   "ui.space_mouse_show_in_view": "Mostrar o mouse 3D na vista 3D",
   "ui.space_mouse_show_in_view_tip": "Uma imagem do seu mouse 3D no canto inferior esquerdo, que se move quando você o move.",

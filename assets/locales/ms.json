@@ -1773,7 +1773,7 @@
   "ui.space_mouse_reading": "Bacaan",
   "ui.space_mouse_reset_view": "Set semula paparan",
   "ui.space_mouse_restore": "Pulihkan lalai tetikus 3D",
-  "ui.space_mouse_restore_ask": "Pulihkan tetapan tetikus 3D kepada lalai? Penentukuran anda dikekalkan.",
+  "ui.space_mouse_restore_ask": "Pulihkan kepada lalai: pemacu, kelajuan, pembalikan, kelajuan dan penetapan setiap paksi, serta kedudukan gambar dan sama ada ia dipaparkan dalam paparan 3D? Penentukuran, pemetaan butang dan model ujian dikekalkan.",
   "ui.space_mouse_section": "Tetikus 3D",
   "ui.space_mouse_show_in_view": "Tunjukkan tetikus 3D dalam paparan 3D",
   "ui.space_mouse_show_in_view_tip": "Gambar tetikus 3D anda di sudut kiri bawah, yang bergerak apabila anda menggerakkannya.",

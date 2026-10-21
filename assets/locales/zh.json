@@ -1796,7 +1796,7 @@
   "ui.space_mouse_reset_axes": "重置轴分配",
   "ui.space_mouse_reset_view": "重置视图",
   "ui.space_mouse_restore": "恢复 3D 鼠标默认设置",
-  "ui.space_mouse_restore_ask": "将 3D 鼠标设置恢复为默认值吗？校准会保留。",
+  "ui.space_mouse_restore_ask": "要将驱动程序、速度、各轴的反向、速度和分配，以及图片位置和是否显示在 3D 视图中恢复为默认值吗？校准、按钮映射和测试模型会保留。",
   "ui.space_mouse_section": "3D 鼠标",
   "ui.space_mouse_show_in_view": "在 3D 视图中显示 3D 鼠标",
   "ui.space_mouse_show_in_view_tip": "在左下角显示你的 3D 鼠标图示，随你的操作而动。",

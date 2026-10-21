@@ -1788,7 +1788,7 @@
   "ui.space_mouse_reset_axes": "Obnovit přiřazení os",
   "ui.space_mouse_reset_view": "Obnovit pohled",
   "ui.space_mouse_restore": "Obnovit výchozí nastavení 3D myši",
-  "ui.space_mouse_restore_ask": "Obnovit výchozí nastavení 3D myši? Kalibrace zůstane zachována.",
+  "ui.space_mouse_restore_ask": "Obnovit výchozí hodnoty ovladače, rychlosti, převrácení, rychlosti a přiřazení každé osy a také polohy obrázku a zobrazení ve 3D pohledu? Kalibrace, mapování tlačítek a zkušební model zůstanou zachovány.",
   "ui.space_mouse_section": "3D myš",
   "ui.space_mouse_show_in_view": "Zobrazit 3D myš ve 3D pohledu",
   "ui.space_mouse_show_in_view_tip": "Obrázek vaší 3D myši v levém dolním rohu, který se hýbe s ní.",
