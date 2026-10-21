@@ -29,7 +29,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("solid.revolve", "Revolve", revolve)
         .at("SOLID", "CREATE")
         .icon("revolve")
-        .params("axis: sketch line id | x | y (sketch axes) | X|Y|Z (world); angle?: expr (default 360 deg); angle2?: expr (Two Sides: the other side's angle); direction?: symmetric (angle split either side, independent of axis direction); convention?: sketch_normal|legacy_axis_start (default sketch_normal; legacy retains older angular starts); to?: [x,y,z] (To Object: turn until that face, vertex or point); sketch?, profiles? | face: [x,y,z] (a planar body face as the profile) and face_body?: name (whose face, where faces of several bodies meet), operation?, targets?, name?, body_name?"),
+        .params("axis: sketch line id | construction axis name | x | y (sketch axes) | X|Y|Z (world); angle?: expr (default 360 deg); angle2?: expr (Two Sides: the other side's angle); direction?: symmetric (angle split either side, independent of axis direction); convention?: sketch_normal|legacy_axis_start (default sketch_normal; legacy retains older angular starts); to?: [x,y,z] (To Object: turn until that face, vertex or point); sketch?, profiles? | face: [x,y,z] (a planar body face as the profile) and face_body?: name (whose face, where faces of several bodies meet), operation?, targets?, name?, body_name?"),
     CommandSpec::new("solid.sweep", "Sweep", sweep)
         .at("SOLID", "CREATE")
         .icon("sweep")
@@ -816,7 +816,7 @@ fn revolve(s: &mut Session, p: &Value) -> Result<Value> {
         }
         None => (feature_sketch(s, p, cmd)?, None),
     };
-    let axis = axis_param(p, cmd)?;
+    let axis = construction_axis(s, sketch, axis_param(p, cmd)?);
     let angle = expr(p, "angle").unwrap_or_else(|| "360 deg".into());
     check_expr(s, &angle, Kind::Angle, cmd, "angle")?;
     let profiles = match face_profile {
@@ -852,8 +852,20 @@ fn revolve(s: &mut Session, p: &Value) -> Result<Value> {
     add_feature(s, p, kind)
 }
 
-/// A revolve axis from its parameter: a sketch line id, the sketch's x or y axis, a world axis,
-/// or {origin, dir}.
+/// A name that is no line of the revolved sketch but a construction axis feature's names that
+/// axis: the revolve keeps following it.
+pub(super) fn construction_axis(s: &Session, sketch: u64, axis: AxisRef) -> AxisRef {
+    if let AxisRef::SketchLine { curve } = &axis
+        && !matches!(s.doc.feature(sketch).map(|f| &f.kind), Some(FeatureKind::Sketch { sketch, .. }) if sketch.curve_index(curve).is_some())
+        && matches!(s.doc.find_feature(curve).map(|f| &f.kind), Some(FeatureKind::ConstructionAxis { .. }))
+    {
+        return AxisRef::Construction { name: curve.as_str().into() };
+    }
+    axis
+}
+
+/// A revolve axis from its parameter: a sketch line id, a construction axis name, the sketch's x
+/// or y axis, a world axis, or {origin, dir}.
 pub(super) fn axis_param(p: &Value, cmd: &str) -> Result<AxisRef> {
     if let Some(o) = p.get("axis").filter(|v| v.is_object()) {
         let origin = o.get("origin").and_then(vec3).unwrap_or(Vec3::ZERO);

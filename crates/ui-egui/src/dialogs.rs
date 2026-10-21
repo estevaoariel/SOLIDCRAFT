@@ -4211,6 +4211,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                 AxisRef::World { axis } => Some(Sel::Axis { name: axis.to_ascii_uppercase() }),
                 AxisRef::SketchAxis { axis } => Some(Sel::Axis { name: axis.to_ascii_lowercase() }),
                 AxisRef::SketchLine { curve } => Some(Sel::SketchCurve { id: curve.clone() }),
+                AxisRef::Construction { name } => Some(Sel::Axis { name: name.to_string() }),
                 _ => None,
             };
             if let Some(inp) = d.inputs.get_mut(1) {

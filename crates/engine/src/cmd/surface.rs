@@ -11,7 +11,9 @@ use solidcraft_doc::{Dir, FacePick, Position};
 use solidcraft_kernel::Continuity;
 
 use super::CommandSpec;
-use super::features::{add_feature, axis_param, check_expr, extent_param, feature_sketch, operation, plane_param, profiles, sketch_id};
+use super::features::{
+    add_feature, axis_param, check_expr, construction_axis, extent_param, feature_sketch, operation, plane_param, profiles, sketch_id,
+};
 use crate::params::{bad, bool_, expr, num, str_, string_list, vec3};
 use crate::{Result, Session};
 
@@ -43,7 +45,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("surface.revolve", "Surface Revolve", surface_revolve)
         .at("SURFACE", "CREATE")
         .icon("surface_revolve")
-        .params("sketch?: id|name; curves?: [curve ids] and/or profiles? (as surface.extrude); axis: sketch line id|x|y|X|Y|Z|{origin, dir}; angle?: expr (default 360 deg); angle2?: expr (the other side); symmetric?: bool; name?, body_name? (a surface body, no caps; a solid where a full turn closes it)"),
+        .params("sketch?: id|name; curves?: [curve ids] and/or profiles? (as surface.extrude); axis: sketch line id|construction axis name|x|y|X|Y|Z|{origin, dir}; angle?: expr (default 360 deg); angle2?: expr (the other side); symmetric?: bool; name?, body_name? (a surface body, no caps; a solid where a full turn closes it)"),
     CommandSpec::new("surface.sweep", "Surface Sweep", surface_sweep)
         .at("SURFACE", "CREATE")
         .icon("surface_sweep")
@@ -333,7 +335,7 @@ fn surface_revolve(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "surface.revolve";
     let sketch = feature_sketch(s, p, cmd)?;
     let (profiles, curves) = sheet_inputs(p, cmd)?;
-    let axis = axis_param(p, cmd)?;
+    let axis = construction_axis(s, sketch, axis_param(p, cmd)?);
     let angle = expr(p, "angle").unwrap_or_else(|| "360 deg".into());
     check_expr(s, &angle, Kind::Angle, cmd, "angle")?;
     let angle2 = expr(p, "angle2");
