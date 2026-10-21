@@ -8,7 +8,8 @@
 //! A component's bill of materials type (`bom_type`, a part property) decides how it counts: a
 //! phantom has no row and what it holds counts in its parent; a reference counts nowhere, and
 //! nothing inside it does; a purchased or inseparable component is one row, and of what an
-//! inseparable one holds only its purchased parts reach the parts-only list.
+//! inseparable one holds only its purchased parts reach the parts-only list. One occurrence can
+//! count as another type (`occurrence.bom_type`), in its own rows.
 
 use std::collections::{BTreeMap, HashSet};
 
@@ -32,15 +33,23 @@ pub static COMMANDS: &[CommandSpec] = &[
          key holding an object); properties?: {name: text, …} (free properties; empty or null removes). All or nothing, one undo \
          step → component, metadata, properties, changed: [keys]",
     ),
+    CommandSpec::new("occurrence.bom_type", "Bill of Materials Type", occurrence_type).icon("bom").doc_only().params(
+        "occurrence: id or name; path?: [occurrence ids] (checked when given); bom_type: normal|phantom|reference|purchased|inseparable \
+         (this occurrence counts as that type in every bill of materials, in place of its component's; an occurrence inside a \
+         subassembly belongs to its definition, so the type holds wherever the subassembly is placed) | same_as_component or null \
+         (as its component again). One undo step → occurrence, bom_type (its own, or same_as_component), effective (the type it \
+         counts as), changed",
+    ),
     CommandSpec::new("assembly.bom", "Bill of Materials", bom).at("SOLID", "INSPECT").icon("bom").noundo().params(
         "component?: id or name (default the design); levels?: flat (default: every part at any depth, counted through its \
          subassemblies) | top (the component's direct children, subassemblies as one row each); group_by?: [\"part_number\"] \
          (default; components without a part number get a row per definition) | [\"definition\"]; group_children?: true (a component \
          with a part number is one row, the parts placed inside it listed under it as children: [{item, part_number, description, \
          revision, each, count, definition}], not as rows of their own); path?: write a .csv or .json file (children as items 1.1, \
-         1.2…); format?: csv|json (default from the path). Each component's bom_type counts: phantom has no row (what it holds \
-         counts here), reference counts nowhere, purchased and inseparable are one row (in flat, an inseparable one's purchased \
-         parts are listed too) → rows: [{item, part_number, description, revision, bom_type, count, definition, components, \
+         1.2…); format?: csv|json (default from the path). Each placement counts as its occurrence's bom_type, else its \
+         component's: phantom has no row (what it holds counts here), reference counts nowhere, purchased and inseparable are one \
+         row (in flat, an inseparable one's purchased parts are listed too); placements of one component that count as different \
+         types are different rows → rows: [{item, part_number, description, revision, bom_type, count, definition, components, \
          properties, children?}] sorted by part number, total_occurrences (children included)",
     ),
 ];
@@ -167,6 +176,33 @@ fn set(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"component": id, "metadata": c.map(|c| &c.metadata), "properties": c.map(|c| &c.properties), "changed": changed}))
 }
 
+/// The word that clears an occurrence's own bill of materials type.
+const SAME_AS_COMPONENT: &str = "same_as_component";
+
+fn occurrence_type(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "occurrence.bom_type";
+    let id = super::component::occurrence(s, p, cmd)?;
+    if p.get("path").is_some() {
+        super::component::occurrence_path(s, p, id, cmd)?;
+    }
+    let words = || format!("{}, or {SAME_AS_COMPONENT}", BomType::ALL.map(BomType::as_str).join(", "));
+    let want = match p.get("bom_type") {
+        Some(Value::Null) => None,
+        Some(Value::String(w)) if w == SAME_AS_COMPONENT => None,
+        Some(Value::String(w)) => Some(BomType::parse(w).ok_or_else(|| bad(cmd, format!("`bom_type` is one of {}", words())))?),
+        _ => return Err(bad(cmd, format!("give `bom_type`: {}", words()))),
+    };
+    let o = s.doc.occurrences.iter().find(|o| o.id == id).ok_or_else(|| bad(cmd, "no occurrence"))?;
+    let (component, changed) = (o.component, o.bom_type != want);
+    // Only a real change touches the design (an undo step, unsaved changes).
+    if changed && let Some(o) = s.doc_mut().occurrences.iter_mut().find(|o| o.id == id) {
+        o.bom_type = want;
+    }
+    let own = s.doc.components.iter().find(|c| c.id == component).map(|c| c.metadata.bom_type()).unwrap_or_default();
+    Ok(json!({"occurrence": id, "bom_type": want.map_or(SAME_AS_COMPONENT, BomType::as_str), "effective": want.unwrap_or(own).as_str(),
+        "changed": changed}))
+}
+
 #[derive(Clone, Copy, PartialEq)]
 enum Levels {
     Flat,
@@ -190,7 +226,7 @@ struct Row {
     names: Vec<String>,
     properties: BTreeMap<String, String>,
     /// With `group_children`: what is placed inside one of this row's parts, and how often.
-    kit: BTreeMap<u64, u64>,
+    kit: BTreeMap<Placed, u64>,
 }
 
 /// What the bill of materials lists and how.
@@ -226,31 +262,31 @@ fn options(p: &Value, cmd: &str) -> Result<Options> {
     Ok(Options { levels, group, fold })
 }
 
+/// A component as it is placed: its id, and the bill of materials type it counts as there.
+type Placed = (u64, BomType);
+
 /// The design's structure, looked up once per bill of materials.
 struct Index {
-    /// What each component places (by its id; 0 is the root).
-    children: BTreeMap<u64, Vec<u64>>,
+    /// What each component places (by its id; 0 is the root), each with the type it counts as
+    /// there: the occurrence's own, else its component's.
+    children: BTreeMap<u64, Vec<Placed>>,
     /// Components with bodies of their own.
     owners: HashSet<u64>,
     /// Components with a part number: with `group_children`, one row however much is inside.
     numbered: HashSet<u64>,
-    /// Components whose bill of materials type isn't normal.
-    types: BTreeMap<u64, BomType>,
 }
 
 impl Index {
     fn new(s: &Session) -> Index {
-        let mut children: BTreeMap<u64, Vec<u64>> = BTreeMap::new();
+        let types: BTreeMap<u64, BomType> =
+            s.doc.components.iter().map(|c| (c.id, c.metadata.bom_type())).filter(|(_, t)| *t != BomType::Normal).collect();
+        let mut children: BTreeMap<u64, Vec<Placed>> = BTreeMap::new();
         for o in &s.doc.occurrences {
-            children.entry(o.parent).or_default().push(o.component);
+            let bom_type = o.bom_type.or_else(|| types.get(&o.component).copied()).unwrap_or_default();
+            children.entry(o.parent).or_default().push((o.component, bom_type));
         }
         let numbered = s.doc.components.iter().filter(|c| c.metadata.part_number().is_some_and(|n| !n.is_empty())).map(|c| c.id).collect();
-        let types = s.doc.components.iter().map(|c| (c.id, c.metadata.bom_type())).filter(|(_, t)| *t != BomType::Normal).collect();
-        Index { children, owners: s.doc.body_owners(&s.model.state()), numbered, types }
-    }
-
-    fn bom_type(&self, component: u64) -> BomType {
-        self.types.get(&component).copied().unwrap_or_default()
+        Index { children, owners: s.doc.body_owners(&s.model.state()), numbered }
     }
 }
 
@@ -271,46 +307,47 @@ fn group_key(g: &str, cmd: &str) -> Result<Group> {
     }
 }
 
-/// How many times each component is listed below `root`, by its bill of materials type: in
-/// `Top`, the direct children; in `Flat`, the parts at any depth (a part in a subassembly placed
-/// twice counts twice), not below a purchased part, nor below a numbered part when `fold`, and of
-/// what an inseparable part holds only its purchased parts. A phantom's contents count where the
-/// phantom is placed; a reference counts nowhere, and nothing inside it does.
-fn counts(ix: &Index, root: u64, levels: Levels, fold: bool, cmd: &str) -> Result<BTreeMap<u64, u64>> {
-    let mut out: BTreeMap<u64, u64> = BTreeMap::new();
+/// How many times each component is listed below `root`, by the bill of materials type it
+/// counts as where it is placed: in `Top`, the direct children; in `Flat`, the parts at any depth
+/// (a part in a subassembly placed twice counts twice), not below a purchased part, nor below a
+/// numbered part when `fold`, and of what an inseparable part holds only its purchased parts. A
+/// phantom's contents count where the phantom is placed; a reference counts nowhere, and nothing
+/// inside it does.
+fn counts(ix: &Index, root: u64, levels: Levels, fold: bool, cmd: &str) -> Result<BTreeMap<Placed, u64>> {
+    let mut out: BTreeMap<Placed, u64> = BTreeMap::new();
     let mut placed = 0usize;
     let mut stack: Vec<(u64, usize, Walk)> = vec![(root, 0, Walk::Listed)];
     while let Some((comp, depth, walk)) = stack.pop() {
-        for child in ix.children.get(&comp).into_iter().flatten() {
+        for &(child, bom_type) in ix.children.get(&comp).into_iter().flatten() {
             placed += 1;
             if depth >= MAX_DEPTH || placed > MAX_PLACEMENTS {
                 return Err(bad(cmd, format!("the assembly is deeper than {MAX_DEPTH} levels or has more than {MAX_PLACEMENTS} placements")));
             }
-            let inside = ix.children.contains_key(child);
-            match (ix.bom_type(*child), walk) {
+            let inside = ix.children.contains_key(&child);
+            match (bom_type, walk) {
                 (BomType::Reference, _) => {}
-                (BomType::Phantom, _) => stack.push((*child, depth + 1, walk)),
-                (BomType::Purchased, _) => *out.entry(*child).or_default() += 1,
+                (BomType::Phantom, _) => stack.push((child, depth + 1, walk)),
+                (BomType::Purchased, _) => *out.entry((child, bom_type)).or_default() += 1,
                 (_, Walk::Purchased) => {
                     if inside {
-                        stack.push((*child, depth + 1, Walk::Purchased));
+                        stack.push((child, depth + 1, Walk::Purchased));
                     }
                 }
                 (BomType::Inseparable, Walk::Listed) => {
-                    *out.entry(*child).or_default() += 1;
+                    *out.entry((child, bom_type)).or_default() += 1;
                     if levels == Levels::Flat && inside {
-                        stack.push((*child, depth + 1, Walk::Purchased));
+                        stack.push((child, depth + 1, Walk::Purchased));
                     }
                 }
                 (BomType::Normal, Walk::Listed) => {
                     // Parts only: a subassembly is listed through its parts, unless it has bodies
                     // of its own (or, folding, a part number).
-                    let folded = fold && ix.numbered.contains(child);
-                    if levels == Levels::Top || !inside || folded || ix.owners.contains(child) {
-                        *out.entry(*child).or_default() += 1;
+                    let folded = fold && ix.numbered.contains(&child);
+                    if levels == Levels::Top || !inside || folded || ix.owners.contains(&child) {
+                        *out.entry((child, bom_type)).or_default() += 1;
                     }
                     if levels == Levels::Flat && inside && !folded {
-                        stack.push((*child, depth + 1, Walk::Listed));
+                        stack.push((child, depth + 1, Walk::Listed));
                     }
                 }
             }
@@ -319,32 +356,34 @@ fn counts(ix: &Index, root: u64, levels: Levels, fold: bool, cmd: &str) -> Resul
     Ok(out)
 }
 
-/// How a kit reads when rows are compared: its parts by part number (else definition) and count.
-fn kit_key(s: &Session, kit: &BTreeMap<u64, u64>) -> String {
+/// How a kit reads when rows are compared: its parts by part number (else definition), type
+/// (when not normal) and count.
+fn kit_key(s: &Session, kit: &BTreeMap<Placed, u64>) -> String {
     let mut parts: Vec<String> = kit
         .iter()
-        .map(|(id, n)| {
+        .map(|((id, bom_type), n)| {
             let pn = s.doc.components.iter().find(|c| c.id == *id).and_then(|c| c.metadata.part_number()).unwrap_or_default();
-            if pn.is_empty() { format!("#{id}×{n}") } else { format!("{pn}×{n}") }
+            let part = if pn.is_empty() { format!("#{id}") } else { pn.to_string() };
+            if *bom_type == BomType::Normal { format!("{part}×{n}") } else { format!("{part} ({})×{n}", bom_type.as_str()) }
         })
         .collect();
     parts.sort();
     parts.join("\n")
 }
 
-fn rows(s: &Session, ix: &Index, counts: &BTreeMap<u64, u64>, group: Group, kits: &BTreeMap<u64, BTreeMap<u64, u64>>) -> Vec<Row> {
+fn rows(s: &Session, counts: &BTreeMap<Placed, u64>, group: Group, kits: &BTreeMap<u64, BTreeMap<Placed, u64>>) -> Vec<Row> {
     let mut grouped: BTreeMap<(String, String, u64, BomType), Row> = BTreeMap::new();
-    for (id, n) in counts {
-        let Some(c) = s.doc.components.iter().find(|c| c.id == *id) else { continue };
+    for (&(id, bom_type), n) in counts {
+        let Some(c) = s.doc.components.iter().find(|c| c.id == id) else { continue };
         let m = &c.metadata;
         let part_number = m.part_number().unwrap_or_default().to_string();
-        let kit = kits.get(id).cloned().unwrap_or_default();
-        let bom_type = ix.bom_type(*id);
+        // Only a normal part is listed with what it holds.
+        let kit = if bom_type == BomType::Normal { kits.get(&id).cloned().unwrap_or_default() } else { BTreeMap::new() };
         // Without a part number a definition is its own row; parts with different contents
         // (a bolt with or without its nut) or different bill of materials types are different rows.
         let k = match group {
             Group::PartNumber if !part_number.is_empty() => (part_number.clone(), kit_key(s, &kit), 0, bom_type),
-            _ => (String::new(), String::new(), *id, bom_type),
+            _ => (String::new(), String::new(), id, bom_type),
         };
         let row = grouped.entry(k).or_insert_with(|| Row {
             part_number: part_number.clone(),
@@ -358,7 +397,7 @@ fn rows(s: &Session, ix: &Index, counts: &BTreeMap<u64, u64>, group: Group, kits
             kit,
         });
         row.count += n;
-        row.components.push(*id);
+        row.components.push(id);
         if !row.names.contains(&c.name) {
             row.names.push(c.name.clone());
         }
@@ -373,9 +412,15 @@ fn rows(s: &Session, ix: &Index, counts: &BTreeMap<u64, u64>, group: Group, kits
         }
     }
     let mut out: Vec<Row> = grouped.into_values().collect();
-    // By part number; rows without one after them, by name.
+    // By part number; rows without one after them, by name; one part's rows by type.
     out.sort_by(|a, b| {
-        (a.part_number.is_empty(), &a.part_number, &a.names, &a.components).cmp(&(b.part_number.is_empty(), &b.part_number, &b.names, &b.components))
+        (a.part_number.is_empty(), &a.part_number, &a.names, &a.components, a.bom_type).cmp(&(
+            b.part_number.is_empty(),
+            &b.part_number,
+            &b.names,
+            &b.components,
+            b.bom_type,
+        ))
     });
     out
 }
@@ -411,17 +456,17 @@ fn bom(s: &mut Session, p: &Value) -> Result<Value> {
     let counts = counts(&ix, root, o.levels, o.fold, cmd)?;
     // Folding: what one of each numbered part holds, as parts at any depth. A purchased or
     // inseparable part already keeps what it holds out of the list.
-    let mut kits: BTreeMap<u64, BTreeMap<u64, u64>> = BTreeMap::new();
+    let mut kits: BTreeMap<u64, BTreeMap<Placed, u64>> = BTreeMap::new();
     if o.fold {
-        for id in counts.keys().filter(|id| ix.numbered.contains(id) && ix.bom_type(**id) == BomType::Normal) {
-            let kit = self::counts(&ix, *id, Levels::Flat, false, cmd)?;
+        for &(id, _) in counts.keys().filter(|(id, bom_type)| *bom_type == BomType::Normal && ix.numbered.contains(id)) {
+            let kit = self::counts(&ix, id, Levels::Flat, false, cmd)?;
             if !kit.is_empty() {
-                kits.insert(*id, kit);
+                kits.insert(id, kit);
             }
         }
     }
     let mut total: u64 = 0;
-    let rows: Vec<Value> = rows(s, &ix, &counts, o.group, &kits)
+    let rows: Vec<Value> = rows(s, &counts, o.group, &kits)
         .into_iter()
         .enumerate()
         .map(|(i, r)| {
@@ -430,7 +475,7 @@ fn bom(s: &mut Session, p: &Value) -> Result<Value> {
                 "bom_type": r.bom_type.as_str(), "count": r.count, "definition": r.names.join("; "), "components": r.components,
                 "properties": r.properties});
             if !r.kit.is_empty() {
-                let children: Vec<Value> = self::rows(s, &ix, &r.kit, Group::PartNumber, &BTreeMap::new())
+                let children: Vec<Value> = self::rows(s, &r.kit, Group::PartNumber, &BTreeMap::new())
                     .into_iter()
                     .enumerate()
                     .map(|(j, c)| {

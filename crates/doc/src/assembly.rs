@@ -118,6 +118,10 @@ pub struct Occurrence {
     /// Grounded occurrences don't move.
     #[serde(default)]
     pub grounded: bool,
+    /// How this occurrence counts in the bill of materials, in place of its component's type
+    /// (`None`: as its component).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bom_type: Option<BomType>,
 }
 
 fn identity() -> Mat {
@@ -126,7 +130,8 @@ fn identity() -> Mat {
 
 /// How a component counts in the bill of materials of an assembly it is placed in. It is a part
 /// property (the `bom_type` key of the component's [`Metadata`](crate::Metadata)); a component
-/// without one is [`BomType::Normal`].
+/// without one is [`BomType::Normal`]. One occurrence can count as another type
+/// ([`Occurrence::bom_type`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BomType {
@@ -432,7 +437,7 @@ impl Document {
         self.next_id = id.checked_add(1).ok_or_else(|| DocError::Invalid("too many items in the design".into()))?;
         let cname = self.components.iter().find(|c| c.id == component).map(|c| c.name.clone()).unwrap_or_default();
         let k = self.occurrences.iter().filter(|o| o.component == component).count() + 1;
-        self.occurrences.push(crate::Occurrence { id, component, parent, name: format!("{cname}:{k}"), transform, grounded: false });
+        self.occurrences.push(crate::Occurrence { id, component, parent, name: format!("{cname}:{k}"), transform, grounded: false, bom_type: None });
         Ok(id)
     }
 }

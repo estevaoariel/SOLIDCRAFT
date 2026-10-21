@@ -2798,12 +2798,15 @@ impl Document {
         *self == normalized
     }
 
-    /// Only components' part properties (metadata and free properties) changed: nothing to
-    /// evaluate. The same whole-Document proof as [`Document::differs_only_in_render`].
+    /// Only part properties changed (components' metadata and free properties, occurrences'
+    /// bill of materials types): nothing to evaluate. The same whole-Document proof as
+    /// [`Document::differs_only_in_render`].
     pub fn differs_only_in_part_properties(&self, previous: &Document) -> bool {
         if self.components.len() != previous.components.len()
             || self.components.iter().zip(&previous.components).any(|(a, b)| a.id != b.id)
-            || self.components == previous.components
+            || self.occurrences.len() != previous.occurrences.len()
+            || self.occurrences.iter().zip(&previous.occurrences).any(|(a, b)| a.id != b.id)
+            || (self.components == previous.components && self.occurrences == previous.occurrences)
         {
             return false;
         }
@@ -2811,6 +2814,9 @@ impl Document {
         for (n, c) in normalized.components.iter_mut().zip(&self.components) {
             n.metadata = c.metadata.clone();
             n.properties = c.properties.clone();
+        }
+        for (n, o) in normalized.occurrences.iter_mut().zip(&self.occurrences) {
+            n.bom_type = o.bom_type;
         }
         *self == normalized
     }

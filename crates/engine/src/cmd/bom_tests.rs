@@ -469,3 +469,193 @@ fn hostile_bom_types_are_refused_without_a_change() {
     assert_eq!(run(&mut s, "component.metadata", json!({"component": "Gearbox"}))["bom_type"], "normal");
     assert_eq!(typed(&run(&mut s, "assembly.bom", json!({"levels": "top"}))), [row("GB-1", "normal", 1), row("PL-1", "normal", 1)]);
 }
+
+/// Four brackets, BR-10, placed in the design: Bracket:1 … Bracket:4.
+fn brackets() -> Session {
+    let mut s = Session::default();
+    run(&mut s, "component.create", json!({"name": "Bracket"}));
+    run(&mut s, "solid.box", json!({"length": 40, "width": 20, "height": 3}));
+    run(&mut s, "component.activate", json!({"component": 0}));
+    for x in [50, 100, 150] {
+        run(&mut s, "occurrence.copy", json!({"component": "Bracket", "translate": [x, 0, 0]}));
+    }
+    run(&mut s, "component.metadata.set", json!({"component": "Bracket", "part_number": "BR-10"}));
+    s
+}
+
+fn set_occurrence(s: &mut Session, occurrence: &str, bom_type: Value) -> Value {
+    run(s, "occurrence.bom_type", json!({"occurrence": occurrence, "bom_type": bom_type}))
+}
+
+fn occurrence_type(s: &Session, name: &str) -> Option<solidcraft_doc::BomType> {
+    s.doc.occurrences.iter().find(|o| o.name == name).and_then(|o| o.bom_type)
+}
+
+#[test]
+fn one_occurrence_counts_as_its_own_type_in_rows_of_its_own() {
+    let mut s = brackets();
+    let flat = |s: &mut Session| typed(&run(s, "assembly.bom", json!({})));
+    assert_eq!(flat(&mut s), [row("BR-10", "normal", 4)]);
+    // One bracket kept only for context: three are counted.
+    let r = set_occurrence(&mut s, "Bracket:2", json!("reference"));
+    assert_eq!((r["bom_type"].as_str(), r["effective"].as_str(), r["changed"].as_bool()), (Some("reference"), Some("reference"), Some(true)));
+    assert_eq!(flat(&mut s), [row("BR-10", "normal", 3)]);
+    assert_eq!(run(&mut s, "assembly.bom", json!({}))["total_occurrences"], 3);
+    // One bought instead of made: a row of its own, in both views.
+    set_occurrence(&mut s, "Bracket:3", json!("purchased"));
+    assert_eq!(flat(&mut s), [row("BR-10", "normal", 2), row("BR-10", "purchased", 1)]);
+    assert_eq!(typed(&run(&mut s, "assembly.bom", json!({"levels": "top"}))), [row("BR-10", "normal", 2), row("BR-10", "purchased", 1)]);
+    // The component bought: occurrences without a type of their own follow it, the others keep theirs.
+    set_type(&mut s, "Bracket", "purchased");
+    assert_eq!(flat(&mut s), [row("BR-10", "purchased", 3)]);
+    assert_eq!(set_occurrence(&mut s, "Bracket:4", json!("normal"))["effective"], "normal");
+    assert_eq!(flat(&mut s), [row("BR-10", "normal", 1), row("BR-10", "purchased", 2)]);
+    // As its component again, by the word or by null.
+    let r = set_occurrence(&mut s, "Bracket:4", json!("same_as_component"));
+    assert_eq!((r["bom_type"].as_str(), r["effective"].as_str()), (Some("same_as_component"), Some("purchased")));
+    set_occurrence(&mut s, "Bracket:2", Value::Null);
+    assert_eq!(flat(&mut s), [row("BR-10", "purchased", 4)]);
+    assert_eq!(set_occurrence(&mut s, "Bracket:1", Value::Null)["changed"], false, "nothing to clear");
+}
+
+#[test]
+fn an_occurrence_type_inside_a_subassembly_holds_wherever_it_is_placed() {
+    let mut s = machine();
+    run(&mut s, "occurrence.copy", json!({"component": "Gearbox", "translate": [0, 100, 0]}));
+    let top = |s: &mut Session| typed(&run(s, "assembly.bom", json!({"levels": "top"})));
+    let flat = |s: &mut Session| typed(&run(s, "assembly.bom", json!({})));
+    assert_eq!(top(&mut s), [row("GB-1", "normal", 2), row("PL-1", "normal", 1)]);
+    assert_eq!(flat(&mut s), [row("BR-1", "normal", 2), row("PL-1", "normal", 1), row("SH-1", "normal", 2)]);
+    // The second gearbox only groups its parts: they count at the top level, the first stays a row.
+    set_occurrence(&mut s, "Gearbox:2", json!("phantom"));
+    assert_eq!(top(&mut s), [row("BR-1", "normal", 1), row("GB-1", "normal", 1), row("PL-1", "normal", 1), row("SH-1", "normal", 1)]);
+    assert_eq!(flat(&mut s), [row("BR-1", "normal", 2), row("PL-1", "normal", 1), row("SH-1", "normal", 2)], "parts only is the same");
+    // Bought whole instead: its own row, with nothing inside it listed.
+    set_occurrence(&mut s, "Gearbox:2", json!("purchased"));
+    assert_eq!(top(&mut s), [row("GB-1", "normal", 1), row("GB-1", "purchased", 1), row("PL-1", "normal", 1)]);
+    assert_eq!(flat(&mut s), [row("BR-1", "normal", 1), row("GB-1", "purchased", 1), row("PL-1", "normal", 1), row("SH-1", "normal", 1)]);
+    // The bearing's occurrence belongs to the gearbox's definition: kept for reference, it leaves every
+    // gearbox, and the gearbox's own list.
+    set_occurrence(&mut s, "Bearing:1", json!("reference"));
+    assert_eq!(flat(&mut s), [row("GB-1", "purchased", 1), row("PL-1", "normal", 1), row("SH-1", "normal", 1)]);
+    assert_eq!(typed(&run(&mut s, "assembly.bom", json!({"component": "Gearbox"}))), [row("SH-1", "normal", 1)]);
+}
+
+#[test]
+fn an_occurrence_type_is_one_undo_step_is_saved_and_evaluates_nothing() {
+    let dir = scratch("occurrence-type");
+    let mut s = machine();
+    let undo = s.undo.len();
+    s.evaluations = 0;
+    assert_eq!(set_occurrence(&mut s, "Gearbox:1", json!("purchased"))["changed"], true);
+    assert_eq!(s.undo.len(), undo + 1);
+    assert_eq!(set_occurrence(&mut s, "Gearbox:1", json!("purchased"))["changed"], false);
+    assert_eq!(s.undo.len(), undo + 1, "the same type again is no step");
+    assert_eq!(s.evaluations, 0, "a bill of materials type changes no geometry");
+    let list = run(&mut s, "component.list", json!({"compact": true}));
+    assert!(list.to_string().contains(r#""bom_type":"purchased""#), "{list}");
+    for (file, format) in [("machine.json", "json"), ("machine.solidcraft", "container")] {
+        let path = dir.join(file);
+        run(&mut s, "file.save_as", json!({"path": path, "format": format}));
+        let mut back = Session::default();
+        run(&mut back, "doc.open", json!({"path": path}));
+        assert_eq!(occurrence_type(&back, "Gearbox:1"), Some(solidcraft_doc::BomType::Purchased), "{format}");
+        assert_eq!(typed(&run(&mut back, "assembly.bom", json!({}))), typed(&run(&mut s, "assembly.bom", json!({}))), "{format}");
+    }
+    // In the file: on that occurrence only, with the change listed as pending.
+    let saved: Value = serde_json::from_str(&std::fs::read_to_string(dir.join("machine.json")).unwrap()).unwrap();
+    let occurrences = saved["occurrences"].as_array().unwrap();
+    let with_type: Vec<&str> = occurrences.iter().filter(|o| o.get("bom_type").is_some()).map(|o| o["name"].as_str().unwrap()).collect();
+    assert_eq!(with_type, ["Gearbox:1"]);
+    assert!(saved["format_pending"].as_array().unwrap().contains(&json!("occurrence-bom-type")), "{}", saved["format_pending"]);
+    // A damaged word is refused as the design opens, never read as another type.
+    let mut damaged = saved.clone();
+    let i = occurrences.iter().position(|o| o.get("bom_type").is_some()).unwrap();
+    damaged["occurrences"][i]["bom_type"] = json!("kit");
+    let path = dir.join("damaged.json");
+    std::fs::write(&path, damaged.to_string()).unwrap();
+    assert!(Session::default().execute("doc.open", &json!({"path": path})).is_err());
+    // Saving evaluates once, whatever changed; undo and redo of the type evaluate nothing.
+    s.evaluations = 0;
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(occurrence_type(&s, "Gearbox:1"), None);
+    run(&mut s, "edit.redo", json!({}));
+    assert_eq!(occurrence_type(&s, "Gearbox:1"), Some(solidcraft_doc::BomType::Purchased));
+    assert_eq!(s.evaluations, 0, "nor do undo and redo");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_purchased_occurrence_of_a_kit_part_is_listed_without_its_kit() {
+    let mut s = bolts();
+    // The first bolt (with its washer and nut) placed twice; the second placement bought whole.
+    let first = run(&mut s, "assembly.bom", json!({"group_children": true}))["rows"][0]["components"][0].as_u64().unwrap();
+    let copy = run(&mut s, "occurrence.copy", json!({"component": first, "translate": [0, 50, 0]}));
+    run(&mut s, "occurrence.bom_type", json!({"occurrence": copy["occurrence"], "bom_type": "purchased"}));
+    let r = run(&mut s, "assembly.bom", json!({"group_children": true}));
+    let rows: Vec<(&str, &str, u64, usize)> = r["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| {
+            let kit = r.get("children").and_then(Value::as_array).map_or(0, Vec::len);
+            (r["part_number"].as_str().unwrap(), r["bom_type"].as_str().unwrap(), r["count"].as_u64().unwrap(), kit)
+        })
+        .collect();
+    assert!(rows.contains(&("ISO 4017 M6x30", "normal", 2, 2)), "the two made bolts with their nut and washer: {rows:?}");
+    assert!(rows.contains(&("ISO 4017 M6x30", "purchased", 1, 0)), "the bought one alone: {rows:?}");
+}
+
+#[test]
+fn paste_new_keeps_occurrence_types_and_paste_instance_counts_as_the_component() {
+    let mut s = machine();
+    set_occurrence(&mut s, "Gearbox:1", json!("purchased"));
+    set_occurrence(&mut s, "Bearing:1", json!("reference"));
+    // Another placement of the same gearbox counts as its component.
+    let copy = run(&mut s, "occurrence.copy", json!({"occurrence": "Gearbox:1", "translate": [0, 100, 0]}));
+    let placed = s.doc.occurrences.iter().find(|o| Some(o.id) == copy["occurrence"].as_u64()).unwrap();
+    assert_eq!(placed.bom_type, None);
+    // An independent copy keeps its source occurrence's type, and the types inside it.
+    let before: std::collections::HashSet<u64> = s.doc.occurrences.iter().map(|o| o.id).collect();
+    run(&mut s, "component.paste_new", json!({"component": "Gearbox", "occurrence": "Gearbox:1", "translate": [0, -100, 0]}));
+    let mut added: Vec<Option<solidcraft_doc::BomType>> = s.doc.occurrences.iter().filter(|o| !before.contains(&o.id)).map(|o| o.bom_type).collect();
+    added.sort();
+    use solidcraft_doc::BomType::{Purchased, Reference};
+    assert_eq!(added, [None, Some(Reference), Some(Purchased)], "the shaft, the bearing and the gearbox copied");
+}
+
+#[test]
+fn hostile_occurrence_types_are_refused_without_a_change() {
+    let mut s = machine();
+    let undo = s.undo.len();
+    for p in [
+        json!({"occurrence": "Gearbox:1", "bom_type": "virtual"}),
+        json!({"occurrence": "Gearbox:1", "bom_type": "Purchased"}),
+        json!({"occurrence": "Gearbox:1", "bom_type": "Same_As_Component"}),
+        json!({"occurrence": "Gearbox:1", "bom_type": ""}),
+        json!({"occurrence": "Gearbox:1", "bom_type": 3}),
+        json!({"occurrence": "Gearbox:1", "bom_type": ["purchased"]}),
+        json!({"occurrence": "Gearbox:1", "bom_type": {"type": "purchased"}}),
+        json!({"occurrence": "Gearbox:1"}),
+        json!({"occurrence": "Gearbox:9", "bom_type": "purchased"}),
+        json!({"occurrence": 999_999, "bom_type": "purchased"}),
+        json!({"occurrence": -1, "bom_type": "purchased"}),
+        json!({"occurrence": true, "bom_type": "purchased"}),
+        json!({"bom_type": "purchased"}),
+        json!({"occurrence": "Gearbox:1", "path": [], "bom_type": "purchased"}),
+        json!({"occurrence": "Gearbox:1", "path": "x", "bom_type": "purchased"}),
+        json!({"occurrence": "Gearbox:1", "path": [1.5], "bom_type": "purchased"}),
+        json!({"occurrence": "Gearbox:1", "path": [999_999], "bom_type": "purchased"}),
+    ] {
+        assert!(s.execute("occurrence.bom_type", &p).is_err(), "{p}");
+    }
+    let long = s.execute("occurrence.bom_type", &json!({"occurrence": "Gearbox:1", "bom_type": "x".repeat(5000)}));
+    let message = long.unwrap_err().to_string();
+    assert!(message.len() < 300, "the word isn't echoed back: {} bytes", message.len());
+    assert_eq!(s.undo.len(), undo, "nothing changed");
+    assert!(s.doc.occurrences.iter().all(|o| o.bom_type.is_none()));
+    // The exact placement, when given, is accepted.
+    let id = s.doc.occurrences.iter().find(|o| o.name == "Gearbox:1").unwrap().id;
+    run(&mut s, "occurrence.bom_type", json!({"occurrence": id, "path": [id], "bom_type": "inseparable"}));
+    assert_eq!(occurrence_type(&s, "Gearbox:1"), Some(solidcraft_doc::BomType::Inseparable));
+}

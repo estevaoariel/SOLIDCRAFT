@@ -366,11 +366,19 @@ placed in. Without one it is `normal`.
 Two components with the same part number share a row only when their types agree. A
 component's own bill of materials (`component`) lists what it holds whatever its type.
 
+One occurrence can count as another type than its component:
+`occurrence.bom_type {occurrence, bom_type}` sets it for that occurrence only (one bracket of
+four kept for reference, or one bought instead of made), and `same_as_component` (or `null`)
+clears it. Occurrences of one component that count as different types are different rows. An
+occurrence inside a subassembly belongs to the subassembly's definition, so its type holds
+wherever the subassembly is placed. Paste New keeps the types of the occurrences it copies;
+Paste (Instance) places one that counts as its component.
+
 Rows are sorted by part number (rows without one come last) and hold `item`, `part_number`,
 `description`, `revision`, `bom_type`, `count`, `definition` (the component names), `components` (their ids)
 and `properties`, with `total_occurrences` beside them. `path` writes them to a `.csv` file
 (the columns item, part_number, description, revision, count and definition, every field
 quoted; children follow their row) or a `.json` file. The window lists the same rows, switches
 between the levels and groupings and shows children under their part, edits a picked row's part
-number, description and revision, and exports them. Changing part properties changes no
-geometry, so it doesn't evaluate the model or re-seat joints again.
+number, description and revision, and exports them. Changing part properties or a bill of
+materials type changes no geometry, so it doesn't evaluate the model or re-seat joints again.

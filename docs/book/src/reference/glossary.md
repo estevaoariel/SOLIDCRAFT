@@ -74,8 +74,12 @@ There are five:
 - *inseparable*, something made as one piece (welded, glued, riveted and so on): one row; of
   what it holds, only the purchased components are listed, and only in a list of every part.
 
+One occurrence can have a type of its own, which replaces its component's for that occurrence
+only.
+
 - **In SolidCraft:** the `bom_type` part property, which `component.metadata.set` changes and
-  `component.metadata` reads; the `bom_type` of each `assembly.bom` row.
+  `component.metadata` reads; `occurrence.bom_type` and an occurrence's `bom_type` design-file
+  key; the `bom_type` of each `assembly.bom` row.
 - **Don't use:** BOM structure, item type, kind; made (for *normal*: it reads as "already
   made").
 - **Elsewhere:** BOM structure, BOM type.
@@ -267,7 +271,8 @@ A component can have several occurrences. Moving an occurrence moves only that c
 component changes every copy. The browser names occurrences with a number, such as `Bolt M20:3`.
 
 - **In SolidCraft:** `occurrence.copy`, `occurrence.move`, `occurrence.ground`,
-  `occurrence.properties`; the `occurrences` design-file key; the `path` of occurrence ids.
+  `occurrence.properties`, `occurrence.bom_type`; the `occurrences` design-file key; the `path` of
+  occurrence ids.
 - **Don't use:** instance, placement.
 - **Elsewhere:** occurrence, instance, component instance.
 - **For translators:** not a *pattern instance*.

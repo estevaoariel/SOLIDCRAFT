@@ -73,7 +73,7 @@ fn component(s: &Session, p: &Value, k: &str, cmd: &str) -> Result<u64> {
     s.doc.find_component(&kk).ok_or_else(|| bad(cmd, format!("no component `{kk}`")))
 }
 
-fn occurrence(s: &Session, p: &Value, cmd: &str) -> Result<u64> {
+pub(super) fn occurrence(s: &Session, p: &Value, cmd: &str) -> Result<u64> {
     let kk = key(p.get("occurrence")).ok_or_else(|| bad(cmd, "`occurrence` must be an id or name"))?;
     s.doc.occurrences.iter().find(|o| o.id.to_string() == kk || o.name == kk).map(|o| o.id).ok_or_else(|| bad(cmd, format!("no occurrence `{kk}`")))
 }
@@ -177,6 +177,9 @@ fn list(s: &mut Session, p: &Value) -> Result<Value> {
             return json!(o);
         }
         let mut v = json!({"id": o.id, "name": o.name, "parent": o.parent, "grounded": o.grounded});
+        if let Some(t) = o.bom_type {
+            v["bom_type"] = json!(t);
+        }
         if o.transform.iter().flatten().zip(solidcraft_doc::IDENTITY.iter().flatten()).any(|(a, b)| (a - b).abs() > 1e-12) {
             v["transform"] = json!(o.transform);
         }
