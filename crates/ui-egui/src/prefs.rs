@@ -1669,10 +1669,16 @@ fn space_mouse_section(app: &mut SolveApp, ui: &mut egui::Ui) {
                     .on_hover_text(tip);
                 });
             });
-            // The calibrated device moving as it does, then its dead zones.
+            // The calibrated device moving as it does, with the test model beside it, then its dead zones.
             ui.add_space(t.space_8);
-            crate::space_mouse_model::live(ui, calibration, raw);
+            let (boat, motion, reverse) = (&mut app.space_mouse.boat, app.space_mouse.motion, app.preferences.zoom_reverse);
+            picture_and_boat(ui, boat, motion, reverse, true, |ui| crate::space_mouse_model::live(ui, calibration, raw));
             crate::space_mouse_calibration::dead_zone_pads(ui, calibration, raw);
+        } else if app.space_mouse.device.is_some() {
+            // Not calibrated: the test model alone.
+            ui.add_space(t.space_8);
+            let (boat, motion, reverse) = (&mut app.space_mouse.boat, app.space_mouse.motion, app.preferences.zoom_reverse);
+            picture_and_boat(ui, boat, motion, reverse, false, |_| {});
         }
         ui_kit::text(
             ui,
@@ -1688,6 +1694,44 @@ fn space_mouse_section(app: &mut SolveApp, ui: &mut egui::Ui) {
 const AXIS_INVERT_WIDTH: f32 = 76.0;
 const AXIS_DRIVEN_WIDTH: f32 = 140.0;
 const AXIS_SLIDER_MIN: f32 = 150.0;
+
+/// The device's picture and, to its right where there is room (else under it), a box with a small
+/// model that moves with the 3D mouse as the view does, and a Reset button. Both stay inside the
+/// section at any width.
+fn picture_and_boat(
+    ui: &mut egui::Ui,
+    boat: &mut Option<crate::test_boat::Boat>,
+    motion: Option<crate::space_mouse::DeviceMotion>,
+    reverse_zoom: bool,
+    has_picture: bool,
+    picture: impl FnOnce(&mut egui::Ui),
+) {
+    const PICTURE_WIDTH: f32 = 200.0;
+    const BOAT_HEIGHT: f32 = 150.0;
+    const BOAT_MIN: f32 = 120.0;
+    const BOAT_MAX: f32 = 260.0;
+    let gap = Tokens::get().space_12;
+    let room = ui.available_width();
+    let beside = has_picture && room >= PICTURE_WIDTH + gap + BOAT_MIN;
+    let width = if beside { (room - PICTURE_WIDTH - gap).min(BOAT_MAX) } else { room.min(BOAT_MAX) };
+    let mut boat_and_reset = |ui: &mut egui::Ui| {
+        ui.vertical(|ui| {
+            crate::test_boat::show(ui, boat, motion, reverse_zoom, egui::vec2(width.max(0.0), BOAT_HEIGHT));
+            if ui_kit::button(ui, crate::i18n::tr("ui.reset"), ui_kit::Button::Normal).clicked() {
+                crate::test_boat::reset(boat);
+            }
+        });
+    };
+    if beside {
+        ui.horizontal(|ui| {
+            picture(ui);
+            boat_and_reset(ui);
+        });
+    } else {
+        picture(ui);
+        boat_and_reset(ui);
+    }
+}
 
 /// The 3D mouse's buttons, each with what it does: those that do something and any pressed since
 /// the app started. A pressed one is marked in its row; Preferences doesn't run them.
@@ -2189,6 +2233,18 @@ mod tests {
             app.space_mouse.device = Some("hid 046d:c62b".into());
             app.space_mouse.drivers = Some(crate::space_mouse::DriversPresent { spacenavd: true, direct: true });
             app.preferences.space_mouse_in_view = true;
+            // Calibrated, so the device's picture and the test model sit side by side where there is room.
+            let axes = std::array::from_fn(|source| solidcraft_space_mouse::AxisCalibration {
+                source,
+                reversed: false,
+                rest: 0,
+                dead_zone: 0,
+                full: [350; 2],
+            });
+            app.preferences.space_mouse_calibrations.insert(
+                "hid 046d:c62b".into(),
+                solidcraft_space_mouse::Calibration { dead_zone_share: 0.0, kind: solidcraft_space_mouse::Kind::ReturnToCenter, axes },
+            );
             let ctx = crate::fonts::test_context();
             let panel = egui::Rect::from_min_size(egui::pos2(10.0, 10.0), egui::vec2(width, 1400.0));
             for frame in 0..4 {

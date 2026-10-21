@@ -72,6 +72,11 @@ pub struct Input {
     pub offer_hidden: std::collections::BTreeSet<String>,
     /// When the offer was last looked at (egui time): a long gap is time away, not time shown.
     pub offer_seen: f64,
+    /// The motion `navigate_frame` handed the view this frame (calibrated, reassigned, inverted and
+    /// scaled), for the test model on the Preferences page to move with; none when the view got none.
+    pub motion: Option<DeviceMotion>,
+    /// The test model's view on that page, and when it was last drawn (`test_boat`).
+    pub boat: Option<crate::test_boat::Boat>,
     /// The driver mapping navigation used last frame, which says what each axis does to the view.
     pub mapping: Option<DriverMapping>,
     /// Which of the Linux readers exist, as the app's reader last saw them; none where there is
@@ -475,6 +480,7 @@ pub fn drives_each_once(source: [usize; 6]) -> bool {
 /// calibration window is open, the reading goes to it instead and the view stays put.
 pub fn navigate_frame(app: &mut SolveApp, ctx: &egui::Context, mapping: DriverMapping, axes: Axes, seconds: f64) -> bool {
     app.space_mouse.raw = axes;
+    app.space_mouse.motion = None;
     app.space_mouse.mapping = Some(mapping);
     if app.space_mouse.read_device != app.space_mouse.device {
         // Another device: its buttons and its resting hand are not the last one's.
@@ -519,10 +525,12 @@ pub fn navigate_frame(app: &mut SolveApp, ctx: &egui::Context, mapping: DriverMa
     app.begin_external_navigation();
     // A long gap (the first frame after a pause) moves as far as a 50 ms one.
     let step = if seconds.is_finite() { seconds.min(0.05) } else { 0.0 };
-    app.viewport.device_motion = Some(DeviceMotion {
+    let handed = DeviceMotion {
         motion: mapping.with_user_axes(app.preferences.space_mouse_reverse, app.preferences.space_mouse_axis_speed).apply(axes),
         seconds: step * speed.clamp(0.1, 5.0),
-    });
+    };
+    app.space_mouse.motion = Some(handed);
+    app.viewport.device_motion = Some(handed);
     ctx.request_repaint_after(Duration::from_millis(16));
     true
 }
