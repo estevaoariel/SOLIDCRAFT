@@ -467,7 +467,7 @@ mod tests {
         std::fs::write(&source, "fn show() { egui::Area::new(id); }").unwrap();
         std::fs::write(&example, "fn main() { egui::Window::new(title); }").unwrap();
         std::fs::write(&implementation, "fn factory() { egui::Window::new(title); }").unwrap();
-        let rejected = run(&root).unwrap_err();
+        let rejected = run(&root).unwrap_err().replace('\\', "/");
         assert!(rejected.contains("future-ui/src/nested/panel.rs"));
         assert!(rejected.contains("future-platform/examples/viewer.rs"));
         assert!(!rejected.contains("ui_kit/container.rs"), "only the implementation is exempt");
