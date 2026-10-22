@@ -174,7 +174,7 @@ pub fn panel(app: &mut SolveApp, ui: &mut egui::Ui) {
         app.render_workspace.view.draft = app.session.doc.render.setups.get(&app.render_workspace.view.name).cloned().unwrap_or_default();
         app.render_workspace.revision = app.session.revision;
     }
-    Container::new(ui.ctx(), Surface::Panel)
+    let response = Container::new(ui.ctx(), Surface::Panel)
         .edge("sc_render_settings", Edge::Right)
         .exact_size(285.0)
         .resizable(false)
@@ -260,6 +260,8 @@ pub fn panel(app: &mut SolveApp, ui: &mut egui::Ui) {
                 });
             });
         });
+    let frame = Container::new(ui.ctx(), Surface::Panel).edge_frame(Tokens::get().panel).inner_margin(10);
+    Container::paint_inset(ui.painter(), response.response.rect - frame.outer_margin, frame);
 }
 
 fn image_controls(app: &mut SolveApp, ui: &mut egui::Ui) {

@@ -482,7 +482,7 @@ fn offset_mode_artwork_review() {
             );
             let mut x = column as i32 * 200 + 8;
             for px in [64, 24, 16] {
-                let look = icon_svg::Look { dark, accent: resolved.accent, vision: ColorVision::Off };
+                let look = icon_svg::Look::themed(dark, resolved.accent, ColorVision::Off);
                 let pm = icon_svg::render(icon_svg::doc_for(resolved.master, px).unwrap(), look, px).unwrap();
                 sheet.draw_pixmap(x, row as i32 * 88 + 8, pm.as_ref(), &tiny_skia::PixmapPaint::default(), tiny_skia::Transform::identity(), None);
                 x += px as i32 + 16;

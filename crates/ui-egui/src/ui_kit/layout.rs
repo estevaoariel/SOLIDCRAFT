@@ -29,11 +29,11 @@ pub(crate) fn scope<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
         visuals.weak_text_color = Some(t.form_dim);
         visuals.selection.stroke = egui::Stroke::new(1.0, t.form_primary);
         visuals.selection.bg_fill = t.selected_bg;
-        visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, t.dialog_rule);
+        visuals.widgets.noninteractive.bg_stroke = t.tertiary_border(t.dialog_rule);
         for state in [&mut visuals.widgets.inactive, &mut visuals.widgets.hovered, &mut visuals.widgets.active, &mut visuals.widgets.open] {
             state.bg_fill = t.control_fill;
             state.weak_bg_fill = t.control_fill;
-            state.bg_stroke = egui::Stroke::new(1.0, t.control_border);
+            state.bg_stroke = t.control_border_stroke(t.control_border);
             state.corner_radius = t.control_radius.into();
             state.expansion = 0.0;
             state.fg_stroke.color = t.form_ink;
@@ -51,6 +51,12 @@ pub(crate) fn label(ui: &Ui) -> &str {
 
 /// Publish accessibility and scenario geometry. Tokens: `none`.
 pub(super) fn publish(ui: &Ui, response: &Response, kind: egui::WidgetType) {
+    let t = Tokens::get();
+    match kind {
+        egui::WidgetType::TextEdit => t.input_bevel(ui, response),
+        egui::WidgetType::ComboBox | egui::WidgetType::Button => t.button_bevel(ui, response, false),
+        _ => {}
+    }
     let label = label(ui);
     response.widget_info(|| egui::WidgetInfo::labeled(kind, ui.is_enabled(), crate::i18n::tr_label(label)));
     publish_geometry(ui, response);
@@ -187,7 +193,7 @@ pub(crate) fn section_count<R>(
         rule_left = badge.right() + t.space_12;
     }
     if rule_left < rect.right() {
-        ui.painter().hline(rule_left..=rect.right(), rect.center().y, egui::Stroke::new(1.0, t.dialog_rule));
+        t.secondary_hline(ui.painter(), rule_left..=rect.right(), rect.center().y, t.dialog_rule);
     }
     response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::CollapsingHeader, ui.is_enabled(), open, crate::i18n::tr_label(title)));
     scenario::publish_handle(&format!("dialog:section:{title}"), response.rect.center());
@@ -218,7 +224,7 @@ pub(crate) fn list_row(ui: &mut Ui, key: &str, text: &str) -> Response {
 /// Full-width rule without extra padding. Tokens: `dialog_rule`.
 pub(crate) fn divider(ui: &mut Ui, key: &str) {
     let (rect, _) = ui.allocate_exact_size(vec2(dimension(ui.available_width()), 1.0), egui::Sense::hover());
-    ui.painter().hline(rect.x_range(), rect.top(), egui::Stroke::new(1.0, Tokens::get().dialog_rule));
+    Tokens::get().secondary_hline(ui.painter(), rect.x_range(), rect.top(), Tokens::get().dialog_rule);
     scenario::publish_rect(&format!("dialog:divider:{key}"), rect);
 }
 
@@ -339,7 +345,7 @@ pub(crate) fn text(ui: &mut Ui, text: &str, style: Text<'_>) -> Response {
 pub(crate) fn summary_row(ui: &mut Ui, name: &str, summary: &str, enabled: &mut bool, actions_width: f32, actions: impl FnOnce(&mut Ui)) -> bool {
     let t = Tokens::get();
     let (rect, _) = ui.allocate_exact_size(vec2(dimension(ui.available_width()), row_height() + t.space_16), egui::Sense::hover());
-    ui.painter().rect(rect, t.radius_lg, t.dialog_body, egui::Stroke::new(1.0, t.dialog_rule), egui::StrokeKind::Inside);
+    t.container_rect(ui.painter(), rect, t.radius_lg, t.dialog_body, t.dialog_rule);
     let check = egui::Rect::from_min_size(rect.min + vec2(t.space_6, 0.0), vec2(t.space_24, rect.height()));
     let changed = ui
         .scope_builder(egui::UiBuilder::new().max_rect(check).layout(egui::Layout::left_to_right(egui::Align::Center)), |ui| {

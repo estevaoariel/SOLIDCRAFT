@@ -539,7 +539,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         crate::scenario::publish_handle(&format!("select_other:{i}"), r.center());
                         if resp.hovered() {
                             hovered = Some(i);
-                            ui.painter().rect_filled(r.shrink2(vec2(2.0, 1.0)), 4.0, t.hover);
+                            ui.painter().rect_filled(r.shrink2(vec2(2.0, 1.0)), t.radius_sm, t.hover);
                         }
                         crate::icons::paint_icon(
                             ui.painter(),
