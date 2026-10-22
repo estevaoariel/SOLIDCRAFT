@@ -15,7 +15,7 @@ use std::sync::mpsc::{Receiver, TryRecvError};
 
 use serde_json::Value;
 use solidcraft_engine::Session;
-use solidcraft_engine::doc::ModelState;
+use solidcraft_engine::doc::{ModelBody, ModelState};
 use solidcraft_engine::geom::{Aabb3, Mesh, Ring, Vec3};
 
 use crate::SolveApp;
@@ -637,13 +637,12 @@ pub fn build(before: &ModelState, after: &ModelState, c: Colors) -> Built {
         if !gone && !replaced.contains(&b.name) {
             continue;
         }
-        let m = b.mesh();
-        for t in &m.triangles {
-            for k in t {
-                let i = *k as usize;
-                if let (Some(p), Some(n)) = (m.positions.get(i), m.normals.get(i)) {
-                    sc.ghost_tri(p.to_f32(), n.to_f32(), c.removed);
-                }
+        let new = after.body(&b.name);
+        let sink = ghost_sink(b, after);
+        for t in ghost(&b.mesh(), new.map(|n| n.mesh()).as_deref(), sink) {
+            for (p, n) in t {
+                let n = n.normalized().unwrap_or(n);
+                sc.ghost_tri((p - n * sink).to_f32(), n.to_f32(), c.removed);
             }
         }
         if gone {
@@ -678,6 +677,123 @@ pub fn build(before: &ModelState, after: &ModelState, c: Colors) -> Built {
         })
         .collect();
     Built { scene: sc, sketches, replaced, error: None, bounds: Aabb3::EMPTY, applied: None, tapered: Vec::new(), stopped: None }
+}
+
+/// How far the ghost of a changed body is sunk into it, along its normals. The old and new
+/// meshes approximate a face the change keeps with different triangles, each up to a chord
+/// tolerance inside the true surface, so on a curved face the old chords stand up to that far
+/// in front of the new ones: drawn in place, the ghost showed through the new body as a red
+/// sawtooth under a fillet on a cylinder. Sunk by the largest tolerance of the bodies that may
+/// share its surface (its new version, a body a join made of it and its tool, the pieces a
+/// split made), the kept surface lies behind them; the material the change removed stands well
+/// clear of it.
+fn ghost_sink(old: &ModelBody, after: &ModelState) -> f64 {
+    let bounds = old.mesh().bounds();
+    after
+        .bodies
+        .iter()
+        .filter(|b| b.name == old.name || b.mesh().bounds().meets(&bounds))
+        .map(ModelBody::display_tol)
+        .fold(old.display_tol(), f64::max)
+}
+
+/// How many times a ghost triangle that runs from the kept surface into the removed material
+/// is split, each time into four, before it is cut where it leaves the kept surface.
+const GHOST_SPLITS: u32 = 6;
+
+/// A ghost vertex: its position and normal.
+type GhostVertex = (Vec3, Vec3);
+
+/// The old mesh's triangles the ghost draws, before they are sunk by `sink` ([`ghost_sink`]).
+/// Where a change blends into a face it keeps (a fillet into a cylinder) the removed material
+/// thins to nothing, and sinking alone left the depth test to decide, facet by facet, where
+/// the ghost ends: a sawtooth again. So a triangle that runs from the kept surface (closer
+/// to the new mesh than `sink`) into the removed material is split, and its pieces cut where
+/// they come three times `sink` clear of the new mesh, a smooth line well in front of it. A
+/// whole triangle on the kept surface stays (sunk, it is hidden, and the samples may have
+/// missed a hole in it); one wholly clear of it stays too; removed material thinner than that
+/// is left out.
+fn ghost(old: &Mesh, new: Option<&Mesh>, sink: f64) -> Vec<[GhostVertex; 3]> {
+    let tris = old.triangles.iter().filter_map(|t| {
+        let [a, b, c] = old.tri(t)?;
+        let n = |k: u32| old.normals.get(k as usize).copied();
+        let [na, nb, nc] = t.map(n);
+        Some(([(a, na?), (b, nb?), (c, nc?)], *t))
+    });
+    let clear = 3.0 * sink;
+    let index = new.filter(|_| sink > 0.0).and_then(|new| SurfaceIndex::within(new, 2.0 * clear));
+    let Some(index) = index else { return tris.map(|(t, _)| t).collect() };
+    let near: Vec<f64> = old.positions.iter().map(|p| index.distance(*p)).collect();
+    let mut clip = GhostClip { index: &index, on: sink, clear, out: Vec::new() };
+    for (t, k) in tris {
+        let d = k.map(|k| near.get(k as usize).copied().unwrap_or(0.0));
+        clip.split(t, d, GHOST_SPLITS);
+    }
+    clip.out
+}
+
+struct GhostClip<'a> {
+    /// The new mesh.
+    index: &'a SurfaceIndex,
+    /// Closer to the new mesh than this is on the kept surface.
+    on: f64,
+    /// Farther from the new mesh than this is removed material.
+    clear: f64,
+    out: Vec<[GhostVertex; 3]>,
+}
+
+impl GhostClip<'_> {
+    /// Keeps triangle `t`, whose corners lie `d` from the new mesh, or the part of it that is
+    /// removed material.
+    fn split(&mut self, t: [GhostVertex; 3], d: [f64; 3], splits: u32) {
+        let [a, b, c] = t;
+        let mid = |(p, n): GhostVertex, (q, m): GhostVertex| ((p + q) / 2.0, (n + m) / 2.0);
+        let m = [mid(a, b), mid(b, c), mid(c, a)];
+        let dm = m.map(|(p, _)| self.index.distance(p));
+        let centre = self.index.distance((a.0 + b.0 + c.0) / 3.0);
+        let samples = || d.iter().chain(&dm).chain([&centre]);
+        if samples().all(|d| *d < self.clear) {
+            // Not clear of the new mesh: kept only when it is a whole triangle on the kept
+            // surface. Removed material thinner than `clear` would flicker, and a piece of a
+            // split triangle on the kept surface would be hidden anyway. Only triangles that
+            // cross the line are split, so the work follows the line.
+            if splits == GHOST_SPLITS && samples().all(|d| *d < self.on) {
+                self.out.push(t);
+            }
+        } else if samples().all(|d| *d >= self.clear) {
+            self.out.push(t);
+        } else if splits > 0 {
+            let [ab, bc, ca] = m;
+            let [dab, dbc, dca] = dm;
+            self.split([a, ab, ca], [d[0], dab, dca], splits - 1);
+            self.split([ab, b, bc], [dab, d[1], dbc], splits - 1);
+            self.split([ca, bc, c], [dca, dbc, d[2]], splits - 1);
+            self.split([ab, bc, ca], [dab, dbc, dca], splits - 1);
+        } else {
+            self.cut(t, d);
+        }
+    }
+
+    /// Keeps the part of `t` at least `clear` from the new mesh, the distance taken as linear
+    /// across it.
+    fn cut(&mut self, t: [GhostVertex; 3], d: [f64; 3]) {
+        let mut kept: Vec<GhostVertex> = Vec::with_capacity(4);
+        let next = ([t[1], t[2], t[0]], [d[1], d[2], d[0]]);
+        for ((p, dp), (q, dq)) in t.into_iter().zip(d).zip(next.0.into_iter().zip(next.1)) {
+            if dp >= self.clear {
+                kept.push(p);
+            }
+            if (dp >= self.clear) != (dq >= self.clear) {
+                let s = (self.clear - dp) / (dq - dp);
+                kept.push((p.0 + (q.0 - p.0) * s, p.1 + (q.1 - p.1) * s));
+            }
+        }
+        for k in 2..kept.len() {
+            if let (Some(a), Some(b), Some(c)) = (kept.first(), kept.get(k - 1), kept.get(k)) {
+                self.out.push([*a, *b, *c]);
+            }
+        }
+    }
 }
 
 /// Which of the `nf` faces of `m` are new surface, i.e. not on the old mesh? Each is decided by
@@ -724,11 +840,16 @@ impl SurfaceIndex {
 
     /// None for a mesh with no surface.
     fn new(m: &Mesh) -> Option<SurfaceIndex> {
+        Self::within(m, (m.bounds().diagonal() * 2e-3).max(1e-4))
+    }
+
+    /// An index that finds the surface up to `tol` from a point. None for a mesh with no
+    /// surface.
+    fn within(m: &Mesh, tol: f64) -> Option<SurfaceIndex> {
         let bb = m.bounds();
-        if bb.is_empty() {
+        if bb.is_empty() || !tol.is_finite() || tol <= 0.0 {
             return None;
         }
-        let tol = (bb.diagonal() * 2e-3).max(1e-4);
         let tris: Vec<[Vec3; 3]> = m.triangles.iter().filter_map(|t| m.tri(t)).collect();
         let lo = [bb.min.x - tol, bb.min.y - tol, bb.min.z - tol];
         let ext = [bb.max.x - bb.min.x + 2.0 * tol, bb.max.y - bb.min.y + 2.0 * tol, bb.max.z - bb.min.z + 2.0 * tol];
@@ -784,6 +905,13 @@ impl SurfaceIndex {
         let (x, y, z) = (self.cell_of(p.x, 0), self.cell_of(p.y, 1), self.cell_of(p.z, 2));
         let Some(cell) = self.cells.get((x * self.res + y) * self.res + z) else { return false };
         cell.iter().filter_map(|i| self.tris.get(*i as usize)).any(|[a, b, c]| point_triangle_dist(p, *a, *b, *c) < self.tol)
+    }
+
+    /// How far `p` is from the surface, or the tolerance when it is at least that far.
+    fn distance(&self, p: Vec3) -> f64 {
+        let (x, y, z) = (self.cell_of(p.x, 0), self.cell_of(p.y, 1), self.cell_of(p.z, 2));
+        let Some(cell) = self.cells.get((x * self.res + y) * self.res + z) else { return self.tol };
+        cell.iter().filter_map(|i| self.tris.get(*i as usize)).map(|[a, b, c]| point_triangle_dist(p, *a, *b, *c)).fold(self.tol, f64::min)
     }
 }
 
@@ -1120,6 +1248,98 @@ mod tests {
         assert!(!b.scene.ghost.is_empty());
         assert_eq!(s.revision, rev);
         assert_eq!(s.undo.len(), undo);
+    }
+
+    /// Where the preview draws the ghost's vertices.
+    fn ghost_vertices(scene: &GpuScene) -> Vec<Vec3> {
+        scene
+            .ghost
+            .chunks(crate::gpu::TRI_SIZE)
+            .filter_map(|v| {
+                let f = |k: usize| v.get(k..k + 4).and_then(|b| b.try_into().ok()).map(f32::from_le_bytes).map(f64::from);
+                Some(Vec3::new(f(0)?, f(4)?, f(8)?))
+            })
+            .collect()
+    }
+
+    /// A tool a join takes in is drawn as a ghost too, behind the wall of it the joined body
+    /// keeps (sunk by the joined body's tolerance, the larger), not in pink stripes over it.
+    #[test]
+    fn a_joined_tool_ghost_stays_behind_the_kept_wall() {
+        let mut s = Session::default();
+        s.execute("solid.box", &json!({"length": 20, "width": 20, "height": 20, "body_name": "Cube"})).unwrap();
+        s.execute("solid.cylinder", &json!({"base": [10, 10, -5], "diameter": 6, "height": 30, "body_name": "Pin"})).unwrap();
+        let join = json!({"target": "Cube", "tools": ["Pin"], "operation": "join", "keep_tools": false});
+        let p = s.preview(&[("solid.combine".into(), join)]).unwrap();
+        assert!(p.after.body("Pin").is_none());
+        let sink = ghost_sink(p.before.body("Pin").unwrap(), &p.after);
+        assert!(sink >= p.after.body("Cube").unwrap().display_tol());
+        let radial = |q: &Vec3| (q.x - 10.0).hypot(q.y - 10.0);
+        let wall: Vec<Vec3> = ghost_vertices(&build(&p.before, &p.after, colors()).scene)
+            .into_iter()
+            .filter(|q| ((-4.5..-0.5).contains(&q.z) || (20.5..24.5).contains(&q.z)) && radial(q) > 2.0)
+            .collect();
+        assert!(!wall.is_empty());
+        for q in &wall {
+            assert!(radial(q) <= 3.0 - 0.9 * sink, "the pin's ghost at {q:?} is not behind its wall");
+        }
+    }
+
+    /// The ghost of a filleted cylinder stays behind the wall the fillet keeps. The old and new
+    /// meshes facet the wall differently; drawn in place, the old facets stood in front of the new
+    /// ones and showed through as a red sawtooth under the round.
+    #[test]
+    fn fillet_ghost_stays_behind_a_kept_curved_wall() {
+        let mut s = Session::default();
+        s.execute("solid.cylinder", &json!({"base": [0, 0, 0], "radius": 12, "height": 14})).unwrap();
+        let p = s.preview(&[("solid.fillet".into(), json!({"edges": [[12, 0, 14]], "radius": 2}))]).unwrap();
+        let b = build(&p.before, &p.after, colors());
+        let radial = |q: Vec3| q.x.hypot(q.y);
+        // Points over a triangle, corners included.
+        let spread =
+            |[a, b, c]: [Vec3; 3]| (0..=4).flat_map(move |i| (0..=4 - i).map(move |j| a + (b - a) * (i as f64 / 4.0) + (c - a) * (j as f64 / 4.0)));
+        // The new wall's chords come closest to the axis between their corners.
+        let new = p.after.bodies.first().unwrap().mesh();
+        let upright = |&[a, b, c]: &[Vec3; 3]| (b - a).cross(c - a).normalized().is_some_and(|n| n.z.abs() < 0.1);
+        let wall = new
+            .triangles
+            .iter()
+            .filter_map(|t| new.tri(t))
+            .filter(|t| upright(t) && t.iter().all(|q| q.z < 12.01))
+            .flat_map(spread)
+            .map(radial)
+            .fold(f64::INFINITY, f64::min);
+        assert!(wall > 11.0 && wall < 12.0, "the new wall is faceted: {wall}");
+        let ghost = ghost_vertices(&b.scene);
+        assert!(!ghost.is_empty());
+        let points: Vec<Vec3> = ghost.chunks(3).filter_map(|t| <[Vec3; 3]>::try_from(t).ok()).flat_map(spread).collect();
+        for q in points.iter().filter(|q| q.z > 0.5 && q.z < 11.5 && radial(**q) > 11.0) {
+            assert!(radial(*q) <= wall, "ghost at {q:?} stands {} in front of the new wall", radial(*q) - wall);
+        }
+        // Where the round blends into the wall the removed material thins to nothing. The ghost
+        // ends where it stands clear of the round, not a hair in front of it, where the depth
+        // test decided facet by facet: a sawtooth along the round's lower edge.
+        let sink = ghost_sink(p.before.bodies.first().unwrap(), &p.after);
+        assert!(sink > 0.0);
+        let outside = |q: &Vec3| q.z > 12.0 && radial(*q) > 10.0 && (radial(*q) - 10.0).hypot(q.z - 12.0) > 2.0;
+        let index = SurfaceIndex::within(&new, 1.0).unwrap();
+        let thin = points.iter().filter(|q| outside(q)).map(|q| index.distance(*q)).fold(f64::INFINITY, f64::min);
+        assert!(thin > sink, "the ghost comes within {thin} of the round");
+        // The removed edge itself still shows, outside the round.
+        assert!(points.iter().any(|q| q.z > 13.5 && radial(*q) > 11.5), "the removed edge is not in the ghost");
+    }
+
+    /// Removed material thinner than the ghost's clearance (a face moved by a hair) shows no
+    /// ghost, and costs no more than the old mesh's triangles: only a triangle that crosses the
+    /// line where the ghost ends is split.
+    #[test]
+    fn a_hair_thin_change_leaves_no_ghost() {
+        let started = std::time::Instant::now();
+        let (old, near, far) = (sheet(60, 0.0), sheet(60, 0.04), sheet(60, 1.0));
+        assert!(ghost(&old, Some(&near), 0.02).is_empty());
+        assert_eq!(ghost(&old, Some(&far), 0.02).len(), old.triangles.len());
+        assert_eq!(ghost(&old, Some(&old), 0.02).len(), old.triangles.len(), "the kept surface stays, to be sunk");
+        assert!(started.elapsed().as_secs() < 5, "took {:?}", started.elapsed());
     }
 
     /// A cut shows its tool see-through and replaces nothing.
