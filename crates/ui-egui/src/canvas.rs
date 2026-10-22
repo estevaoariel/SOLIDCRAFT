@@ -350,7 +350,7 @@ pub fn snap_step(half_height: f64) -> f64 {
 }
 
 /// Parameter along the line `base + dir * t` closest to the view ray through `pos`.
-fn along(proj: &Proj, pos: Pos2, base: Vec3, dir: Vec3) -> Option<f64> {
+pub(crate) fn along(proj: &Proj, pos: Pos2, base: Vec3, dir: Vec3) -> Option<f64> {
     let (o, r) = proj.ray(pos);
     let w0 = base - o;
     let (b, d, e) = (dir.dot(r), dir.dot(w0), r.dot(w0));
@@ -362,7 +362,7 @@ fn along(proj: &Proj, pos: Pos2, base: Vec3, dir: Vec3) -> Option<f64> {
     Some((b * e - d) / den)
 }
 
-fn format_len(v: f64) -> String {
+pub(crate) fn format_len(v: f64) -> String {
     let s = format!("{v:.3}");
     let s = s.trim_end_matches('0').trim_end_matches('.');
     format!("{} mm", if s == "-0" { "0" } else { s })

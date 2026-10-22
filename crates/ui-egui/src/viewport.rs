@@ -151,6 +151,8 @@ pub struct ViewportState {
     pub(crate) text_drag: Option<(u64, String)>,
     /// A part that joints place, being dragged.
     pub(crate) joint_drag: Option<crate::joint_drag::Drag>,
+    /// Extrude by pulling a face or profile.
+    pub(crate) drag_extrude: crate::drag_extrude::State,
     /// The plane the grid was last drawn on while Preferences ▸ Grid follows the view is on
     /// (#1470), kept so the choice is hysteretic near the thresholds (#1993).
     pub(crate) grid_plane: std::sync::Mutex<GridPlane>,
@@ -3102,8 +3104,9 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             && rect.contains(a)
             && !crate::shell::covered(app, a)
             && !axes.contains(a)
+            && !crate::joint_drag::start(app, &proj, a)
         {
-            crate::joint_drag::start(app, &proj, a);
+            crate::drag_extrude::press(app, &proj, a);
         }
         if crate::joint_drag::active(app)
             && resp.dragged_by(egui::PointerButton::Primary)
@@ -3115,6 +3118,15 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     if crate::joint_drag::active(app) && (resp.drag_stopped() || !ui.input(|i| i.pointer.primary_down())) {
         crate::joint_drag::end(app);
     }
+    // Pulling a face or profile extrudes it; the release applies.
+    if resp.dragged_by(egui::PointerButton::Primary)
+        && let Some(p) = hover
+    {
+        crate::drag_extrude::to(app, &proj, p);
+    }
+    if resp.drag_stopped() || !primary_down {
+        crate::drag_extrude::end(app);
+    }
     // Box selection: a primary drag on the model when no navigation mode is on.
     if app.tool.is_none()
         && !held
@@ -3122,6 +3134,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         && mode.is_none()
         && app.viewport.point_drag.is_none()
         && !crate::joint_drag::active(app)
+        && !crate::drag_extrude::started(app)
         && !crate::dim_view::dragging()
         && !crate::sketch3d::dragging()
         && !crate::sketch_text_handles::dragging(app)
@@ -3159,6 +3172,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     crate::inference::show(app, &painter, &proj);
     crate::drag_snap::show(app, &painter, &proj);
     hover_highlight(app, &painter, &proj);
+    crate::drag_extrude::show(app, &painter);
     points_2d(app, &painter, &proj);
     if let Some((plane, sketch)) = crate::sketch_attachment_ui::lost_guide(app)
         && let Some((low, high)) = sketch.bounds()
