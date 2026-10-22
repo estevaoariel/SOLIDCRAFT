@@ -12,8 +12,7 @@ controls.
   `ollama show <model>` and look for `tools` under capabilities. Tool support alone
   does not guarantee good results; see the table below.
 - Enough graphics memory (VRAM) for the model and its context (the conversation
-  and tool instructions). Muse Glimmer 30B in the quantization below needs roughly
-  a 16 GB graphics card.
+  and tool instructions). See the table below for sizes.
 
 ## Set it up
 
@@ -38,12 +37,19 @@ issue is the up-to-date one.
 | Model | Size / quant | Passed (v1) |
 |---|---|---|
 | Muse Glimmer 30B | Unsloth UD-Q3_K_XL, 12.4 GB | **11/11** |
+| Qwen3.8 27B | Unsloth UD-Q4_K_XL | **11/11** |
+| gemma4 (latest, 7.5B) | Q4_K_M, 6.1 GB | **11/11** |
+| gemma4:12b | Q4_K_M | 10/11 |
+| gpt-oss:20b | MXFP4, 12.8 GB | 10/11 |
+| qwen3:14b | Q4_K_M, 8.6 GB | 8/11 |
+| qwen3:8b | Q4_K_M | 7/11 |
 | qwen2.5:7b | Q4_K_M, 4.4 GB | 4/11 |
-| llama3.1:8b | Q4_K_M, 4.6 GB | 3/11 |
-| llama3.2:3b | Q4_K_M | 2/11 |
 | qwen2.5-coder:7b | Q4_K_M, 4.4 GB | 0/11 (writes every call as text) |
 | gemma3:4b | Q4_K_M | 0/11 (no tool support: HTTP 400) |
 | deepseek-r1:14b | Q4_K_M | 0/11 (never calls a tool) |
+
+For about 8 GB of graphics memory, start with `gemma4` (the default tag, 6.1 GB). With
+16 GB, Muse Glimmer 30B or gpt-oss:20b also work well.
 
 ## Troubleshooting
 
