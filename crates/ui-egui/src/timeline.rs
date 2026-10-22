@@ -396,7 +396,8 @@ fn timeline_contents(app: &mut SolveApp, ui: &mut egui::Ui, floating: bool) {
                     suppressed: *suppressed,
                     error: err.is_some(),
                     warning: warn.is_some(),
-                    accent,
+                    // A dragged feature takes the colour of its drop bar.
+                    accent: if drag == Some(Drag::Feature(*id)) { crate::theme::TabAccent::for_tab(&t, "SKETCH") } else { accent },
                 }
                 .paint(&p, br, crate::ui_kit::HistoryStyle::Bottom);
                 let mut tip = status_text(name, ty, err.as_deref(), warn.as_deref());
@@ -477,6 +478,9 @@ fn timeline_contents(app: &mut SolveApp, ui: &mut egui::Ui, floating: bool) {
                 if resp.drag_started() {
                     drag = Some(Drag::Marker);
                 }
+                if resp.hovered() {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+                }
                 crate::ui_kit::history_marker(&p, mr, false, accent);
                 resp.on_hover_text("History marker: drag to roll the model back; new features go here");
             }
@@ -484,9 +488,31 @@ fn timeline_contents(app: &mut SolveApp, ui: &mut egui::Ui, floating: bool) {
             // The scroll range follows the drawn content (the buttons don't take layout space themselves).
             ui.allocate_exact_size(vec2((content_end - origin).max(0.0), r.height()), Sense::hover());
             // Drag feedback, and the drop.
-            if let (Some(dg), Some(pp)) = (drag.as_ref(), pointer) {
-                let slot = slot_at(&xs, end, pp.x);
-                let sx = xs.get(slot).copied().unwrap_or(end) - 4.0;
+            if drag.is_some() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+            }
+            let marker_slot = marker.min(n);
+            // At the marker's slot, which side of the marker the pointer is on: before it, a
+            // dropped feature stays in the model; after it, the feature is rolled back.
+            let before_marker = |slot: usize, x: f32| slot < marker_slot || (slot == marker_slot && marker_rect.is_none_or(|mr| x < mr.center().x));
+            // The marker dropped where it already is needs no bar: the marker shows the spot.
+            if let (Some(dg), Some(pp)) = (drag.as_ref(), pointer)
+                && let slot = slot_at(&xs, end, pp.x)
+                && !(matches!(dg, Drag::Marker) && slot == marker_slot)
+            {
+                // Centred in the gap between two chips, or beside the marker at its slot.
+                let sx = match marker_rect {
+                    Some(mr) if slot == marker_slot => {
+                        if before_marker(slot, pp.x) {
+                            mr.left() - 2.0
+                        } else {
+                            mr.right() + 2.0
+                        }
+                    }
+                    _ => xs.get(slot).copied().unwrap_or(end) - 2.0,
+                };
+                // Kept inside the strip so the slot before the first feature stays visible.
+                let sx = sx.max(origin + t.space_2);
                 crate::ui_kit::history_drop_bar(
                     &p,
                     Rect::from_min_max(pos2(sx, r.top() + 3.0), pos2(sx, r.bottom() - 3.0)),
@@ -509,8 +535,10 @@ fn timeline_contents(app: &mut SolveApp, ui: &mut egui::Ui, floating: bool) {
                         let from = app.session.doc.feature_index(id).unwrap_or(0);
                         // Dropping after itself means the slot shifts by one.
                         let to = if slot > from { slot - 1 } else { slot };
-                        if to != from {
-                            let _ = app.run_heavy("timeline.reorder", json!({ "feature": id, "position": to }));
+                        // Crossing the marker rolls the feature back or forward, in the same step.
+                        let active = before_marker(slot, pp.x);
+                        if to != from || active != (from < marker_slot) {
+                            let _ = app.run_heavy("timeline.reorder", json!({ "feature": id, "position": to, "active": active }));
                         }
                     }
                 }
@@ -797,6 +825,33 @@ mod tests {
             assert_eq!(h.app.session.doc.marker, None);
         }
     }
+    /// A feature dropped just past the history marker is rolled back, and dropped just before it
+    /// is active again, in both strips.
+    #[test]
+    fn dragging_a_feature_across_the_marker_rolls_it_back_and_forward() {
+        use crate::scenario::{handle_at, rect_of};
+        for left in [false, true] {
+            let mut h = two_boxes(left);
+            h.settle();
+            let second = handle_at("timeline:Second").unwrap();
+            let marker = rect_of("history:marker").unwrap();
+            let behind = if left { [second.x, marker.bottom() + 3.0] } else { [marker.right() + 4.0, second.y] };
+            let undo = h.app.session.undo.len();
+            h.step(&json!({"drag":[[second.x,second.y],behind]})).unwrap();
+            h.settle();
+            assert_eq!(h.app.session.doc.marker, Some(1), "left={left}: dropped behind the marker, Second is rolled back");
+            assert_eq!(h.app.session.undo.len(), undo + 1, "left={left}: crossing the marker is one undo step");
+            let second = handle_at("timeline:Second").unwrap();
+            let marker = rect_of("history:marker").unwrap();
+            let before = if left { [second.x, marker.top() - 2.0] } else { [marker.left() - 3.0, second.y] };
+            h.step(&json!({"drag":[[second.x,second.y],before]})).unwrap();
+            h.settle();
+            assert_eq!(h.app.session.doc.marker, None, "left={left}: dropped before the marker, Second is active again");
+            let names: Vec<_> = h.app.session.doc.features.iter().map(|feature| feature.name.as_str()).collect();
+            assert_eq!(names, ["First", "Second"], "left={left}: crossing the marker keeps the order");
+        }
+    }
+
     #[test]
     fn floating_strip_has_only_history_text_and_accents_the_last_done_chip_and_marker() {
         let mut h = two_boxes(false);
