@@ -442,22 +442,22 @@ pub fn calibrated(axes: Axes, calibration: Option<Calibration>) -> Axes {
 /// by. They name no kind of device, since calibration defined them: Translation X is whatever the
 /// user did for "slide right".
 pub const MOTIONS: [&str; 6] = [
-    "ui.space_mouse_motion_translation_x",
-    "ui.space_mouse_motion_translation_y",
-    "ui.space_mouse_motion_translation_z",
-    "ui.space_mouse_motion_rotation_x",
-    "ui.space_mouse_motion_rotation_y",
-    "ui.space_mouse_motion_rotation_z",
+    "ui.3d_mouse_motion_translation_x",
+    "ui.3d_mouse_motion_translation_y",
+    "ui.3d_mouse_motion_translation_z",
+    "ui.3d_mouse_motion_rotation_x",
+    "ui.3d_mouse_motion_rotation_y",
+    "ui.3d_mouse_motion_rotation_z",
 ];
 
 /// What each logical axis does to the view, as `navigation::device_camera` applies it.
 const VIEW_AXES: [&str; 6] = [
-    "ui.space_mouse_view_pan_sideways",
-    "ui.space_mouse_view_zoom",
-    "ui.space_mouse_view_pan_up_down",
-    "ui.space_mouse_view_orbit_up_down",
-    "ui.space_mouse_view_orbit_sideways",
-    "ui.space_mouse_view_roll",
+    "ui.3d_mouse_view_pan_sideways",
+    "ui.3d_mouse_view_zoom",
+    "ui.3d_mouse_view_pan_up_down",
+    "ui.3d_mouse_view_orbit_up_down",
+    "ui.3d_mouse_view_orbit_sideways",
+    "ui.3d_mouse_view_roll",
 ];
 
 /// The label of axis row `row`: what it does to the view through `mapping`, the mapping
@@ -467,9 +467,9 @@ const VIEW_AXES: [&str; 6] = [
 /// Two rows a driver profile sends to the same output both get its label; that's what they do.
 pub fn row_label(mapping: Option<DriverMapping>, row: usize) -> &'static str {
     match mapping.and_then(|mapping| mapping.axes.get(row).copied()) {
-        Some(rule) if rule.enabled => VIEW_AXES.get(rule.output).copied().unwrap_or("ui.space_mouse_view_off"),
-        Some(_) => "ui.space_mouse_view_off",
-        None => "ui.space_mouse_view_unmapped",
+        Some(rule) if rule.enabled => VIEW_AXES.get(rule.output).copied().unwrap_or("ui.3d_mouse_view_off"),
+        Some(_) => "ui.3d_mouse_view_off",
+        None => "ui.3d_mouse_view_unmapped",
     }
 }
 
@@ -1582,9 +1582,9 @@ mod tests {
         // An axis the mapping switches off says so.
         let mut off = DriverMapping::default();
         off.axes[2].enabled = false;
-        assert_eq!(row_label(Some(off), 2), "ui.space_mouse_view_off");
+        assert_eq!(row_label(Some(off), 2), "ui.3d_mouse_view_off");
         // Without a mapping, rows claim no view effect and name none of the dropdown's motions.
-        assert_eq!(labels(None), ["ui.space_mouse_view_unmapped"; 6]);
+        assert_eq!(labels(None), ["ui.3d_mouse_view_unmapped"; 6]);
     }
 
     #[test]

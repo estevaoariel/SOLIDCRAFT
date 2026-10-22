@@ -63,15 +63,15 @@ impl Action {
     /// The button's text, as a message id.
     pub fn label(self) -> &'static str {
         match self {
-            Self::Calibrate => "ui.space_mouse_calibrate",
+            Self::Calibrate => "ui.3d_mouse_calibrate",
             Self::Close => "ui.close",
-            Self::Never => "ui.space_mouse_offer_never",
-            Self::Swap => "ui.space_mouse_offer_swap",
+            Self::Never => "ui.3d_mouse_offer_never",
+            Self::Swap => "ui.3d_mouse_offer_swap",
         }
     }
 }
 
-/// An offer to show now: its device and its actions (the text is `ui.space_mouse_offer`).
+/// An offer to show now: its device and its actions (the text is `ui.3d_mouse_offer`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Offer {
     pub device: String,
