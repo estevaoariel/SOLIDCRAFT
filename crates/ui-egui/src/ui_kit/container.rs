@@ -183,7 +183,13 @@ impl Container {
     /// Optional companion to a primary outline, painted inside the allocated surface.
     /// It consumes no layout space or input target. Tiny/collapsed surfaces omit it.
     pub(crate) fn paint_inset(painter: &egui::Painter, widget: egui::Rect, frame: Frame) {
-        let Some(inset) = Tokens::get().borders.primary_inset else {
+        let t = Tokens::get();
+        if let Some(bevel) = t.borders.bevel {
+            let mut chrome = painter.clone();
+            chrome.set_clip_rect(widget.intersect(painter.ctx().content_rect()));
+            bevel.paint(&chrome, widget, frame.corner_radius, false, true);
+        }
+        let Some(inset) = t.borders.primary_inset else {
             return;
         };
         let distance = frame.stroke.width + inset.gap;

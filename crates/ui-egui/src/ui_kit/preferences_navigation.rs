@@ -58,7 +58,7 @@ fn settings_gesture(ui: &mut Ui, keys: &[String], action: &str) {
             pos2(x + (galley.size().x + t.space_12) / 2.0, rect.center().y),
             vec2(galley.size().x + t.space_12, t.space_24 - t.space_2),
         );
-        p.rect(cap, t.radius_sm, t.control_fill, t.control_border_stroke(t.control_border), egui::StrokeKind::Inside);
+        p.rect(cap, t.radius_sm, t.control_fill, t.container_border(t.control_border), egui::StrokeKind::Inside);
         p.galley(pos2(cap.center().x - galley.size().x / 2.0, cap.center().y - galley.size().y / 2.0), galley, t.form_ink);
         x = cap.right() + t.space_4;
     }

@@ -106,10 +106,13 @@ impl CommandSearch {
         ui.painter().rect(
             r,
             radius,
-            t.control_fill,
+            t.input_fill(),
             if focused || invalid { Stroke::new(1.0, ink) } else { t.control_border_stroke(ink) },
             egui::StrokeKind::Inside,
         );
+        if let Some(bevel) = t.borders.bevel {
+            bevel.paint(ui.painter(), r.shrink(if focused || invalid { 1.0 } else { 0.0 }), radius, true, ui.is_enabled());
+        }
         icons::paint_icon(
             ui.painter(),
             Rect::from_center_size(r.left_center() + vec2((spacing.left + t.space_16 / 2.0).min(r.width() / 2.0), 0.0), vec2(t.space_16, t.space_16)),
@@ -162,7 +165,7 @@ impl CommandSearch {
         let galley = ui.painter().layout_no_wrap(label.to_owned(), FontId::monospace(t.font_small), t.form_dim);
         let size = galley.size() + vec2(padding, t.space_4);
         let r = Rect::from_min_size(pos2(right.x - size.x, right.y - size.y / 2.0), size);
-        t.secondary_rect(ui.painter(), r, Self::inner_radius(), t.dialog_footer, t.dialog_rule);
+        t.container_rect(ui.painter(), r, Self::inner_radius(), t.dialog_footer, t.dialog_rule);
         ui.painter().galley(r.min + vec2(padding / 2.0, t.space_2), galley, t.form_dim);
         size.x
     }
@@ -175,7 +178,7 @@ impl CommandSearch {
         let t = Tokens::get();
         egui::Frame::NONE
             .fill(t.control_fill)
-            .stroke(t.control_border_stroke(t.dialog_rule))
+            .stroke(t.container_border(t.dialog_rule))
             .corner_radius(t.control_radius)
             .inner_margin(t.space_8)
             .show(ui, |ui| {

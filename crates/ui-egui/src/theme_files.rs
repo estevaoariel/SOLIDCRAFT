@@ -117,16 +117,38 @@ impl ThemeFile {
 
 /// Strictly bounded strokes shared by file imports and direct preference updates.
 pub(crate) fn parse_borders(values: &BTreeMap<String, Value>) -> Result<crate::theme::Borders, String> {
-    use crate::theme::{Borders, InsetBorder};
-    if values.len() > 5 {
-        return Err("`borders` has more than five roles".into());
+    use crate::theme::{Bevel, Borders, InsetBorder};
+    if values.len() > 7 {
+        return Err("`borders` has more than seven roles".into());
     }
     let mut borders = Borders::default();
     for (key, value) in values {
         let obj = value.as_object().ok_or_else(|| format!("`borders.{key}` must be an object"))?;
-        if obj.keys().any(|k| {
-            k != "color" && k != "width" && !(key == "primary_inset" && k == "gap") && !(key == "secondary" && k == "pattern")
-        }) {
+        if key == "bevel" {
+            if obj.keys().any(|k| !matches!(k.as_str(), "width" | "highlight" | "light" | "shadow" | "dark_shadow")) {
+                return Err("`borders.bevel` has an unknown setting".into());
+            }
+            let width = obj
+                .get("width")
+                .and_then(Value::as_f64)
+                .filter(|v| v.is_finite() && *v > 0.0 && *v <= 2.0)
+                .ok_or("`borders.bevel.width` must be a finite number greater than 0 and at most 2")? as f32;
+            let color = |name: &str| {
+                obj.get(name)
+                    .and_then(Value::as_str)
+                    .and_then(parse_color)
+                    .ok_or_else(|| format!("`borders.bevel.{name}` must be #rrggbb or #rrggbbaa"))
+            };
+            borders.bevel = Some(Bevel {
+                width,
+                highlight: color("highlight")?,
+                light: color("light")?,
+                shadow: color("shadow")?,
+                dark_shadow: color("dark_shadow")?,
+            });
+            continue;
+        }
+        if obj.keys().any(|k| k != "color" && k != "width" && !(key == "primary_inset" && k == "gap") && !(key == "secondary" && k == "pattern")) {
             return Err(format!("`borders.{key}` has an unknown setting"));
         }
         let number = |name: &str, max: f64| -> Result<f32, String> {
@@ -155,6 +177,7 @@ pub(crate) fn parse_borders(values: &BTreeMap<String, Value>) -> Result<crate::t
                 };
             }
             "tertiary" => borders.tertiary = Some(stroke),
+            "container" => borders.container = Some(stroke),
             "control" => borders.control = Some(stroke),
             "primary_inset" => borders.primary_inset = Some(InsetBorder { stroke, gap: number("gap", 12.0)? }),
             _ => return Err(format!("`borders.{key}` is not a border role")),
@@ -387,9 +410,13 @@ pub fn export(name: &str, base: Base, t: &Tokens) -> Value {
     }
     let radii: BTreeMap<_, _> = RADIUS_KEYS.into_iter().filter_map(|key| radius_slot(&mut t, key).map(|value| (key, *value))).collect();
     let mut borders = serde_json::Map::new();
-    for (key, stroke) in
-        [("primary", t.borders.primary), ("secondary", t.borders.secondary), ("tertiary", t.borders.tertiary), ("control", t.borders.control)]
-    {
+    for (key, stroke) in [
+        ("primary", t.borders.primary),
+        ("secondary", t.borders.secondary),
+        ("tertiary", t.borders.tertiary),
+        ("container", t.borders.container),
+        ("control", t.borders.control),
+    ] {
         if let Some(stroke) = stroke {
             borders.insert(key.into(), json!({"width": stroke.width, "color": format_color(stroke.color)}));
         }
@@ -401,6 +428,14 @@ pub fn export(name: &str, base: Base, t: &Tokens) -> Value {
     }
     if let Some(inset) = t.borders.primary_inset {
         borders.insert("primary_inset".into(), json!({"width": inset.stroke.width, "color": format_color(inset.stroke.color), "gap": inset.gap}));
+    }
+    if let Some(bevel) = t.borders.bevel {
+        let shadow = format_color(bevel.shadow);
+        borders.insert(
+            "bevel".into(),
+            json!({"width": bevel.width, "highlight": format_color(bevel.highlight),
+            "light": format_color(bevel.light), "shadow": shadow, "dark_shadow": format_color(bevel.dark_shadow)}),
+        );
     }
     json!({"format": FORMAT, "name": name, "base": base, "colors": colors, "radii": radii, "borders": borders})
 }
@@ -481,6 +516,7 @@ mod tests {
         use crate::theme::{BorderRole, Borders};
         let settings = json!({
             "primary":{"width":4,"color":"#ffffff"}, "secondary":{"width":1.5,"color":"#aabbcc","pattern":"dotted"},
+            "container":{"width":1,"color":"#a8c8ed"},
             "tertiary":{"width":0,"color":"#00000000"}, "control":{"width":0.5,"color":"#123456"},
             "primary_inset":{"width":0.75,"color":"#ffffff80","gap":12}
         });
@@ -488,7 +524,7 @@ mod tests {
             let old = from_value(&json!({"format":FORMAT,"name":"Old","base":base})).unwrap();
             assert_eq!(resolve(&old).borders, Borders::LEGACY);
             let legacy = egui::Stroke::new(2.5, Color32::RED);
-            for role in [BorderRole::Primary, BorderRole::Secondary, BorderRole::Tertiary, BorderRole::Control] {
+            for role in [BorderRole::Primary, BorderRole::Secondary, BorderRole::Tertiary, BorderRole::Container, BorderRole::Control] {
                 assert_eq!(resolve(&old).borders.stroke(role, legacy), legacy);
             }
             let file = from_value(&json!({"format":FORMAT,"name":"New","base":base,"borders":settings})).unwrap();
@@ -529,6 +565,34 @@ mod tests {
         assert_eq!(resolve(find("blueprint", &[]).unwrap()).borders.primary.unwrap().color, Color32::WHITE);
         for id in ["gruvbox-dark", "gruvbox-light", "gruvbox-dark-soft", "gruvbox-light-soft"] {
             assert_eq!(resolve(find(id, &[]).unwrap()).borders, crate::theme::Borders::LEGACY);
+        }
+    }
+
+    #[test]
+    fn bevel_settings_roundtrip_and_reject_invalid_values() {
+        let bevel = json!({"width":1,"highlight":"#ffffff","light":"#dfdfdf","shadow":"#808080","dark_shadow":"#000000"});
+        for base in ["light", "dark"] {
+            let source = json!({"format":FORMAT,"name":"Beveled","base":base,"borders":{"bevel":bevel}});
+            let file = from_value(&source).unwrap();
+            let tokens = resolve(&file);
+            assert_eq!(resolve(&from_value(&export("Beveled", file.base, &tokens)).unwrap()), tokens);
+            assert_eq!(tokens.input_fill(), tokens.field);
+            for invalid in [json!(0), json!(-1), json!(2.1), json!("1"), Value::Null] {
+                let mut bad = source.clone();
+                bad["borders"]["bevel"]["width"] = invalid;
+                assert!(from_value(&bad).is_err());
+            }
+            for key in ["highlight", "light", "shadow", "dark_shadow"] {
+                let mut bad = source.clone();
+                bad["borders"]["bevel"][key] = json!("white");
+                assert!(from_value(&bad).is_err());
+            }
+            let mut bad = source;
+            bad["borders"]["bevel"]["extra"] = json!(true);
+            assert!(from_value(&bad).is_err());
+        }
+        for theme in builtin() {
+            assert_eq!(resolve(theme).borders.bevel.is_some(), theme.id == "solidcraft-95", "{}", theme.id);
         }
     }
 

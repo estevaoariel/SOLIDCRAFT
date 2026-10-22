@@ -51,6 +51,12 @@ pub(crate) fn label(ui: &Ui) -> &str {
 
 /// Publish accessibility and scenario geometry. Tokens: `none`.
 pub(super) fn publish(ui: &Ui, response: &Response, kind: egui::WidgetType) {
+    let t = Tokens::get();
+    match kind {
+        egui::WidgetType::TextEdit => t.input_bevel(ui, response),
+        egui::WidgetType::ComboBox | egui::WidgetType::Button => t.button_bevel(ui, response, false),
+        _ => {}
+    }
     let label = label(ui);
     response.widget_info(|| egui::WidgetInfo::labeled(kind, ui.is_enabled(), crate::i18n::tr_label(label)));
     publish_geometry(ui, response);
@@ -339,7 +345,7 @@ pub(crate) fn text(ui: &mut Ui, text: &str, style: Text<'_>) -> Response {
 pub(crate) fn summary_row(ui: &mut Ui, name: &str, summary: &str, enabled: &mut bool, actions_width: f32, actions: impl FnOnce(&mut Ui)) -> bool {
     let t = Tokens::get();
     let (rect, _) = ui.allocate_exact_size(vec2(dimension(ui.available_width()), row_height() + t.space_16), egui::Sense::hover());
-    t.secondary_rect(ui.painter(), rect, t.radius_lg, t.dialog_body, t.dialog_rule);
+    t.container_rect(ui.painter(), rect, t.radius_lg, t.dialog_body, t.dialog_rule);
     let check = egui::Rect::from_min_size(rect.min + vec2(t.space_6, 0.0), vec2(t.space_24, rect.height()));
     let changed = ui
         .scope_builder(egui::UiBuilder::new().max_rect(check).layout(egui::Layout::left_to_right(egui::Align::Center)), |ui| {

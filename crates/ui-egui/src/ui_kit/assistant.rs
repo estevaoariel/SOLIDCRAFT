@@ -156,7 +156,7 @@ pub(crate) fn assistant_tool_frame<R>(ui: &mut Ui, failed: bool, add: impl FnOnc
     let t = Tokens::get();
     egui::Frame::NONE
         .fill(if failed { t.form_error_fill } else { t.dialog_body })
-        .stroke(t.control_border_stroke(t.dialog_rule))
+        .stroke(t.container_border(t.dialog_rule))
         .corner_radius(t.radius_lg)
         .inner_margin(t.space_3)
         .show(ui, |ui| {
@@ -178,7 +178,7 @@ pub(crate) fn assistant_tool_detail<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) ->
     let t = Tokens::get();
     egui::Frame::NONE
         .fill(t.control_fill)
-        .stroke(t.control_border_stroke(t.dialog_rule))
+        .stroke(t.container_border(t.dialog_rule))
         .corner_radius(t.control_radius)
         .inner_margin(egui::Margin::symmetric((t.space_6 + t.space_3) as i8, t.space_6 as i8))
         .show(ui, add)
@@ -321,7 +321,7 @@ pub(crate) fn assistant_empty<R>(ui: &mut Ui, title: &str, body: &str, add: impl
 pub(crate) fn assistant_banner<R>(ui: &mut Ui, tone: AssistantTone, add: impl FnOnce(&mut Ui) -> R) -> InnerResponse<R> {
     let t = Tokens::get();
     let (_, fill) = tone.colors(&t);
-    egui::Frame::NONE.fill(fill).stroke(t.control_border_stroke(t.dialog_rule)).corner_radius(t.radius_lg).inner_margin(t.space_10).show(ui, |ui| {
+    egui::Frame::NONE.fill(fill).stroke(t.container_border(t.dialog_rule)).corner_radius(t.radius_lg).inner_margin(t.space_10).show(ui, |ui| {
         ui.set_min_width(ui.available_width().max(0.0));
         ui.spacing_mut().item_spacing.y = t.space_8;
         add(ui)

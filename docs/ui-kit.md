@@ -488,15 +488,16 @@ and the artwork inside icons) retains its own shape.
 
 ## Theme border hierarchy
 
-Three structural levels and one independent control role are sufficient. More structural
-levels make a hierarchy difficult to distinguish and assign consistently.
+Three structural levels distinguish outer chrome, major section rules and minor dividers.
+Separate solid container and control roles keep enclosing boxes independent of divider patterns.
 
 | Role | UI audit / assignment |
 | --- | --- |
 | Primary | Ribbon/workspace cards, Browser/History, feature and palette sheets, system windows, menus/popups, navigation/status surfaces |
 | Secondary | Ribbon tab/content rule, Browser/History heading rule, feature/window header and footer, Preferences page/navigation division, disclosure section rules, Assistant header/composer division, File navigation sections |
 | Tertiary | Ribbon category dividers, menu groups, report/table rows, neutral History items, File cards/thumbnails, ordinary inherited egui separators |
-| Control | Neutral fields, buttons, checkboxes, segmented choices, search, list wells, Assistant content cards and chips |
+| Container | Settings previews, information cards, list/detail wells, Assistant content cards, shortcut keycaps |
+| Control | Neutral fields, buttons, checkboxes, segmented choices and search inputs |
 
 Focus, selection, active commands, errors, recovery warnings and status keep their existing
 semantic strokes. Icon artwork, example mouse diagrams, plots, model edges, manipulator
@@ -512,14 +513,26 @@ circular compass and native widget-owned tooltip content, does not acquire an in
 
 ```json
 "borders": {
-  "primary": {"width": 2, "color": "#ffffff"},
+  "primary": {"width": 1, "color": "#ffffff"},
   "secondary": {"width": 1, "color": "#e5efff", "pattern": "dotted"},
   "tertiary": {"width": 1, "color": "#102748"},
+  "container": {"width": 1, "color": "#a8c8ed"},
   "control": {"width": 1, "color": "#a8c8ed"}
 }
 ```
 
-Those are Blueprint's settings: a single primary outline and dotted secondary rules. Secondary roles optionally accept `pattern`: `solid` (default) or `dotted`; this pattern follows horizontal/vertical rules and secondary content outlines. Other roles keep solid strokes. Every other existing theme retains its previous appearance.
+Those are Blueprint's settings: a single primary outline and dotted secondary rules. Secondary roles optionally accept `pattern`: `solid` (default) or `dotted`; this pattern follows horizontal/vertical section rules. Container outlines remain solid, as do the other roles. Themes without border settings retain their previous appearance.
+SolidCraft 95 uses silver surfaces and directional two-band bevels: light top/left
+edges and dark bottom/right edges for raised panels and buttons, reversed for
+recessed fields and pressed buttons. Inputs use the `field` colour independently
+of the neutral button face. Disabled controls fade their bevel; focus, selection
+and validation keep their semantic indicators. Solid grey rules divide sections.
+
+Optional `borders.bevel` enables this shared container/control treatment. It accepts
+`width` (finite, greater than 0 and at most 2 points per band), `highlight`, `light`,
+`shadow` and `dark_shadow` (hex colours). Missing bevel settings preserve flat
+rendering exactly. The bands paint inside existing rounded or square geometry
+without changing hit targets or allocation. Ghost controls remain borderless.
 Missing roles preserve each surface's existing width and colour, including overrides in
 `colors`; exporting keeps omitted roles absent so reimport cannot flatten those legacy
 surface differences. Dark/Light and the Gruvbox families share border geometry.

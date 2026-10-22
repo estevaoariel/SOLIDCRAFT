@@ -221,7 +221,12 @@ impl FileView {
         let t = Tokens::get();
         ui.add_space(t.space_10);
         let (rect, _) = ui.allocate_exact_size(vec2(dimension(ui.available_width()), 1.0), Sense::hover());
-        t.secondary_hline(ui.painter(), (rect.left() + t.space_12)..=(rect.right() - t.space_12).max(rect.left() + t.space_12), rect.center().y, t.file_rail_ink.gamma_multiply(0.25));
+        t.secondary_hline(
+            ui.painter(),
+            (rect.left() + t.space_12)..=(rect.right() - t.space_12).max(rect.left() + t.space_12),
+            rect.center().y,
+            t.file_rail_ink.gamma_multiply(0.25),
+        );
         ui.add_space(t.space_10);
     }
 

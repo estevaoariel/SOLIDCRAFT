@@ -359,6 +359,7 @@ pub(crate) fn rename_menu(ui: &mut Ui, value: &mut String, focused: &mut bool) -
             Menu::heading(ui, "Rename");
             let id = egui::Id::new("sc_rename_text");
             let response = ui.add(super::fields::text_input(egui::TextEdit::singleline(value).id(id)).desired_width(ui.available_width()));
+            t.input_bevel(ui, &response);
             crate::scenario::publish_target("rename:name", response.rect);
             if !*focused {
                 if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), id) {

@@ -61,7 +61,7 @@ pub(crate) fn multiline_text_field(ui: &mut Ui, label: &str, id: egui::Id, value
                 .id(id)
                 .desired_rows(3)
                 .font(egui::FontId::monospace(t.font_label))
-                .background_color(t.control_fill),
+                .background_color(t.input_fill()),
         );
         publish(ui, &response, egui::WidgetType::TextEdit);
         response
@@ -146,9 +146,10 @@ fn editor(ui: &mut Ui, value: &mut String, hint: &str, completion: bool) -> (boo
     let font = egui::FontId::monospace(t.font_label);
     let response = ui.add_sized(
         vec2(width, row_height()),
-        text_input(egui::TextEdit::singleline(value)).hint_text(hint).font(font).background_color(t.control_fill).clip_text(true),
+        text_input(egui::TextEdit::singleline(value)).hint_text(hint).font(font).background_color(t.input_fill()).clip_text(true),
     );
     crate::theme::TabAccent::number_focus(ui, &response);
+    t.input_bevel(ui, &response);
     let label = crate::i18n::tr_label(label(ui));
     response.widget_info(|| {
         let mut info = egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, ui.is_enabled(), label);
@@ -274,7 +275,7 @@ fn cell_editor_frame(ui: &mut Ui, id: egui::Id, value: &mut String, hint: &str, 
         .id(id)
         .hint_text(crate::i18n::tr_label(hint))
         .font(if frame { egui::FontId::monospace(t.font_label) } else { egui::FontId::proportional(t.font_label) })
-        .background_color(if invalid { t.form_error_fill } else { t.control_fill })
+        .background_color(if invalid { t.form_error_fill } else { t.input_fill() })
         .text_color(if invalid { t.form_error } else { t.form_ink })
         .clip_text(true);
     let editor = if invalid {
@@ -291,13 +292,18 @@ fn cell_editor_frame(ui: &mut Ui, id: egui::Id, value: &mut String, hint: &str, 
         editor.frame(egui::Frame::NONE.inner_margin(egui::Margin::symmetric(t.space_8 as i8, 0)))
     };
     let response = ui.add_sized(vec2(dimension(ui.available_width()), row_height()), editor);
-    publish(ui, &response, egui::WidgetType::TextEdit);
+    if frame {
+        publish(ui, &response, egui::WidgetType::TextEdit);
+    } else {
+        super::layout::publish_geometry(ui, &response);
+    }
     response.widget_info(|| {
         let mut info = egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, ui.is_enabled(), crate::i18n::tr_label(label(ui)));
         info.current_text_value = Some(value.clone());
         info
     });
     crate::theme::TabAccent::number_focus(ui, &response);
+    t.input_bevel(ui, &response);
     response
 }
 
@@ -383,6 +389,7 @@ pub(crate) fn scalar_field(ui: &mut Ui, value: &mut f64, range: std::ops::RangeI
         vec2(dimension(ui.available_width()), row_height()),
         egui::DragValue::new(value).range(range).speed(0.01).custom_parser(crate::prefs::parse_number),
     );
+    Tokens::get().input_bevel(ui, &response);
     scenario::publish_target(&format!("dialog:scalar:{}", label(ui)), response.rect);
     response
 }
@@ -391,6 +398,7 @@ pub(crate) fn scalar_field(ui: &mut Ui, value: &mut f64, range: std::ops::RangeI
 /// Tokens: control_height, scope control/font tokens.
 pub(crate) fn length_field(ui: &mut Ui, value: &mut f64, units: &str, decimals: u8) -> Response {
     let response = ui.add(length_drag(value, units, decimals));
+    Tokens::get().input_bevel(ui, &response);
     scenario::publish_target(&format!("dialog:length:{}", label(ui)), response.rect);
     response
 }
@@ -398,6 +406,7 @@ pub(crate) fn length_field(ui: &mut Ui, value: &mut f64, units: &str, decimals: 
 /// Angle in degrees, dragged or typed. Tokens: control_height, scope control/font tokens.
 pub(crate) fn angle_field(ui: &mut Ui, value: &mut f64) -> Response {
     let response = ui.add(egui::DragValue::new(value).speed(1.0).suffix(" deg").custom_parser(crate::prefs::parse_number));
+    Tokens::get().input_bevel(ui, &response);
     scenario::publish_target(&format!("dialog:angle:{}", label(ui)), response.rect);
     response
 }
@@ -413,8 +422,9 @@ pub(crate) fn text_area(ui: &mut Ui, label: &str, id: egui::Id, value: &mut Stri
             .desired_rows(rows.clamp(1, 16))
             .char_limit(limit)
             .font(egui::FontId::monospace(t.font_label))
-            .background_color(t.control_fill),
+            .background_color(t.input_fill()),
     );
+    t.input_bevel(ui, &response);
     response.widget_info(|| {
         let mut info = egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, ui.is_enabled(), label);
         info.current_text_value = Some(value.clone());
@@ -434,7 +444,7 @@ pub(crate) fn password_field(ui: &mut Ui, id: egui::Id, value: &mut String, hint
             .password(true)
             .hint_text(hint)
             .font(egui::FontId::monospace(t.font_label))
-            .background_color(t.control_fill),
+            .background_color(t.input_fill()),
     );
     publish(ui, &response, egui::WidgetType::TextEdit);
     response
@@ -450,6 +460,7 @@ pub(crate) fn number_field<T: egui::emath::Numeric>(
     suffix: &str,
 ) -> Response {
     let response = ui.add(egui::DragValue::new(value).range(range).speed(speed).suffix(suffix).custom_parser(crate::prefs::parse_number));
+    Tokens::get().input_bevel(ui, &response);
     response.widget_info(|| {
         let mut info = egui::WidgetInfo::drag_value(ui.is_enabled(), value.to_f64());
         info.label = Some(crate::i18n::tr_label(label(ui)).to_string());
@@ -464,15 +475,17 @@ pub(crate) fn number_field<T: egui::emath::Numeric>(
 #[cfg(any(not(target_arch = "wasm32"), test))]
 pub(crate) fn message_field(ui: &mut Ui, id: egui::Id, value: &mut String, hint: &str) -> Response {
     let t = Tokens::get();
-    ui.add(
+    let response = ui.add(
         text_input(egui::TextEdit::multiline(value))
             .id(id)
             .hint_text(hint)
             .desired_rows(2)
             .desired_width(f32::INFINITY)
             .font(egui::FontId::proportional(t.font_label))
-            .background_color(t.control_fill),
-    )
+            .background_color(t.input_fill()),
+    );
+    t.input_bevel(ui, &response);
+    response
 }
 
 /// Edit a millimetre value through a control expressed in the current design units.
@@ -490,7 +503,9 @@ fn length_drag<'a>(value: &'a mut f64, units: &str, decimals: u8) -> egui::DragV
 /// not intercept nearby canvas picks; the owner keeps completion and selection handling.
 pub(crate) fn canvas_value_field(ui: &mut Ui, id: egui::Id, value: &mut String) -> Response {
     let t = Tokens::get();
-    ui.add(egui::TextEdit::singleline(value).id(id).desired_width(t.space_24 * 3.0))
+    let response = ui.add(egui::TextEdit::singleline(value).id(id).desired_width(t.space_24 * 3.0).background_color(t.input_fill()));
+    t.input_bevel(ui, &response);
+    response
 }
 
 /// Placement editor whose owner routes Enter and Tab (including rejected expressions).
@@ -509,7 +524,7 @@ pub(crate) fn placement_field(ui: &mut Ui, id: egui::Id, value: &mut String, hin
             .return_key(None)
             .event_filter(egui::EventFilter { tab: true, horizontal_arrows: true, vertical_arrows: true, ..Default::default() })
             .font(font)
-            .background_color(t.control_fill)
+            .background_color(t.input_fill())
             .text_color(t.form_ink)
             .clip_text(true),
     );
@@ -520,6 +535,7 @@ pub(crate) fn placement_field(ui: &mut Ui, id: egui::Id, value: &mut String, hin
         info
     });
     crate::theme::TabAccent::number_focus(ui, &response);
+    t.input_bevel(ui, &response);
     response.on_hover_text(crate::i18n::tr_label(hint))
 }
 

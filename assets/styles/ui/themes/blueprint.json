@@ -210,7 +210,7 @@
   },
   "borders": {
     "primary": {
-      "width": 2,
+      "width": 1,
       "color": "#ffffff"
     },
     "secondary": {
@@ -221,6 +221,10 @@
     "tertiary": {
       "width": 1,
       "color": "#102748"
+    },
+    "container": {
+      "width": 1,
+      "color": "#a8c8ed"
     },
     "control": {
       "width": 1,

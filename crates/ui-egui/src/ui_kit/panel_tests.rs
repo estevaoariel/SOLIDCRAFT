@@ -687,6 +687,8 @@ fn border_hierarchy_reaches_hosts_sections_controls_and_inset_without_new_target
             secondary: Some(Stroke::new(2.0, Color32::RED)),
             secondary_dotted: false,
             tertiary: Some(Stroke::new(0.5, Color32::GREEN)),
+            container: None,
+            bevel: None,
             control: Some(Stroke::new(1.5, Color32::BLUE)),
             primary_inset: Some(InsetBorder { stroke: Stroke::new(0.75, Color32::YELLOW), gap: 3.0 }),
         };
@@ -812,4 +814,61 @@ fn menu_companion_is_visible_in_frame_padding_and_bounded_by_its_surface() {
         });
     }
     assert!(found, "the companion must be painted outside the menu content clip");
+}
+
+#[test]
+fn bevel_lighting_reverses_for_fields_and_pressed_buttons_without_changing_geometry() {
+    use egui::{Color32, Pos2, Rect};
+    let mut t = Tokens::light();
+    let bevel =
+        crate::theme::Bevel { width: 1.0, highlight: Color32::WHITE, light: Color32::LIGHT_GRAY, shadow: Color32::GRAY, dark_shadow: Color32::BLACK };
+    t.borders.bevel = Some(bevel);
+    t.control_radius = 0;
+    let _restore = crate::theme::scoped_tokens(t);
+    let ctx = crate::fonts::test_context();
+    let mut button_rect = Rect::NOTHING;
+    let mut field_rect = Rect::NOTHING;
+    let mut text = "12 mm".to_string();
+    let mut draw = |ui: &mut Ui| {
+        ui.set_width(240.0);
+        scope(ui, |ui| {
+            button_rect = button(ui, "Review", Button::Normal).rect;
+            field_rect = cell_editor(ui, egui::Id::new("bevel-field"), &mut text, "", false).rect;
+        });
+    };
+    fn top_color(output: &egui::FullOutput, rect: Rect, inset: f32) -> Color32 {
+        output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::LineSegment { points: [a, b], stroke }
+                    if (a.y - rect.top() - inset).abs() < 0.01 && (b.y - a.y).abs() < 0.01 && a.x >= rect.left() && b.x <= rect.right() =>
+                {
+                    Some(stroke.color)
+                }
+                _ => None,
+            })
+            .expect("horizontal bevel edge")
+    }
+    let raised = crate::test_support::frame(&ctx, egui::RawInput::default(), &mut draw);
+    assert_eq!(top_color(&raised, button_rect, 0.5), bevel.highlight);
+    assert_eq!(top_color(&raised, field_rect, 1.5), bevel.shadow);
+    let original_rect = button_rect;
+    let mut draw = |ui: &mut Ui| {
+        ui.set_width(240.0);
+        scope(ui, |ui| {
+            button_rect = button(ui, "Review", Button::Normal).rect;
+            cell_editor(ui, egui::Id::new("bevel-field"), &mut text, "", false);
+        });
+    };
+    let down = crate::test_support::frame(
+        &ctx,
+        egui::RawInput { events: crate::test_support::pointer(original_rect.center(), true), ..Default::default() },
+        &mut draw,
+    );
+    assert_eq!(button_rect, original_rect);
+    assert_eq!(top_color(&down, button_rect, 0.5), bevel.shadow);
+    let tiny = Rect::from_min_size(Pos2::ZERO, egui::vec2(2.0, 2.0));
+    let output = crate::test_support::frame(&ctx, egui::RawInput::default(), |ui| bevel.paint(ui.painter(), tiny, 0, false, true));
+    assert!(!output.shapes.iter().any(|s| matches!(&s.shape, egui::Shape::LineSegment { .. })));
 }

@@ -27,13 +27,14 @@ thread_local! {
     static CUSTOM: Cell<Option<Custom>> = const { Cell::new(None) };
 }
 
-/// Three structural border levels plus independent neutral control outlines.
+/// Three structural border levels plus independent content and control outlines.
 /// Focus, selection, status, artwork and CAD geometry do not use these roles.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BorderRole {
     Primary,
     Secondary,
     Tertiary,
+    Container,
     Control,
 }
 
@@ -44,8 +45,57 @@ pub struct Borders {
     /// Pattern for secondary section rules; solid preserves existing themes.
     pub secondary_dotted: bool,
     pub tertiary: Option<Stroke>,
+    /// Solid outlines for nested previews, information wells and shortcut keycaps.
+    pub container: Option<Stroke>,
     pub control: Option<Stroke>,
     pub primary_inset: Option<InsetBorder>,
+    /// Optional directional chrome. Absent themes keep their flat strokes.
+    pub bevel: Option<Bevel>,
+}
+
+/// Two directional edge bands, shared by raised chrome and recessed editors.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Bevel {
+    pub width: f32,
+    pub highlight: Color32,
+    pub light: Color32,
+    pub shadow: Color32,
+    pub dark_shadow: Color32,
+}
+
+impl Bevel {
+    /// Draw inside existing geometry; no extra input targets or layout allocation.
+    pub fn paint(self, painter: &egui::Painter, rect: egui::Rect, radius: impl Into<egui::CornerRadius>, recessed: bool, enabled: bool) {
+        if !rect.is_finite() || self.width <= 0.0 || !self.width.is_finite() || rect.width().min(rect.height()) <= self.width * 4.0 {
+            return;
+        }
+        let radius = radius.into();
+        let bands = if recessed {
+            [(self.shadow, self.highlight), (self.dark_shadow, self.light)]
+        } else {
+            [(self.highlight, self.dark_shadow), (self.light, self.shadow)]
+        };
+        for (index, (upper, lower)) in bands.into_iter().enumerate() {
+            let inset = (index as f32 + 0.5) * self.width;
+            let edge = rect.shrink(inset);
+            let mut rounding: egui::epaint::CornerRadiusF32 = radius.into();
+            rounding -= inset;
+            let mut path = Vec::new();
+            egui::epaint::tessellator::path::rounded_rectangle(&mut path, edge, rounding);
+            if let Some(first) = path.first().copied() {
+                path.push(first);
+            }
+            for pair in path.windows(2) {
+                if let Some((a, b)) = pair.first().zip(pair.get(1)) {
+                    let middle = *a + (*b - *a) * 0.5;
+                    let relative = (middle - edge.center()) / edge.size();
+                    let color = if relative.x + relative.y < 0.0 { upper } else { lower };
+                    let color = if enabled { color } else { color.gamma_multiply(0.45) };
+                    painter.line_segment([*a, *b], Stroke::new(self.width, color));
+                }
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -56,13 +106,23 @@ pub struct InsetBorder {
 }
 
 impl Borders {
-    pub const LEGACY: Self = Self { primary: None, secondary: None, secondary_dotted: false, tertiary: None, control: None, primary_inset: None };
+    pub const LEGACY: Self = Self {
+        primary: None,
+        secondary: None,
+        secondary_dotted: false,
+        tertiary: None,
+        container: None,
+        control: None,
+        primary_inset: None,
+        bevel: None,
+    };
 
     pub fn stroke(self, role: BorderRole, fallback: Stroke) -> Stroke {
         match role {
             BorderRole::Primary => self.primary,
             BorderRole::Secondary => self.secondary,
             BorderRole::Tertiary => self.tertiary,
+            BorderRole::Container => self.container,
             BorderRole::Control => self.control,
         }
         .unwrap_or(fallback)
@@ -70,6 +130,31 @@ impl Borders {
 }
 
 impl Tokens {
+    /// Bevel themes use the editable surface colour independently of button faces.
+    pub fn input_fill(&self) -> Color32 {
+        if self.borders.bevel.is_some() { self.field } else { self.control_fill }
+    }
+
+    pub fn input_bevel(&self, ui: &egui::Ui, response: &egui::Response) {
+        if let Some(bevel) = self.borders.bevel {
+            bevel.paint(ui.painter(), response.rect.shrink(1.0), self.control_radius, true, response.enabled());
+        }
+    }
+
+    pub fn button_bevel(&self, ui: &egui::Ui, response: &egui::Response, selected: bool) {
+        self.button_bevel_with_radius(ui, response, selected, self.control_radius);
+    }
+
+    /// Compound controls supply the same corner geometry as their selected fill.
+    pub fn button_bevel_with_radius(&self, ui: &egui::Ui, response: &egui::Response, selected: bool, radius: impl Into<egui::CornerRadius>) {
+        if let Some(bevel) = self.borders.bevel {
+            let pressed = response.enabled()
+                && (response.is_pointer_button_down_on()
+                    || (response.has_focus() && ui.input(|i| i.key_down(egui::Key::Space) || i.key_down(egui::Key::Enter))));
+            bevel.paint(ui.painter(), response.rect, radius, selected || pressed, response.enabled());
+        }
+    }
+
     pub fn primary_border(&self, color: Color32) -> Stroke {
         self.borders.stroke(BorderRole::Primary, Stroke::new(1.0, color))
     }
@@ -108,26 +193,17 @@ impl Tokens {
         self.secondary_line(painter, [egui::pos2(x, range.min), egui::pos2(x, range.max)], color);
     }
 
-    pub fn secondary_rect(&self, painter: &egui::Painter, rect: egui::Rect, radius: impl Into<egui::CornerRadius>, fill: Color32, color: Color32) {
-        let stroke = self.secondary_border(color);
+    /// Enclosures stay solid independently of the section-divider pattern.
+    pub fn container_rect(&self, painter: &egui::Painter, rect: egui::Rect, radius: impl Into<egui::CornerRadius>, fill: Color32, color: Color32) {
         let radius = radius.into();
-        if !self.borders.secondary_dotted {
-            painter.rect(rect, radius, fill, stroke, egui::StrokeKind::Inside);
-            return;
+        painter.rect(rect, radius, fill, self.container_border(color), egui::StrokeKind::Inside);
+        if let Some(bevel) = self.borders.bevel {
+            bevel.paint(painter, rect, radius, false, true);
         }
-        painter.rect_filled(rect, radius, fill);
-        let rect = rect.shrink(stroke.width * 0.5);
-        if !rect.is_finite() || !rect.is_positive() {
-            return;
-        }
-        let mut rounding: egui::epaint::CornerRadiusF32 = radius.into();
-        rounding -= stroke.width * 0.5;
-        let mut path = Vec::new();
-        egui::epaint::tessellator::path::rounded_rectangle(&mut path, rect, rounding);
-        if let Some(first) = path.first().copied() {
-            path.push(first);
-        }
-        self.secondary_dots(painter, &path, stroke);
+    }
+
+    pub fn container_border(&self, color: Color32) -> Stroke {
+        self.borders.stroke(BorderRole::Container, Stroke::new(1.0, color))
     }
 
     pub fn tertiary_border(&self, color: Color32) -> Stroke {
@@ -136,20 +212,6 @@ impl Tokens {
     pub fn control_border_stroke(&self, color: Color32) -> Stroke {
         self.borders.stroke(BorderRole::Control, Stroke::new(1.0, color))
     }
-}
-
-/// Isolated widget tests restore the thread's custom theme even when an assertion fails.
-#[cfg(test)]
-pub(crate) fn scoped_tokens(tokens: Tokens) -> impl Drop {
-    struct Restore(Option<Custom>);
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            set_custom(self.0);
-        }
-    }
-    let restore = Restore(CUSTOM.get());
-    set_custom(Some(Custom { dark: is_dark(), tokens }));
-    restore
 }
 
 /// A theme file's palette and whether it is dark.

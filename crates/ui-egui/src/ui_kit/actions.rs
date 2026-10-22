@@ -120,8 +120,20 @@ pub(super) fn footer_with_left(
     let inner = band.shrink2(vec2(t.space_12, t.space_10));
     scenario::publish_rect("dialog:footer:actions", inner);
     let mut action = if ui.is_enabled() { keyboard(ui.ctx(), ok_enabled) } else { Action::None };
-    let primary_fill = if danger { t.form_error } else { t.form_primary };
-    let primary_ink = if danger && crate::theme::contrast_ratio(t.on_accent, primary_fill) < 4.5 { t.tab_on_fill_dark } else { t.on_accent };
+    let primary_fill = if t.borders.bevel.is_some() && !danger {
+        t.control_fill
+    } else if danger {
+        t.form_error
+    } else {
+        t.form_primary
+    };
+    let primary_ink = if t.borders.bevel.is_some() && !danger {
+        t.form_ink
+    } else if danger && crate::theme::contrast_ratio(t.on_accent, primary_fill) < 4.5 {
+        t.tab_on_fill_dark
+    } else {
+        t.on_accent
+    };
     let mut actions_left = inner.right();
     let row = ui.scope_builder(egui::UiBuilder::new().max_rect(inner).layout(egui::Layout::left_to_right(egui::Align::Center)), |ui| {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -163,6 +175,7 @@ pub(super) fn footer_with_left(
                         .corner_radius(t.control_radius)
                         .min_size(vec2(if primary { t.space_24 * 3.0 } else { 0.0 }, t.form_button_height)),
                 );
+                t.button_bevel(ui, &response, false);
                 pointer_on_hover(ui, &response);
                 actions_left = actions_left.min(response.rect.left());
                 let key = match kind {
@@ -256,6 +269,7 @@ pub(crate) fn button_pair(ui: &mut egui::Ui, key: &str, states: [bool; 2], butto
                 }
                 painter.galley(egui::pos2(left + icon_width, rect.center().y - galley.size().y / 2.0), galley, t.form_ink);
                 response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, ui.is_enabled(), on, label));
+                t.button_bevel(ui, &response, on);
                 pointer_on_hover(ui, &response);
                 crate::scenario::publish_target(&format!("{key}:{}", button.key), rect);
                 if let Some(value) = clicked.get_mut(index) {
@@ -280,6 +294,10 @@ pub enum Button {
 
 fn button_widget(label: egui::WidgetText, options: Button) -> egui::Button<'static> {
     let t = Tokens::get();
+    if t.borders.bevel.is_some() && !matches!(options, Button::Ghost) {
+        let button = egui::Button::new(label.color(t.form_ink)).fill(t.control_fill).stroke(t.control_border_stroke(t.control_border));
+        return if matches!(options, Button::Small | Button::SmallSelected) { button.small() } else { button };
+    }
     match options {
         Button::Small => egui::Button::new(label).small(),
         Button::Primary => {
@@ -301,6 +319,9 @@ pub fn button(ui: &mut Ui, label: impl Into<egui::WidgetText>, options: Button) 
         Button::Enabled(enabled) => ui.add_enabled_ui(enabled, |ui| ui.add(button_widget(crate::i18n::tr_label(&key).into(), options))).inner,
         _ => ui.add(button_widget(label, options)),
     };
+    if !matches!(options, Button::Ghost) {
+        Tokens::get().button_bevel(ui, &response, matches!(options, Button::SmallSelected));
+    }
     pointer_on_hover(ui, &response);
     let key = if matches!(options, Button::Enabled(_)) { crate::i18n::tr_label(&key) } else { &key };
     publish_button(ui, &response, key);
@@ -326,6 +347,9 @@ pub(crate) fn button_at(ui: &mut Ui, id: &str, rect: egui::Rect, label: impl Int
             },
         )
         .inner;
+    if !matches!(options, Button::Ghost) {
+        Tokens::get().button_bevel(ui, &response, matches!(options, Button::SmallSelected));
+    }
     pointer_on_hover(ui, &response);
     publish_button(ui, &response, &key);
     response
@@ -343,9 +367,14 @@ pub(crate) fn primary_button(ui: &mut Ui, label: &str) -> Response {
 /// `form_primary, on_accent, form_button_height, font_label`.
 pub(crate) fn wide_primary_button(ui: &mut Ui, label: &str) -> Response {
     let t = Tokens::get();
-    let text = RichText::new(crate::i18n::tr_label(label)).size(t.font_label).color(t.on_accent);
+    let text = RichText::new(crate::i18n::tr_label(label)).size(t.font_label).color(if t.borders.bevel.is_some() { t.form_ink } else { t.on_accent });
     let size = vec2(ui.available_width(), t.form_button_height);
-    let response = ui.add(egui::Button::new(crate::fonts::RichTextExt::bold_face(text)).fill(t.form_primary).min_size(size));
+    let response = ui.add(
+        egui::Button::new(crate::fonts::RichTextExt::bold_face(text))
+            .fill(if t.borders.bevel.is_some() { t.control_fill } else { t.form_primary })
+            .min_size(size),
+    );
+    t.button_bevel(ui, &response, false);
     pointer_on_hover(ui, &response);
     response
 }

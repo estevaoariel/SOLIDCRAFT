@@ -204,8 +204,14 @@ slider in Preferences applies the new layout when released, so it stays still wh
 
 
 Theme files can also define `borders`: `primary` outer outlines, `secondary` major section
-rules, `tertiary` small dividers and independent `control` outlines. Each accepts a `width`
+rules, `tertiary` small dividers, `container` solid preview/card/keycap outlines, and independent
+`control` outlines. Each accepts a `width`
 from 0 to 4 UI points and a `color` in hex. Optional `primary_inset` adds a companion outline
 inside panel chrome, with a `gap` from 0 to 12 points. Missing settings keep existing borders.
 Blueprint uses a single white outer outline, dotted section lines and dark minor dividers. Secondary rules optionally accept `pattern: "dotted"`; the default is `solid`. Focus, selection and
 error outlines retain their semantic colours. See the UI-kit border hierarchy for the schema.
+
+SolidCraft 95 also defines optional `borders.bevel`: a per-band `width` and the
+`highlight`, `light`, `shadow` and `dark_shadow` colours. The shared UI uses these
+for raised panels/buttons, recessed fields and reversed pressed-button lighting.
+Themes that omit this setting keep their existing flat borders.

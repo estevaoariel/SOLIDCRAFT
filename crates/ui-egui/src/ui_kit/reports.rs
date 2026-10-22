@@ -32,7 +32,7 @@ pub(crate) fn report_divider(ui: &mut Ui, key: &str) {
 pub(crate) fn list_frame<R>(ui: &mut Ui, key: &str, add: impl FnOnce(&mut Ui) -> R) -> R {
     let t = Tokens::get();
     let response = egui::Frame::NONE
-        .stroke(t.control_border_stroke(t.dialog_rule))
+        .stroke(t.container_border(t.dialog_rule))
         .corner_radius(t.control_radius)
         .inner_margin(egui::Margin::symmetric(t.space_10 as i8, 0))
         .show(ui, |ui| {
