@@ -1559,7 +1559,8 @@ fn trimmed(t: &mut Tr, tol: f64, seq: i64) -> R<Draft> {
 /// the end of the one before, but some exporters write its pieces in order with some of them
 /// reversed, so the loop does not close and the face is lost. The pieces are turned to run on,
 /// starting where S(B) starts (the end of the first piece there), so the loop also keeps the
-/// sense the file gives it (outer loop and holes the opposite ways round).
+/// sense the file gives it (outer loop and holes the opposite ways round). Without a B curve to
+/// start from (or one that cannot be evaluated), the first piece runs on into the second.
 fn cos_curve(t: &mut Tr, seq: i64, xf: &Xf, surface: i64) -> R<Vec<Seg>> {
     let de = t.de(seq)?;
     if de.typ != 142 {
@@ -1573,7 +1574,17 @@ fn cos_curve(t: &mut Tr, seq: i64, xf: &Xf, surface: i64) -> R<Vec<Seg>> {
     let segs = t.curve(c, &x, 0)?;
     let b = t.i(seq, 3).unwrap_or(0);
     let start = if b > 0 { t.param_start(b, 0).and_then(|p| t.surface_point(surface, xf, p[0], p[1])).ok() } else { None };
+    let start = start.or_else(|| first_start(&segs, t.tol));
     Ok(head_to_tail(segs, start, t.tol))
+}
+
+/// Where the first piece of a composite curve starts when it runs on into the second: at its
+/// end farther from the second piece, or where it is written to start when both ends are as
+/// near (a loop of two pieces) or the piece is closed (its ends within `tol`).
+fn first_start(segs: &[Seg], tol: f64) -> Option<V3> {
+    let (first, next) = (segs.first()?, segs.get(1)?);
+    let gap = |p: V3| norm(sub(p, next.a)).min(norm(sub(p, next.b)));
+    Some(if norm(sub(first.a, first.b)) > tol && gap(first.a) < gap(first.b) { first.b } else { first.a })
 }
 
 /// Pieces of a composite curve turned so that each starts where the one before ends, the first
