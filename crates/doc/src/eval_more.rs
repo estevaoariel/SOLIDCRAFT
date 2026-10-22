@@ -67,7 +67,7 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
             if st.bodies.is_empty() {
                 return Err(DocError::Invalid("there is no body to emboss".into()));
             }
-            apply_op(st, f, tools, if *deboss { Operation::Cut } else { Operation::Join }, &crate::plain(targets))
+            apply_op(doc, st, f, tools, if *deboss { Operation::Cut } else { Operation::Join }, &crate::plain(targets))
         }
         FeatureKind::Rib { sketch, curves, thickness, depth, flip, web, normal } => {
             let ss = st.sketch(sketch.0).ok_or_else(|| DocError::Unknown(format!("sketch {sketch}")))?.clone();
@@ -90,7 +90,7 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
             for g in &groups {
                 tools.push(if *normal { rib_tool_normal(st, &ss, g, t, depth, *flip)? } else { rib_tool(st, &ss, g, t, depth, *flip)? });
             }
-            apply_op(st, f, tools, Operation::Join, &[])
+            apply_op(doc, st, f, tools, Operation::Join, &[])
         }
         FeatureKind::ReplaceFace { faces, target, body } => {
             let tp = doc.resolve_plane_in(vals, target, 0, Some(st))?;
@@ -1803,7 +1803,7 @@ pub(super) fn plastic_eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &F
                     tools.extend(kernel::extrude(&rp, &[rect], -delta, hr)?.into_iter().map(|b| crate::lineage::part_tool(b, &format!("rib{k}"))));
                 }
             }
-            apply_traced(st, f, tools, Operation::Join, std::slice::from_ref(&target))?;
+            apply_traced(doc, st, f, tools, Operation::Join, std::slice::from_ref(&target))?;
             // The root fillet: rounds the circle where the post meets the face.
             if rf > 1e-9 {
                 let i = st.bodies.iter().position(|b| b.name == target).ok_or_else(|| DocError::Invalid("boss body".into()))?;
@@ -1827,7 +1827,7 @@ pub(super) fn plastic_eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &F
                 let hp = Plane::new(position.0, x, z.cross(x)).ok_or_else(|| DocError::Invalid("hole frame".into()))?;
                 let tool = kernel::extrude(&hp, &[Region2 { outer: Loop2::circle(Vec2::ZERO, rh), holes: Vec::new() }], h - depth, h + delta)?;
                 let tool = tool.into_iter().map(|b| crate::lineage::part_tool(b, "hole")).collect();
-                apply_traced(st, f, tool, Operation::Cut, std::slice::from_ref(&target))?;
+                apply_traced(doc, st, f, tool, Operation::Cut, std::slice::from_ref(&target))?;
             }
             Ok(())
         }
@@ -1912,10 +1912,10 @@ pub(super) fn plastic_eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &F
             let delta = (h * 0.05).clamp(1e-3, 0.5);
             if *groove {
                 let tool = kernel::extrude(&plane, &[band], -(h + g), delta)?.into_iter().map(|b| crate::lineage::part_tool(b, "groove")).collect();
-                apply_traced(st, f, tool, Operation::Cut, std::slice::from_ref(&target))
+                apply_traced(doc, st, f, tool, Operation::Cut, std::slice::from_ref(&target))
             } else {
                 let tool = kernel::extrude(&plane, &[band], -delta, h)?.into_iter().map(|b| crate::lineage::part_tool(b, "lip")).collect();
-                apply_traced(st, f, tool, Operation::Join, std::slice::from_ref(&target))
+                apply_traced(doc, st, f, tool, Operation::Join, std::slice::from_ref(&target))
             }
         }
         FeatureKind::SnapFit { position, direction, hook, length, thickness, width, catch_depth, catch_length, body } => {
@@ -1939,7 +1939,7 @@ pub(super) fn plastic_eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &F
             let (lo, hi) = if sgn > 0.0 { (0.0, w) } else { (-w, 0.0) };
             let tool = kernel::extrude(&pl, &[Region2 { outer: lp, holes: Vec::new() }], lo, hi)?;
             let tool = tool.into_iter().map(|b| crate::lineage::part_tool(b, "arm")).collect();
-            apply_traced(st, f, tool, Operation::Join, std::slice::from_ref(&target))
+            apply_traced(doc, st, f, tool, Operation::Join, std::slice::from_ref(&target))
         }
         FeatureKind::Rest { position, direction, along, width, length, height, draft, thickness, body } => {
             let target = body_under(st, body, position.0)?;
@@ -1989,7 +1989,7 @@ pub(super) fn plastic_eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &F
                 kernel::extrude(&base, &[region], 0.0, h + delta)?
             };
             let tool = tool.into_iter().map(|b| crate::lineage::part_tool(b, "rest")).collect();
-            apply_traced(st, f, tool, Operation::Join, std::slice::from_ref(&target))
+            apply_traced(doc, st, f, tool, Operation::Join, std::slice::from_ref(&target))
         }
         _ => Err(DocError::Invalid(format!("{} is not a plastic feature", f.name))),
     }

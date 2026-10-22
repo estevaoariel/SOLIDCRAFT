@@ -151,6 +151,22 @@ impl Locale {
         self.default_name(text).unwrap_or_else(|| text.to_string())
     }
 
+    /// Evaluation errors stay English for scripts; the empty Cut/Intersect hint that names
+    /// another component is translated where it is shown. Other text is returned unchanged.
+    pub fn diagnostic(self, text: &str) -> String {
+        const PREFIX: &str = "there is no body to cut or intersect in component '";
+        if let Some((before, detail)) = text.split_once(PREFIX)
+            && let Some((component, detail)) = detail.split_once("'; the tool may overlap '")
+            && let Some((body, detail)) = detail.split_once("' in component '")
+            && let Some((other, after)) = detail.split_once("' — activate that component or pick the body as a target")
+        {
+            let (component, body, other) = (self.given_name(component), self.given_name(body), self.given_name(other));
+            let message = self.format("diagnostic.empty_boolean_component", &[("component", &component), ("body", &body), ("other", &other)]);
+            return format!("{before}{message}{after}");
+        }
+        text.to_string()
+    }
+
     /// Translate generated browser names and labels, preserving custom names otherwise.
     pub fn dynamic(self, text: &str) -> String {
         if let Some(name) = self.default_name(text) {
@@ -243,10 +259,24 @@ pub fn tr_dyn(text: &str) -> String {
 pub fn tr_name(text: &str) -> String {
     CURRENT.with(|current| current.get().given_name(text))
 }
+pub fn tr_diagnostic(text: &str) -> String {
+    CURRENT.with(|current| current.get().diagnostic(text))
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn empty_boolean_component_diagnostic_translates_with_literal_names() {
+        let message = "solid.extrude: there is no body to cut or intersect in component 'Part {1}'; the tool may overlap 'Bracket' in component 'Imported STEP' — activate that component or pick the body as a target";
+        assert_eq!(Locale::for_language("en").diagnostic(message), message);
+        let translated = Locale::for_language("ja").diagnostic(message);
+        assert!(translated.starts_with("solid.extrude: コンポーネント"));
+        for name in ["Part {1}", "Bracket", "Imported STEP"] {
+            assert!(translated.contains(name), "{translated}");
+        }
+    }
 
     /// English first, then by id, so adding a locale edits only its own line.
     #[test]
