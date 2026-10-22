@@ -35,6 +35,10 @@ pub struct HomeState {
     /// Recent design paths, newest first (kept in the preferences).
     pub recent: Vec<String>,
     pub opened_at: std::collections::BTreeMap<String, u64>,
+    /// Designs the user removed from the list. Kept in the preferences so a host that rebuilds
+    /// the recent list from its stored designs (the web build, see `sync_recents`) does not add
+    /// them back. Opening or saving a design clears it from here.
+    pub forgotten: std::collections::BTreeSet<String>,
     thumbs: HashMap<String, Option<egui::TextureHandle>>,
     samples: HashMap<usize, Session>,
     /// Keys asked for and not made yet.
@@ -93,6 +97,17 @@ impl HomeState {
         self.opened_at.insert(path.to_string(), web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0));
         self.opened_at.retain(|p, _| self.recent.contains(p));
         self.thumbs.remove(path);
+        // Opening or saving a design undoes an earlier removal from the list.
+        self.forgotten.remove(path);
+    }
+
+    /// Drop a design from the recent list and remember that the user did so, so a host that
+    /// rebuilds the list from its stored designs (the web build) does not add it back.
+    pub fn forget(&mut self, path: &str) {
+        self.recent.retain(|p| p != path);
+        self.opened_at.remove(path);
+        self.thumbs.remove(path);
+        self.forgotten.insert(path.to_string());
     }
 }
 
@@ -639,8 +654,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                     crate::scenario::publish_handle(&format!("home:recent:{i}"), response.rect.center());
                     crate::ui_kit::Menu::context(&response, |ui| {
                         if crate::context_menu::button(ui, crate::i18n::tr_label("Remove from list"), "delete").clicked() {
-                            app.home.recent.retain(|x| x != p);
-                            app.home.opened_at.remove(p);
+                            app.home.forget(p);
                             ui.close();
                         }
                         if !cfg!(target_arch = "wasm32")
