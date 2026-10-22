@@ -1618,3 +1618,33 @@ fn loft_through_coplanar_sections_is_refused() {
     assert!(e.contains("same plane"), "{e}");
     assert!(s.model.state().bodies.is_empty());
 }
+
+#[test]
+fn duplicate_and_excess_profile_picks_are_refused_quickly() {
+    let mut s = Session::default();
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "Bottom"}));
+    run(&mut s, "sketch.circle.center", json!({"center": [2.5, 2.5], "radius": 2.5}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "sketch.create", json!({"plane": "XY", "offset": 30, "name": "Top"}));
+    run(&mut s, "sketch.circle.center", json!({"center": [2.5, 2.5], "radius": 2}));
+    run(&mut s, "sketch.finish", json!({}));
+    let started = std::time::Instant::now();
+    let many = vec![0; 10_000];
+    let e = s.execute("solid.extrude", &json!({"sketch": "Bottom", "distance": 5, "profiles": many})).unwrap_err().to_string();
+    assert!(e.contains("profile 0 is listed twice"), "{e}");
+    let loft = json!({"sections": [{"sketch": "Bottom", "profiles": many}, {"sketch": "Top"}]});
+    let e = s.execute("solid.loft", &loft).unwrap_err().to_string();
+    assert!(e.contains("profile 0 is listed twice"), "{e}");
+    // More profiles than the sketch has, or one it doesn't have.
+    let e = s.execute("solid.extrude", &json!({"sketch": "Bottom", "distance": 5, "profiles": [0, 1]})).unwrap_err().to_string();
+    assert!(e.contains("2 profiles are listed, but Bottom has 1"), "{e}");
+    let e = s.execute("solid.extrude", &json!({"sketch": "Bottom", "distance": 5, "profiles": [3]})).unwrap_err().to_string();
+    assert!(e.contains("there is no profile 3 in Bottom"), "{e}");
+    let points = json!([{"point": [1, 1]}, {"point": [2, 2]}]);
+    let e = s.execute("solid.extrude", &json!({"sketch": "Bottom", "distance": 5, "profiles": points})).unwrap_err().to_string();
+    assert!(e.contains("2 profile points are given, but Bottom has 1"), "{e}");
+    assert!(started.elapsed().as_secs_f64() < 5.0, "refusing took {:?}", started.elapsed());
+    assert!(s.world_state().bodies.is_empty(), "nothing was built");
+    // One pick of the profile still builds.
+    run(&mut s, "solid.loft", json!({"sections": [{"sketch": "Bottom", "profiles": [0]}, {"sketch": "Top"}]}));
+}

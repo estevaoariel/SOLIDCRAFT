@@ -287,9 +287,30 @@ pub(super) fn stable_profiles(s: &Session, kind: &mut FeatureKind) -> Result<()>
     for (sketch, sel) in kind.profile_sels_mut() {
         let Some(ss) = st.sketch(sketch) else { continue };
         let indices = match sel {
-            ProfileSel::Indices { .. } => solidcraft_doc::profile_selection_indices(ss, sel)?,
+            ProfileSel::Indices { indices } => {
+                let have = ss.profiles.len();
+                if indices.len() > have {
+                    return Err(EngineError::Other(format!("{} profiles are listed, but {} has {have}", indices.len(), ss.name)));
+                }
+                if let Some(i) = indices.iter().find(|i| **i >= have) {
+                    return Err(EngineError::Other(format!("there is no profile {i} in {} (it has {have})", ss.name)));
+                }
+                solidcraft_doc::profile_selection_indices(ss, sel)?
+            }
             ProfileSel::Points { points } => {
+                if points.len() > ss.profiles.len() {
+                    return Err(EngineError::Other(format!(
+                        "{} profile points are given, but {} has {} profiles",
+                        points.len(),
+                        ss.name,
+                        ss.profiles.len()
+                    )));
+                }
                 let Some(indices) = points.iter().map(|point| profile_at_point(&ss.profiles, *point)).collect::<Option<Vec<_>>>() else { continue };
+                let mut seen = std::collections::BTreeSet::new();
+                if let Some(i) = indices.iter().find(|i| !seen.insert(**i)) {
+                    return Err(EngineError::Other(format!("two profile points pick the same profile ({i}) in {}", ss.name)));
+                }
                 indices
             }
             ProfileSel::Curves { loops } => {
@@ -390,7 +411,17 @@ pub(crate) fn profiles(p: &Value, cmd: &str) -> Result<ProfileSel> {
         Value::Array(a) if a.len() > 10_000 => Err(bad(cmd, "too many profiles")),
         Value::Array(a) => {
             if a.iter().all(Value::is_u64) {
-                return Ok(ProfileSel::Indices { indices: a.iter().filter_map(Value::as_u64).map(|x| x as usize).collect() });
+                // Each profile once: a repeat would build the same body again.
+                let mut seen = std::collections::BTreeSet::new();
+                let mut indices = Vec::with_capacity(a.len());
+                for i in a.iter().filter_map(Value::as_u64) {
+                    let i = usize::try_from(i).map_err(|_| bad(cmd, format!("there is no profile {i}")))?;
+                    if !seen.insert(i) {
+                        return Err(bad(cmd, format!("profile {i} is listed twice")));
+                    }
+                    indices.push(i);
+                }
+                return Ok(ProfileSel::Indices { indices });
             }
             if a.iter().all(|x| x.get("point").is_some()) {
                 let pts =

@@ -2121,8 +2121,10 @@ pub fn select_profiles(ss: &SolvedSketch, sel: &ProfileSel) -> Result<Vec<Region
             solidcraft_sketch::without_text_counters(&ss.sketch, chosen).into_iter().map(|p| p.region).collect()
         }
         ProfileSel::Indices { indices } => {
+            // A design file may list a profile more than once; it is still one profile.
+            let mut seen = std::collections::BTreeSet::new();
             let mut v = Vec::new();
-            for i in indices {
+            for i in indices.iter().filter(|i| seen.insert(**i)) {
                 v.push(ps.get(*i).ok_or_else(|| DocError::Unknown(format!("profile {i} of {}", ss.name)))?.region.clone());
             }
             v
