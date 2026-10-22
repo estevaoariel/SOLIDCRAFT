@@ -514,6 +514,37 @@ fn revolve_and_primitives() {
     assert!(rel(m["total"]["volume_mm3"].as_f64().unwrap(), PI * 125.0 * 5.0 / 2.0) < 5e-4);
 }
 
+/// A revolve's axis can be a cylinder's face (its axis) or a straight body edge, as well as a
+/// sketch line or an origin axis: the same ring comes out about a pin's face as about Z.
+#[test]
+fn revolve_about_a_round_face_a_straight_edge_or_a_circular_edge() {
+    for (prep, axis) in [
+        (json!({"radius": 3, "height": 20}), json!({"face": [3, 0, 10]})),
+        (json!({"radius": 3, "height": 20}), json!({"face": [0, 3, 10], "body": "Body1"})),
+        // The cylinder's top circle: its own axis.
+        (json!({"radius": 3, "height": 20}), json!({"edge": [3, 0, 20]})),
+    ] {
+        let mut s = Session::default();
+        run(&mut s, "solid.cylinder", prep);
+        run(&mut s, "sketch.create", json!({"plane": "XZ"}));
+        run(&mut s, "sketch.line", json!({"points": [[10, 0], [15, 0], [15, 5], [10, 5]], "closed": true}));
+        run(&mut s, "solid.revolve", json!({"axis": axis, "operation": "new"}));
+        let m = run(&mut s, "inspect.measure", json!({"bodies": ["Body2"]}));
+        assert!(rel(m["total"]["volume_mm3"].as_f64().unwrap(), PI * 125.0 * 5.0) < 5e-4, "{m}");
+    }
+    // A square bar's edge along Z, through the origin.
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 2, "width": 2, "height": 30, "corner": [-2, 0, -5]}));
+    run(&mut s, "sketch.create", json!({"plane": "XZ"}));
+    run(&mut s, "sketch.line", json!({"points": [[10, 0], [15, 0], [15, 5], [10, 5]], "closed": true}));
+    run(&mut s, "solid.revolve", json!({"axis": {"edge": [0, 0, 10]}, "operation": "new"}));
+    let m = run(&mut s, "inspect.measure", json!({"bodies": ["Body2"]}));
+    assert!(rel(m["total"]["volume_mm3"].as_f64().unwrap(), PI * 125.0 * 5.0) < 5e-4, "{m}");
+    // A flat face has no axis; a curved edge is not a line.
+    let e = s.execute("solid.revolve", &json!({"sketch": "Sketch1", "axis": {"face": [-1, 0, 25]}})).unwrap_err().to_string();
+    assert!(e.contains("not round"), "{e}");
+}
+
 /// #726: a revolve swept each profile edge into two or three patches and left the planar ones
 /// apart, so a pick on such a face took part of it, and a sketch or an extrude there was refused
 /// ("the selected planar face no longer exists") until a later feature merged them.

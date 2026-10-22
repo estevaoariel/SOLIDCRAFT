@@ -272,6 +272,10 @@ fn dispatch(app: &mut SolveApp, ctx: &egui::Context, method: &str, p: &Value) ->
             }
             ok(json!({"workspace":if crate::render_workspace::active(app) {"render"} else {"design"}}))
         }
+        "ui.library" => match crate::library::control(app, p) {
+            Ok(v) => ok(v),
+            Err(e) => err(e),
+        },
         "engine.execute" | "command" => {
             let Some(id) = s("command").or(s("id")) else { return err("missing `command`") };
             wrap(execute(app, id, p.get("params").cloned().filter(|v| !v.is_null()).unwrap_or(json!({}))))
@@ -526,14 +530,6 @@ fn dispatch(app: &mut SolveApp, ctx: &egui::Context, method: &str, p: &Value) ->
             "dimension_selected": crate::dim_view::selected(app),
             "dimension_editing": crate::dim_view::editing(),
         })),
-        "ui.triad" => {
-            // Screen points of the 3D move triad's handles (x, y, z arrows and the plane square).
-            let Some(rect) = app.viewport.rect else { return err("no viewport") };
-            let proj = crate::viewport::projection(app, rect);
-            ok(json!(
-                crate::sketch3d::handle_points(app, &proj).into_iter().map(|(n, p)| json!({"handle": n, "x": p.x, "y": p.y})).collect::<Vec<_>>()
-            ))
-        }
         "ui.dialogInput" => {
             // What clicking a selection input's chip does: make it the one picks go to.
             let i = p.get("index").and_then(Value::as_u64).unwrap_or(0) as usize;

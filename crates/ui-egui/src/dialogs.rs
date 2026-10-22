@@ -528,7 +528,7 @@ fn fits(a: Accept, s: &Sel) -> bool {
     match s {
         Sel::Profile { .. } => a & PROFILES != 0,
         Sel::Edge { .. } => a & EDGES != 0,
-        Sel::Face { .. } => a & (FACES | PLANAR_FACES) != 0,
+        Sel::Face { .. } => a & (FACES | PLANAR_FACES | selection::ROUND_FACES) != 0,
         Sel::Body { .. } => a & BODIES != 0,
         Sel::Plane { .. } => a & PLANES != 0,
         Sel::Axis { .. } => a & AXES != 0,
@@ -599,7 +599,7 @@ impl Dialog {
             ),
             "solid.revolve" => Dialog::new(
                 Kind::Revolve { angle: "360 deg".into(), operation: 0, axis: None },
-                vec![SelInput::new("Profile", PROFILES, true), SelInput::new("Axis", AXES, false)],
+                vec![SelInput::new("Profile", PROFILES, true), SelInput::new("Axis", AXES | EDGES | selection::ROUND_FACES, false)],
             ),
             "solid.fillet" => Dialog::new(fillet_kind("2 mm", false), vec![SelInput::new("Edges", EDGES | FACES, true)]),
             "solid.chamfer" => Dialog::new(fillet_kind("1 mm", true), vec![SelInput::new("Edges", EDGES | FACES, true)]),
@@ -3166,6 +3166,9 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
             let axis = match sels(d, 1).first() {
                 Some(Sel::Axis { name }) => json!(name),
                 Some(Sel::SketchCurve { id }) => json!(id),
+                // A round face stands for its axis, a straight edge for itself.
+                Some(Sel::Face { body, point, .. }) => json!({"face": pt(*point), "body": body}),
+                Some(Sel::Edge { body, point, .. }) => json!({"edge": pt(*point), "body": body}),
                 _ => stored_axis.clone().ok_or("select an axis")?,
             };
             let (sketch, idx) = profiles();

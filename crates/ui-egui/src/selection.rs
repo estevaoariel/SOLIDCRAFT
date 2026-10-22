@@ -40,6 +40,8 @@ pub const FEATURES: Accept = 1024;
 pub const SKETCH_POINTS: Accept = 2048;
 /// The origin point, picked as a vertex of no body (in the viewport or the browser's Origin).
 pub const ORIGIN: Accept = 4096;
+/// Round (not flat) model faces, standing for their axis: a cylinder, cone or torus.
+pub const ROUND_FACES: Accept = 8192;
 
 /// One selection input of a command dialog ("Profiles", "Edges", "Plane", ...).
 #[derive(Clone, Debug, PartialEq)]
@@ -72,6 +74,9 @@ impl SelInput {
             Hit::Profile { sketch, index } if a & PROFILES != 0 => Some(Sel::Profile { sketch: *sketch, index: *index }),
             Hit::Edge { body, index, mid } if a & EDGES != 0 => Some(Sel::Edge { body: body.clone(), index: *index, point: *mid }),
             Hit::Face { body, index, point } if a & FACES != 0 || (a & PLANAR_FACES != 0 && planar(body, *index)) => {
+                Some(Sel::Face { body: body.clone(), index: *index, point: *point })
+            }
+            Hit::Face { body, index, point } if a & ROUND_FACES != 0 && !planar(body, *index) => {
                 Some(Sel::Face { body: body.clone(), index: *index, point: *point })
             }
             Hit::Face { body, .. } if a & BODIES != 0 => Some(Sel::Body { name: body.clone() }),

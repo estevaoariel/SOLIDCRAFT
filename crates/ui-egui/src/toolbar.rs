@@ -542,6 +542,12 @@ fn file_menu(app: &mut SolveApp, ctx: &egui::Context) {
                     app.start("component.insert_design");
                     close = true;
                 }
+                let library = if app.preferences.library_open { crate::i18n::tr("library.menu_hide") } else { crate::i18n::tr("library.menu_show") };
+                if item(ui, library, "", "") {
+                    app.preferences.library_open = !app.preferences.library_open;
+                    app.preferences.library_collapsed = false;
+                    close = true;
+                }
                 if item_if(ui, app.tr("ui.save"), "Ctrl+S", "save", shown) {
                     save(app);
                     close = true;

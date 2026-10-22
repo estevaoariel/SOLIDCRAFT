@@ -101,14 +101,64 @@ pub fn effective(app: &SolveApp, id: &str) -> Option<String> {
     }
 }
 
-/// Commands bound to `key` now.
+/// Where a command's key works. Sketches and the model each have their own keys, so the same
+/// key can mean the sketch command in a sketch and the model one outside it (M: Move/Copy
+/// Sketch Entities or Move), and no model tool starts from a key pressed while sketching.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Context {
+    /// Only while a sketch is being edited: the SKETCH tab's commands.
+    Sketch,
+    /// Only outside a sketch: the modelling tabs' commands.
+    Model,
+    /// Everywhere: file, edit and view commands, and inspecting.
+    Both,
+}
+
+impl Context {
+    fn overlaps(self, other: Context) -> bool {
+        self == Context::Both || other == Context::Both || self == other
+    }
+}
+
+/// Where `id`'s key works (see [`Context`]).
+pub fn context(id: &str) -> Context {
+    let Some(c) = solidcraft_engine::find_command(id) else { return Context::Both };
+    if c.tab == "SKETCH" {
+        return Context::Sketch;
+    }
+    if id.starts_with("inspect.") || id.starts_with("view.") {
+        return Context::Both;
+    }
+    match c.tab {
+        "SOLID" | "SURFACE" | "SHEET METAL" | "PLASTIC" | "MESH" | "RENDER" => Context::Model,
+        _ => Context::Both,
+    }
+}
+
+/// Where keys act now: in the sketch being edited, else on the model.
+fn current(app: &SolveApp) -> Context {
+    if app.session.active_sketch.is_some() { Context::Sketch } else { Context::Model }
+}
+
+/// Commands bound to `key` now, wherever they work.
 pub fn commands_for(app: &SolveApp, key: &str) -> Vec<&'static str> {
     command_specs().into_iter().filter(|c| effective(app, c.id).as_deref() == Some(key)).map(|c| c.id).collect()
 }
 
-/// The enabled command a key press runs, if any.
+/// The other commands whose use of `key` clashes with `id` taking it: those that work where
+/// `id` does.
+fn clashes(app: &SolveApp, id: &str, key: &str) -> Vec<&'static str> {
+    let here = context(id);
+    commands_for(app, key).into_iter().filter(|o| *o != id && context(o).overlaps(here)).collect()
+}
+
+/// The enabled command a key press runs here, if any.
 pub fn command_for(app: &SolveApp, key: &str) -> Option<&'static str> {
-    commands_for(app, key).into_iter().find(|id| solidcraft_engine::find_command(id).is_some_and(|c| c.info(&app.session).enabled))
+    let here = current(app);
+    commands_for(app, key)
+        .into_iter()
+        .filter(|id| context(id).overlaps(here))
+        .find(|id| solidcraft_engine::find_command(id).is_some_and(|c| c.info(&app.session).enabled))
 }
 
 /// Run a shortcut key: its enabled command; outside a sketch, a sketch tool's key opens Create
@@ -126,25 +176,29 @@ pub fn press(app: &mut SolveApp, key: &str) {
 }
 
 /// Outside a sketch: the SKETCH-tab command bound to `key` that a new sketch would start. Not
-/// Normal/Construction (a mode of the drawing in progress) nor the Finish Sketch panel.
+/// Normal/Construction (a mode of the drawing in progress), the Finish Sketch panel, nor the
+/// Modify tools (Move/Copy, Fillet, Trim…), which work on a sketch's existing geometry: an empty
+/// new sketch has none (M is Move outside a sketch and Move/Copy Sketch Entities in one).
 fn sketch_tool_for(app: &SolveApp, key: &str) -> Option<&'static str> {
     if app.session.active_sketch.is_some() {
         return None;
     }
     commands_for(app, key).into_iter().find(|id| {
-        solidcraft_engine::find_command(id).is_some_and(|c| c.tab == "SKETCH" && c.panel != "FINISH SKETCH" && c.id != "sketch.construction")
+        solidcraft_engine::find_command(id)
+            .is_some_and(|c| c.tab == "SKETCH" && !matches!(c.panel, "FINISH SKETCH" | "MODIFY") && c.id != "sketch.construction")
     })
 }
 
 /// Bind `key` to a command (`""` clears it). Refused for reserved keys, and when other commands
-/// use the key unless `replace` (they lose it).
+/// working in the same place (a sketch, the model, see [`Context`]) use the key unless
+/// `replace` (they lose it).
 pub fn bind(app: &mut SolveApp, id: &str, key: &str, replace: bool) -> Result<(), String> {
     let spec = solidcraft_engine::find_command(id).ok_or_else(|| format!("no command `{id}`"))?;
     if RESERVED.contains(&key) {
         return Err(format!("{key} is used by SolidCraft itself"));
     }
     if !key.is_empty() {
-        let others: Vec<&'static str> = commands_for(app, key).into_iter().filter(|o| *o != id).collect();
+        let others = clashes(app, id, key);
         if !others.is_empty() && !replace {
             let names: Vec<&str> = others.iter().filter_map(|o| solidcraft_engine::find_command(o).map(|c| c.label)).collect();
             return Err(format!("{key} is already used by {}", names.join(", ")));
@@ -187,7 +241,7 @@ pub fn page(app: &mut SolveApp, ui: &mut egui::Ui) {
                 match bind(app, &id, &name, false) {
                     Ok(()) => app.keymap.message = None,
                     Err(e) if e.contains("already used") => {
-                        app.keymap.conflict = Some((id.clone(), name.clone(), commands_for(app, &name).iter().map(|s| s.to_string()).collect()));
+                        app.keymap.conflict = Some((id.clone(), name.clone(), clashes(app, &id, &name).iter().map(|s| s.to_string()).collect()));
                         app.keymap.message = Some(e);
                     }
                     Err(e) => app.keymap.message = Some(e),
@@ -372,7 +426,7 @@ mod tests {
         let e = bind(&mut a, "solid.revolve", "M", false).unwrap_err();
         assert!(e.contains("already used by Move/Copy"), "{e}");
         bind(&mut a, "solid.revolve", "M", true).unwrap();
-        assert_eq!(commands_for(&a, "M"), vec!["solid.revolve"]);
+        assert_eq!(command_for(&a, "M"), Some("solid.revolve"), "outside a sketch M is Revolve now");
         assert_eq!(effective(&a, "solid.move"), None);
         assert!(bind(&mut a, "solid.revolve", "Ctrl+Z", false).is_err(), "reserved");
         // Kept between runs.
