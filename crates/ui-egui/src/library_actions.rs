@@ -226,14 +226,14 @@ mod tests {
             h.frames(2);
             assert!(h.widget("Insert into Current Design").is_none());
             assert!(e.path.exists());
-            h.app.home.open = true;
+            h.app.home.open = false;
             h.frames(2);
             h.step(&json!({"click":{"handle":"library:entry:0"},"button":"right"})).unwrap();
             h.frames(2);
             h.step(&json!({"widget":"Rename"})).unwrap();
             h.frames(2);
             assert!(h.app.library.action_dialog.is_some());
-            assert!(h.app.home.open, "Rename must not also open the thumbnail underneath its menu");
+            assert!(!h.app.home.open);
             assert!(!h.app.file_load.busy());
             assert!(h.app.session.path.is_none());
             h.step(&json!({"key":"Escape"})).unwrap();

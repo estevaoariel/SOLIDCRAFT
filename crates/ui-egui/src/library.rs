@@ -495,9 +495,9 @@ fn contents(app: &mut SolveApp, ui: &mut egui::Ui) -> Option<Entry> {
     egui::Frame::NONE.inner_margin(egui::Margin::symmetric(4, 0)).show(ui, |ui| rows(app, ui)).inner
 }
 
-/// Persistent title-bar control, available even when the whole document panel is hidden.
+/// Design-view title-bar control, available even when the document panel is collapsed.
 pub(super) fn app_bar_toggle(app: &mut SolveApp, ui: &mut egui::Ui, rect: egui::Rect) -> bool {
-    if !available(app) {
+    if !available(app) || app.home.open {
         return false;
     }
     let t = crate::theme::Tokens::get();
@@ -533,6 +533,11 @@ pub fn panel(app: &mut SolveApp, ui: &mut egui::Ui) {
         }
         app.library.focus(input.focused);
     });
+    // Home owns the full File view. Keep focus tracking, but defer folder work until Design returns.
+    if app.home.open {
+        actions::dialog(app, ui.ctx());
+        return;
+    }
     app.library.poll(ui.ctx());
     if app.library.collapsed {
         actions::dialog(app, ui.ctx());
@@ -737,7 +742,7 @@ mod tests {
         // No library root is required for inserting into the active design.
         for handle in ["library:insert_step", "library:insert_iges", "library:insert_mesh"] {
             cancel.set(false);
-            h.app.home.open = true;
+            h.app.home.open = false;
             h.frames(3);
             h.step(&json!({"click":{"handle":handle}})).unwrap();
             assert!(h.app.file_picker_busy());
@@ -796,21 +801,35 @@ mod tests {
     }
 
     #[test]
-    fn gear_is_available_before_selection_and_home_remains_open() {
-        let mut h = Harness::new();
-        let selected = h.dir.to_string_lossy().into_owned();
-        folder_picker(&mut h, Some(selected));
-        h.app.home.open = true;
-        h.frames(3);
-        assert!(crate::scenario::rect_of("home:page").is_some());
-        assert!(h.widget("Change CAD directory").is_some());
-        h.step(&json!({"click":{"handle":"library:settings"}})).unwrap();
-        crate::file_picker::tick(&mut h.app, &h.ctx);
-        wait(&mut h.app);
-        h.frames(3);
-        assert_eq!(h.app.library.root.as_ref(), Some(&h.dir));
-        assert!(h.app.home.open);
-        assert!(crate::scenario::rect_of("home:page").is_some());
+    fn home_owns_the_full_width_and_returning_preserves_browser_visibility() {
+        for mode in [crate::shell::LayoutMode::Floating, crate::shell::LayoutMode::Docked] {
+            for collapsed in [false, true] {
+                let mut h = Harness::new();
+                folder_picker(&mut h, None);
+                h.app.library.set_root(h.dir.clone());
+                wait(&mut h.app);
+                h.app.library.collapsed = collapsed;
+                let saved = h.app.library.prefs();
+                let design = h.app.session.doc.to_json();
+                h.call("ui.set", json!({"layout":mode}));
+                h.app.home.open = true;
+                h.frames(3);
+                assert!(crate::scenario::rect_of("home:page").unwrap().left() < 1.0);
+                for handle in
+                    ["library:panel", "library:toggle", "library:insert_step", "library:insert_iges", "library:insert_mesh", "library:settings"]
+                {
+                    assert!(crate::scenario::rect_of(handle).is_none(), "{handle} on Home");
+                }
+                assert_eq!(h.app.library.prefs(), saved);
+                h.step(&json!({"click":{"handle":"home:back"}})).unwrap();
+                h.frames(3);
+                assert!(!h.app.home.open);
+                assert_eq!(crate::scenario::rect_of("library:panel").is_none(), collapsed);
+                assert!(crate::scenario::rect_of("library:toggle").is_some());
+                assert_eq!(h.app.library.prefs(), saved);
+                assert_eq!(h.app.session.doc.to_json(), design);
+            }
+        }
     }
 
     #[test]
@@ -865,23 +884,19 @@ mod tests {
                 for name in ["CAD Files".to_owned(), "Long CAD directory ".repeat(30)] {
                     h.app.library.root = Some(h.dir.join(&name));
                     h.app.library.current = h.app.library.root.clone().unwrap();
-                    for home_open in [true, false] {
-                        h.app.home.open = home_open;
-                        h.frames(3);
-                        let panel = crate::scenario::rect_of("library:panel").unwrap();
-                        let gear = crate::scenario::handle_at("library:settings").unwrap();
-                        assert!((gear.x - (panel.right() - 20.0)).abs() < 1.0, "{panel:?} {gear:?}");
-                        let toggle = crate::scenario::rect_of("library:toggle").unwrap();
-                        let file = crate::scenario::rect_of("appbar:file").unwrap();
-                        let home = crate::scenario::rect_of("appbar:home").unwrap();
-                        assert!(toggle.right() < home.left());
-                        assert!(home.right() < file.left());
-                        assert!(toggle.bottom() < panel.top());
-                        if !home_open {
-                            let viewport = h.app.viewport.rect.unwrap();
-                            assert!(viewport.left() >= panel.right(), "{panel:?} {viewport:?}");
-                        }
-                    }
+                    h.app.home.open = false;
+                    h.frames(3);
+                    let panel = crate::scenario::rect_of("library:panel").unwrap();
+                    let gear = crate::scenario::handle_at("library:settings").unwrap();
+                    assert!((gear.x - (panel.right() - 20.0)).abs() < 1.0, "{panel:?} {gear:?}");
+                    let toggle = crate::scenario::rect_of("library:toggle").unwrap();
+                    let file = crate::scenario::rect_of("appbar:file").unwrap();
+                    let home = crate::scenario::rect_of("appbar:home").unwrap();
+                    assert!(toggle.right() < home.left());
+                    assert!(home.right() < file.left());
+                    assert!(toggle.bottom() < panel.top());
+                    let viewport = h.app.viewport.rect.unwrap();
+                    assert!(viewport.left() >= panel.right(), "{panel:?} {viewport:?}");
                 }
             }
         }
@@ -1110,7 +1125,7 @@ mod tests {
         folder_picker(&mut h, None);
         h.app.library.root = Some(h.dir.clone());
         h.app.library.current = h.dir.clone();
-        h.app.home.open = true;
+        h.app.home.open = false;
         h.app.library.listing.entries = (0..10_000)
             .map(|i| {
                 let name = format!("Design {i:05}.solidcraft");
@@ -1135,7 +1150,7 @@ mod tests {
         assert_eq!(h.app.library.root.as_ref(), Some(&h.dir));
         h.call("ui.resize", json!({"width":800,"height":600}));
         h.frames(3);
-        assert!(crate::scenario::rect_of("home:page").is_some());
+        assert!(h.app.viewport.rect.is_some());
     }
     #[cfg(unix)]
     #[test]
