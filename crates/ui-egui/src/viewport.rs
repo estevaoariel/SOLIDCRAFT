@@ -571,7 +571,38 @@ type InstancedTris = std::collections::HashMap<usize, (std::sync::Arc<solidcraft
 
 /// A body alone is drawn as an instance of its triangles (shared vertices, indexed) from this many
 /// triangles: a large imported mesh. Smaller ones are drawn so only when placed more than once.
-const INSTANCE_ALONE: usize = 50_000;
+pub(crate) const INSTANCE_ALONE: usize = 50_000;
+
+/// Shared vertices made ahead, off the window thread ([`warm_shared_tris`]), by mesh address
+/// (the mesh held, so its address stays its own), until a scene takes them.
+static WARMED: std::sync::Mutex<Vec<(std::sync::Arc<solidcraft_engine::geom::Mesh>, std::sync::Arc<crate::gpu::SharedTris>)>> =
+    std::sync::Mutex::new(Vec::new());
+/// Most meshes kept warmed and not taken yet (a design opened and closed before it was drawn).
+const MAX_WARMED: usize = 8;
+
+/// Make a large mesh's shared vertices ahead of its first scene, on the caller's thread (the
+/// background mesher, after a file is opened or inserted): welding a scanned part takes a
+/// noticeable part of a second, which the window thread would otherwise spend on the first frame
+/// that shows it.
+pub(crate) fn warm_shared_tris(mesh: &std::sync::Arc<solidcraft_engine::geom::Mesh>) {
+    if mesh.triangles.len() < INSTANCE_ALONE || WARMED.lock().map_or(true, |w| w.iter().any(|(m, _)| std::sync::Arc::ptr_eq(m, mesh))) {
+        return;
+    }
+    let tris = std::sync::Arc::new(crate::gpu::SharedTris::new(mesh));
+    if let Ok(mut warmed) = WARMED.lock() {
+        if warmed.len() >= MAX_WARMED {
+            warmed.remove(0);
+        }
+        warmed.push((mesh.clone(), tris));
+    }
+}
+
+/// The shared vertices made ahead for `mesh`, taken from the warmed ones.
+fn taken_shared_tris(mesh: &std::sync::Arc<solidcraft_engine::geom::Mesh>) -> Option<std::sync::Arc<crate::gpu::SharedTris>> {
+    let mut warmed = WARMED.lock().ok()?;
+    let at = warmed.iter().position(|(m, _)| std::sync::Arc::ptr_eq(m, mesh))?;
+    Some(warmed.remove(at).1)
+}
 
 /// One body as the model scene draws it.
 struct BodyDraw {
@@ -721,7 +752,7 @@ impl Instances {
             None => {
                 let tris = match self.kept.get(&key).filter(|(k, _)| std::sync::Arc::ptr_eq(k, &mesh)) {
                     Some((_, t)) => t.clone(),
-                    None => std::sync::Arc::new(crate::gpu::SharedTris::new(&mesh)),
+                    None => taken_shared_tris(&mesh).unwrap_or_else(|| std::sync::Arc::new(crate::gpu::SharedTris::new(&mesh))),
                 };
                 self.meshes.push((mesh.clone(), crate::gpu::InstancedMesh { key: key as u64, tris, instances: Vec::new() }));
                 self.meshes.len() - 1
@@ -4967,6 +4998,36 @@ mod tests {
             times.sort_by(f64::total_cmp);
             eprintln!("{label}: median {:.1} ms a frame (min {:.1}, max {:.1})", times[times.len() / 2], times[0], times[times.len() - 1]);
         }
+    }
+
+    /// A large mesh's shared vertices made ahead (by the background mesher after a file is
+    /// opened or inserted) are the ones its first scene draws: that frame welds nothing.
+    #[test]
+    fn a_large_meshs_shared_vertices_are_made_ahead_of_its_first_scene() {
+        use solidcraft_engine::doc::{Document, FeatureKind, MeshData};
+        // A flat grid of 160 × 160 squares: 51 200 triangles, each corner its own vertex.
+        let n = 160u32;
+        let corners: Vec<[u32; 2]> =
+            (0..n).flat_map(|j| (0..n).flat_map(move |i| [[i, j], [i + 1, j], [i + 1, j + 1], [i, j], [i + 1, j + 1], [i, j + 1]])).collect();
+        let mut doc = Document::default();
+        let meshes = vec![MeshData {
+            name: "Grid".into(),
+            positions: corners.iter().flat_map(|[x, y]| [f64::from(*x), f64::from(*y), 0.0]).collect(),
+            triangles: (0..u32::try_from(corners.len()).unwrap()).collect(),
+            color: None,
+        }];
+        doc.add_feature(FeatureKind::MeshImport { file: "grid.stl".into(), meshes }, Some("Grid")).unwrap();
+        let mut app = SolveApp::new(solidcraft_engine::Session::new(doc), crate::Services::default());
+        app.viewport.gpu = Some(GpuTarget { format: egui_wgpu::wgpu::TextureFormat::Rgba8Unorm, depth: None, samples: 1, tess: false });
+        let (mesh, _) = app.session.world_state().bodies[0].mesh_in_place();
+        assert!(mesh.triangles.len() >= INSTANCE_ALONE);
+        warm_shared_tris(&mesh);
+        let warmed = WARMED.lock().unwrap().iter().find(|(m, _)| std::sync::Arc::ptr_eq(m, &mesh)).map(|(_, t)| t.clone()).unwrap();
+        assert_eq!(warmed.vertices.len() / crate::gpu::SHARED_SIZE, 161 * 161, "the grid's corners shared");
+        let scene = build_scene(&app);
+        assert_eq!(scene.instanced.len(), 1, "a large mesh alone is drawn from shared vertices");
+        assert!(std::sync::Arc::ptr_eq(&scene.instanced[0].tris, &warmed), "the ones made ahead");
+        assert!(!WARMED.lock().unwrap().iter().any(|(m, _)| std::sync::Arc::ptr_eq(m, &mesh)), "taken");
     }
 
     /// Each placement of a part is picked where it stands, the turned one too, from the part's
