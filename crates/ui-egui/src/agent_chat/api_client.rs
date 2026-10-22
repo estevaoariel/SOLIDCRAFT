@@ -14,6 +14,9 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
+#[path = "text_call.rs"]
+mod text_call;
+
 use super::acp::ModelInfo;
 use super::backend::{ChatBackend, Event, HttpFn, HttpRequest, PromptPart, StartContext, ToolStatus};
 use super::process::{AgentProcess, FromAgent, ProcessHandle};
@@ -246,7 +249,8 @@ impl Worker {
         while self.history.len() > 2 && self.history.get(1).is_some_and(|m| m["role"] != "user") {
             self.history.remove(1);
         }
-        for _ in 0..MAX_REQUESTS_PER_TURN {
+        let mut empty_retried = false;
+        for request in 0..MAX_REQUESTS_PER_TURN {
             // The history as of here is complete (every tool call answered): a cancelled request
             // goes back to it, so no half-finished round is left to confuse the next message.
             let sound = self.history.len();
@@ -273,10 +277,31 @@ impl Worker {
                 }
             };
             let msg = reply.pointer("/choices/0/message").cloned().unwrap_or(Value::Null);
-            if let Some(text) = msg.get("content").and_then(Value::as_str).filter(|t| !t.is_empty()) {
+            let text = msg.get("content").and_then(Value::as_str).unwrap_or("");
+            let mut calls: Vec<Value> = msg.get("tool_calls").and_then(Value::as_array).cloned().unwrap_or_default();
+            if calls.is_empty()
+                && let Some(mut call) = text_call::pickup(text, &self.tools)
+            {
+                self.next = self.next.saturating_add(1);
+                call["id"] = json!(format!("text-call-{}", self.next));
+                calls.push(call);
+            }
+            if calls.is_empty() && text.trim().is_empty() {
+                // One hand-back per turn, using the same request budget as tool rounds.
+                if !empty_retried && request + 1 < MAX_REQUESTS_PER_TURN {
+                    empty_retried = true;
+                    self.history.push(json!({"role": "user", "content": "your reply was empty; answer or call a tool"}));
+                    continue;
+                }
+                let text = "The model gave no answer.";
+                self.emit(Event::Text { thought: false, text: text.into() });
+                self.history.push(json!({"role": "assistant", "content": text}));
+                self.emit(Event::TurnEnded { reason: String::new() });
+                return;
+            }
+            if !text.trim().is_empty() {
                 self.emit(Event::Text { thought: false, text: text.to_string() });
             }
-            let calls: Vec<Value> = msg.get("tool_calls").and_then(Value::as_array).cloned().unwrap_or_default();
             let mut kept = json!({"role": "assistant", "content": msg.get("content").cloned().unwrap_or(Value::Null)});
             if !calls.is_empty() {
                 kept["tool_calls"] = Value::Array(calls.clone());
@@ -556,6 +581,114 @@ pub fn test_endpoint(http: &HttpFn, base_url: &str, key: Option<&str>, model: &s
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn text_calls_accept_model_shapes_and_repair_json() {
+        let tools = vec![json!({"function": {"name": "batch"}})];
+        for text in [
+            r#"{"name":"batch","arguments":{"commands":[]}}"#,
+            r#"{"name":"batch","parameters":{"commands":[]}}"#,
+            r#"{"name":"batch","arguments":"{\"commands\":[]}"}"#,
+            r#"{"tool":"batch","args":{"commands":[]}}"#,
+            r#"{"function":{"name":"batch","arguments":{"commands":[]}}}"#,
+            "Here's the call: ```json\n{name: 'batch', arguments: {commands: [],},}\n``` Done.",
+            r#"{"name":"batch","arguments":{"commands":[]}"#,
+            "```json\n{name: 'batch', arguments: {commands: []}\n```",
+        ] {
+            let call = text_call::pickup(text, &tools).expect(text);
+            assert_eq!(call["function"]["name"], "batch", "{text}");
+            assert_eq!(tool_arguments(call.pointer("/function/arguments")), Ok(json!({"commands": []})), "{text}");
+        }
+        for text in [
+            r#"{"name":"solid.box","arguments":{"width":20}}"#,
+            r#"{"solid.box":{"width":20}}"#,
+            r#"{"name":"solid.box {width: 20,}","arguments":{}}"#,
+            r#"{"name":"solid.box{width: 20}","arguments":{}}"#,
+            r#"{"tool":"solid.box({width: 20})","args":{}}"#,
+            r#"{"tool":"solid.box(width: 20)","args":{}}"#,
+            r#"{"tool":"solid.box {width: 20}","args":{"height":10}}"#,
+        ] {
+            let call = text_call::pickup(text, &tools).expect(text);
+            assert_eq!(call["function"]["name"], "execute", "{text}");
+            let args = tool_arguments(call.pointer("/function/arguments")).unwrap();
+            assert_eq!(args["command"], "solid.box", "{text}");
+            assert_eq!(args["params"]["width"], 20, "{text}");
+            if text.contains("height") {
+                assert_eq!(args["params"]["height"], 10);
+            }
+        }
+    }
+
+    #[test]
+    fn text_calls_ignore_prose_and_bound_hostile_input() {
+        let quoted = text_call::pickup(r#"{name:'batch',arguments:{note:'a } bracket [ and "word"', list:[1,2,], enabled:true}}"#, &[]).unwrap();
+        assert_eq!(
+            tool_arguments(quoted.pointer("/function/arguments")),
+            Ok(json!({
+                "note": "a } bracket [ and \"word\"", "list": [1, 2], "enabled": true
+            }))
+        );
+        for text in [
+            "I can make a box.",
+            r#"{"width":20}"#,
+            r#"{"made.up.command":{}}"#,
+            r#"{"name":"solid.box {width: nope}","arguments":{}}"#,
+            r#"{"name":"batch","arguments": [}"#,
+            "{name: 'batch', arguments: {broken: 'unterminated}",
+        ] {
+            assert!(text_call::pickup(text, &[]).is_none(), "{text}");
+        }
+        assert!(text_call::pickup(&"{".repeat(100_000), &[]).is_none());
+        let deep = format!("{{name:'batch',arguments:{}{} }}", "[".repeat(200), "]".repeat(200));
+        assert!(text_call::pickup(&deep, &[]).is_none());
+    }
+
+    #[test]
+    fn text_calls_share_the_tool_loop_and_empty_replies_retry_once() {
+        let reply = |content: Value| (200, json!({"choices": [{"message": {"role": "assistant", "content": content}}]}));
+        let (mut w, seen) = scripted_worker(vec![reply(json!("{name:'measure',arguments:{}}")), reply(Value::Null), reply(json!("  "))]);
+        let (tx, rx) = channel();
+        w.events = tx;
+        w.turn(vec![PromptPart::Text("measure it".into())]);
+        let events: Vec<_> = rx.try_iter().collect();
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::Tool { status: Some(ToolStatus::Failed), output: Some(o), .. } if o.contains("no SolidCraft tools"))),
+            "{events:?}"
+        );
+        assert!(events.iter().any(|e| matches!(e, Event::Text { text, .. } if text == "The model gave no answer.")), "{events:?}");
+        let sent = seen.lock().unwrap();
+        assert_eq!(sent.len(), 3);
+        let messages = sent[1]["messages"].as_array().unwrap();
+        let assistant = &messages[messages.len() - 2];
+        assert_eq!(assistant["role"], "assistant");
+        assert_eq!(assistant["tool_calls"][0]["function"]["name"], "measure");
+        assert_eq!(messages.last().unwrap()["role"], "tool");
+        assert_eq!(messages.last().unwrap()["tool_call_id"], assistant["tool_calls"][0]["id"]);
+        assert_eq!(sent[2]["messages"].as_array().unwrap().last().unwrap()["role"], "user");
+        assert_eq!(sent[2]["messages"].as_array().unwrap().last().unwrap()["content"], "your reply was empty; answer or call a tool");
+        drop(sent);
+
+        let (mut w, seen) = scripted_worker(vec![reply(Value::Null), reply(json!("Done."))]);
+        w.turn(vec![]);
+        assert_eq!(seen.lock().unwrap().len(), 2);
+        assert_eq!(w.history.last().unwrap()["content"], "Done.");
+
+        // Native calls take precedence over call-shaped text in the same reply.
+        let native = json!({"choices": [{"message": {
+            "content": "{name:'batch',arguments:{}}",
+            "tool_calls": [{"id": "native", "type": "function", "function": {"name": "measure", "arguments": "{}"}}]
+        }}]});
+        let (mut w, seen) = scripted_worker(vec![(200, native), reply(json!("Done."))]);
+        w.turn(vec![]);
+        let sent = seen.lock().unwrap();
+        assert_eq!(sent.len(), 2);
+        let messages = sent[1]["messages"].as_array().unwrap();
+        let assistant = &messages[messages.len() - 2];
+        assert_eq!(assistant["tool_calls"][0]["id"], "native");
+        assert_eq!(assistant["tool_calls"][0]["function"]["name"], "measure");
+    }
 
     #[test]
     fn mcp_tools_become_function_tools_without_crash_reports() {
