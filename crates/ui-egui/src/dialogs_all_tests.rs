@@ -56,7 +56,7 @@ fn representative(h: &Harness, command: &str) -> Dialog {
         } else if input.accept & PLANES != 0 {
             vec![Sel::Plane { name: if index == 1 { "XZ" } else { "XY" }.into() }]
         } else if input.accept & CURVES != 0 || command == "sheet.fold" && index == 0 {
-            vec![Sel::SketchCurve { id: path.clone() }]
+            vec![Sel::SketchCurve { id: path.clone(), sketch: None }]
         } else if input.accept & AXES != 0 {
             vec![Sel::Axis { name: "Z".into() }]
         } else if input.accept & (FACES | PLANAR_FACES) != 0 {
