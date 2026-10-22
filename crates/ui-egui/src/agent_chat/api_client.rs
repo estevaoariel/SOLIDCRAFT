@@ -16,13 +16,15 @@ use serde_json::{Value, json};
 use super::acp::ModelInfo;
 use super::backend::{ChatBackend, Event, HttpFn, HttpRequest, PromptPart, StartContext, ToolStatus};
 
-/// Model requests for one message, at most (each answer with tool calls is one).
-pub const MAX_REQUESTS_PER_TURN: usize = 24;
+/// Model requests for one message, at most (each answer with tool calls is one). A model that
+/// plans in many small calls needs more than a few: 24 stopped a capable one mid-build on four
+/// steps of the eval sheet. What actually bounds the work is the change limit
+/// (`agent_chat_turn_limit`, a preference); this only stops a loop that never settles.
+pub const MAX_REQUESTS_PER_TURN: usize = 100;
 /// Longest tool result handed back to the model.
 const MAX_TOOL_TEXT: usize = 20_000;
 /// Messages kept in the conversation (the system note stays).
 const MAX_HISTORY: usize = 240;
-/// How long one model request may take.
 /// Longest one request may take. A slow model writing a large batch of tool calls can need
 /// minutes: 300 s cut off a build after it had read its skills and started to answer. The host
 /// caps this at 900 s, and Stop cancels at once, so this is a backstop against an endpoint that

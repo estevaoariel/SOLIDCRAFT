@@ -1266,7 +1266,7 @@
   "ui.ai_permissions": "権限",
   "ui.ai_preset": "プリセット",
   "ui.ai_remove": "削除",
-  "ui.ai_request_limit": "1メッセージあたり24リクエストで停止しました。続けるには、もう一度メッセージを送ってください",
+  "ui.ai_request_limit": "1メッセージあたり100リクエストで停止しました。続けるには、もう一度メッセージを送ってください",
   "ui.ai_reset": "リセット",
   "ui.ai_settings": "AI 設定…",
   "ui.ai_show_features": "AI 機能を表示",
