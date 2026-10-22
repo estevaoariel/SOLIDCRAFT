@@ -1028,6 +1028,8 @@
   "settings.msaa_applies_on_restart": "El suavizado de bordes se aplicará la próxima vez que se inicie SolidCraft",
   "settings.msaa_reset": "{setting}: este dispositivo gráfico no admite {requested}×; se ha establecido {reset}× (admitidos: {supported}).",
   "settings.msaa_unsupported": "No compatible con este dispositivo gráfico",
+  "settings.reference_geometry_through_bodies": "Mostrar geometría de referencia a través de los cuerpos",
+  "settings.reference_geometry_through_bodies_help": "Dibujar los contornos de bocetos inactivos y los planos de referencia sobre los cuerpos sombreados",
   "settings.reset_intro": "Estos ajustes no funcionan en este ordenador e impedirían iniciar SolidCraft, por lo que se han cambiado:",
   "settings.reset_title": "Se han cambiado los ajustes",
   "settings.supersampling_note": "Dibuja la vista a mayor resolución y después la reduce: bordes, líneas y cuadrícula más suaves en pantallas inferiores a 4K. Consume recursos de GPU: unos 2,25× píxeles a 1,5× y 4× a 2×.",

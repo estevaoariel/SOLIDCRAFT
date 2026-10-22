@@ -1032,6 +1032,8 @@
   "settings.msaa_applies_on_restart": "Die Kantenglättung wird beim nächsten Start von SolidCraft übernommen",
   "settings.msaa_reset": "{setting}: {requested}× wird von diesem Grafikgerät nicht unterstützt; jetzt {reset}× (unterstützt: {supported}).",
   "settings.msaa_unsupported": "Von diesem Grafikgerät nicht unterstützt",
+  "settings.reference_geometry_through_bodies": "Referenzgeometrie durch Körper hindurch anzeigen",
+  "settings.reference_geometry_through_bodies_help": "Konturen inaktiver Skizzen und Bezugsebenen über schattierten Körpern zeichnen",
   "settings.reset_intro": "Diese Einstellungen funktionieren auf diesem Computer nicht und würden den Start von SolidCraft verhindern. Sie wurden daher geändert:",
   "settings.reset_title": "Einstellungen wurden geändert",
   "settings.supersampling_note": "Zeichnet die Ansicht in höherer Auflösung und rechnet sie herunter: glattere Kanten, Linien und Raster auf Bildschirmen unter 4K. Kostet GPU-Zeit: etwa 2,25-mal so viele Pixel bei 1,5× und 4-mal bei 2×.",

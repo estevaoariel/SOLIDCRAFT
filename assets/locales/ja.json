@@ -1062,6 +1062,8 @@
   "settings.msaa_applies_on_restart": "アンチエイリアスは次回 SolidCraft を起動したときに適用されます",
   "settings.msaa_reset": "{setting}: {requested}× はこのグラフィックスデバイスではサポートされていないため、{reset}× に変更しました（サポート: {supported}）。",
   "settings.msaa_unsupported": "このグラフィックスデバイスではサポートされていません",
+  "settings.reference_geometry_through_bodies": "ボディ越しに参照ジオメトリを表示",
+  "settings.reference_geometry_through_bodies_help": "非アクティブなスケッチ輪郭と基準平面をシェーディングされたボディの上に描画します",
   "settings.reset_intro": "次の設定はこのコンピューターでは使用できず、SolidCraft が起動できなくなるため変更されました:",
   "settings.reset_title": "設定が変更されました",
   "settings.supersampling_note": "ビューを高い解像度で描画してから縮小します。4K 未満の画面でエッジ、線、グリッドが滑らかになります。GPU の負荷が増えます（1.5× で約 2.25 倍、2× で 4 倍のピクセル）。",
