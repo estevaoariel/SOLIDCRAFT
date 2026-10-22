@@ -3983,8 +3983,9 @@ fn cheap_commands_on_thousands_of_bodies_evaluate_nothing() {
 }
 
 /// #3397: a new, empty component changes nothing a feature reads, so creating one recomputes
-/// nothing, the first component of a design included: not a targeted cut, a Combine or a To
-/// Object extrude, which read placements.
+/// nothing, the first component of a design included: not a targeted cut, a Combine, a To
+/// Object extrude or a sketch on a face without a construction certificate (a legacy face
+/// plane, which reads every placed body), all of which read placements.
 #[test]
 fn creating_a_component_recomputes_nothing() {
     let mut s = Session::default();
@@ -3996,6 +3997,31 @@ fn creating_a_component_recomputes_nothing() {
     run(&mut s, "sketch.circle.center", json!({"center": [25, 25], "radius": 2}));
     run(&mut s, "sketch.finish", json!({}));
     run(&mut s, "solid.extrude", json!({"sketch": "Post sketch", "to": [25, 25, 10], "operation": "new", "body_name": "Post"}));
+    // A plate whose top face loses its certificate: a patterned cut, a pad joined flush with
+    // the top, then one more cut. Extruding that face makes a sketch on a legacy face plane.
+    run(&mut s, "solid.box", json!({"length": 100, "width": 100, "height": 10, "corner": [200, 0, 0], "operation": "new", "body_name": "Plate"}));
+    run(
+        &mut s,
+        "solid.cylinder",
+        json!({"diameter": 4, "height": 12, "base": [210, 10, -1], "operation": "cut", "targets": ["Plate"], "name": "Pilot"}),
+    );
+    run(
+        &mut s,
+        "solid.pattern.rectangular",
+        json!({"features": ["Pilot"], "dir1": [1, 0, 0], "count1": 4, "spacing1": 20, "dir2": [0, 1, 0], "count2": 4, "spacing2": 20}),
+    );
+    run(&mut s, "sketch.create", json!({"plane": "XY", "offset": "5 mm", "name": "Pad sketch"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0": [260, 60], "p1": [295, 95]}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"sketch": "Pad sketch", "distance": 5, "operation": "join", "targets": ["Plate"]}));
+    run(&mut s, "solid.box", json!({"length": 5, "width": 100, "height": 12, "corner": [199, 0, -1], "operation": "cut", "targets": ["Plate"]}));
+    run(&mut s, "solid.extrude", json!({"face": [240, 40, 10], "distance": 1, "operation": "join", "name": "Face layer"}));
+    let legacy_face = s
+        .doc
+        .features
+        .iter()
+        .any(|f| matches!(&f.kind, solidcraft_doc::FeatureKind::Sketch { plane: solidcraft_doc::PlaneRef::Face { anchor: None, .. }, .. }));
+    assert!(legacy_face, "the face extrude's sketch is on a legacy face plane");
     for name in ["First", "Second"] {
         run(&mut s, "component.create", json!({"name": name}));
         assert_eq!(s.model.last_recomputed, 0, "creating {name} recomputed a feature");
