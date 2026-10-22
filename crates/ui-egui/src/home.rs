@@ -36,6 +36,10 @@ pub struct HomeState {
     pub recent: Vec<String>,
     pub opened_at: std::collections::BTreeMap<String, u64>,
     thumbs: HashMap<String, Option<egui::TextureHandle>>,
+    /// Keys whose picture could not be made (an empty or unreadable design). Terminal: the card
+    /// shows a placeholder instead of spinning forever. Cleared when the design is opened or saved
+    /// (see `add_recent`), which asks for the picture again.
+    failed: std::collections::HashSet<String>,
     samples: HashMap<usize, Session>,
     /// Keys asked for and not made yet.
     queued: Vec<String>,
@@ -75,6 +79,12 @@ impl HomeState {
         self.recent.iter().filter(|p| self.thumbs.get(*p).is_some_and(Option::is_some)).count()
     }
 
+    /// Whether a design's picture could not be made, so its card shows a placeholder rather than
+    /// a spinner that would otherwise turn forever.
+    fn thumb_failed(&self, key: &str) -> bool {
+        self.failed.contains(key)
+    }
+
     pub fn ready_samples(&self) -> usize {
         (0..solidcraft_engine::sample::samples().len()).filter(|i| self.thumbs.get(&format!("sample:{i}")).is_some_and(Option::is_some)).count()
     }
@@ -93,6 +103,8 @@ impl HomeState {
         self.opened_at.insert(path.to_string(), web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0));
         self.opened_at.retain(|p, _| self.recent.contains(p));
         self.thumbs.remove(path);
+        // A fresh open or save earns another attempt at the picture.
+        self.failed.remove(path);
     }
 }
 
@@ -224,8 +236,19 @@ pub(crate) fn remember_source(h: &mut HomeState, s: &Session, key: &str) {
 }
 
 pub(crate) fn install(h: &mut HomeState, ctx: &egui::Context, key: &str, img: Option<egui::ColorImage>) {
-    let tex = img.map(|i| ctx.load_texture(format!("thumb:{key}"), i, egui::TextureOptions::LINEAR));
-    h.thumbs.insert(key.to_string(), tex);
+    match img {
+        Some(i) => {
+            let tex = ctx.load_texture(format!("thumb:{key}"), i, egui::TextureOptions::LINEAR);
+            h.thumbs.insert(key.to_string(), Some(tex));
+            h.failed.remove(key);
+        }
+        // The job finished with no picture: an empty design, or one that could not be read. Mark
+        // it so the card stops spinning and shows a placeholder (#4655).
+        None => {
+            h.thumbs.insert(key.to_string(), None);
+            h.failed.insert(key.to_string());
+        }
+    }
 }
 
 /// Read a disposable picture without evaluating, importing or meshing a model.
@@ -407,8 +430,13 @@ fn poll(app: &mut SolveApp, ctx: &egui::Context) {
             app.home.wanted = None;
             app.set_status(format!("the sample could not be built ({key})"), true);
         }
-        // A failed sample build does not discard its shipped preview.
-        if img.is_some() || !app.home.thumbs.contains_key(&key) {
+        // A failed sample build keeps its shipped preview, so never overwrite a sample that
+        // already has a picture with an empty result. A recent with no picture, though, must
+        // settle into a terminal "failed" state so its card stops spinning (#4655); `install`
+        // records that.
+        let is_sample = key.starts_with("sample:");
+        let already_ready = app.home.thumbs.get(&key).is_some_and(Option::is_some);
+        if img.is_some() || (!is_sample && !already_ready) || !app.home.thumbs.contains_key(&key) {
             install(&mut app.home, ctx, &key, img);
         }
         if let (Some(s), Some(i)) = (session, key.strip_prefix("sample:").and_then(|i| i.parse::<usize>().ok())) {
@@ -634,8 +662,12 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                         sub.push('\n');
                         sub.push_str(&opened);
                     }
-                    let response = card(ui, Pic::Ready(app.home.thumbs.get(p.as_str()).and_then(Option::as_ref)), &name, &sub, missing)
-                        .on_hover_text(p.as_str());
+                    let pic = if app.home.thumb_failed(p) {
+                        Pic::Failed
+                    } else {
+                        Pic::Ready(app.home.thumbs.get(p.as_str()).and_then(Option::as_ref))
+                    };
+                    let response = card(ui, pic, &name, &sub, missing).on_hover_text(p.as_str());
                     crate::scenario::publish_handle(&format!("home:recent:{i}"), response.rect.center());
                     crate::ui_kit::Menu::context(&response, |ui| {
                         if crate::context_menu::button(ui, crate::i18n::tr_label("Remove from list"), "delete").clicked() {
@@ -704,9 +736,12 @@ fn grid(ui: &mut egui::Ui, n: usize, mut each: impl FnMut(&mut egui::Ui, usize))
     }
 }
 
-/// A card's picture: rendered (`None` while it renders), or an icon until it is asked for.
+/// A card's picture: rendered (`None` while it renders), a placeholder when it could not be made,
+/// or an icon until it is asked for.
 enum Pic<'a> {
     Ready(Option<&'a egui::TextureHandle>),
+    /// The picture could not be made (empty or unreadable design): a placeholder, not a spinner.
+    Failed,
     Icon(&'static str),
 }
 
@@ -738,6 +773,12 @@ fn card(ui: &mut egui::Ui, pic: Pic, name: &str, sub: &str, dim: bool) -> egui::
             if !dim {
                 egui::Spinner::new().size(18.0).paint_at(ui, egui::Rect::from_center_size(img.center(), vec2(18.0, 18.0)));
             }
+        }
+        Pic::Failed => {
+            // No picture could be made: a box placeholder, like a not-yet-asked card, rather than
+            // a spinner that would otherwise turn forever (#4655).
+            ui.painter().rect_filled(img, CornerRadius::same(t.radius_sm), t.panel_header);
+            crate::icons::paint_icon(ui.painter(), egui::Rect::from_center_size(img.center(), vec2(56.0, 56.0)), "box", f32::from(t.icon.a()) / 255.0);
         }
     }
     let ty = img.bottom() + 8.0;
