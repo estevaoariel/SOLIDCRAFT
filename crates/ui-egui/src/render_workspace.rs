@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 use egui::{Color32, Sense};
 use serde_json::json;
 use solidcraft_engine::doc::render_settings::RenderSetup;
+use solidcraft_engine::render::job::ImageHost;
 use solidcraft_engine::render::{
     Availability, Camera, ExecutorDescriptor, ExecutorId, ProductScene, RenderLimits, RenderMode, RenderOperation, RenderProfile, RenderRequest,
     ScratchLayout,
@@ -23,6 +24,12 @@ mod tests;
 
 pub struct State {
     pub host: Option<ExecutorDescriptor>,
+    pub path_host: PathHost,
+    /// How long the last path tracer setup took, in seconds, per viewport adapter
+    /// ([`adapter_key`]); kept in the preferences to estimate the next one.
+    pub setup_seconds: std::collections::BTreeMap<String, f64>,
+    /// The viewport adapter the current setup runs on.
+    pub setup_key: Option<String>,
     pub image_host: Option<solidcraft_engine::render::job::CpuHost>,
     pub view: ViewState,
     revision: u64,
@@ -31,6 +38,121 @@ pub struct State {
     key: Option<u64>,
     scene_signature: Option<(u64, usize, u64)>,
     scene: Option<ProductScene>,
+    image: Option<(solidcraft_engine::render::job::JobId, Result<egui::TextureHandle, String>)>,
+}
+
+/// Application-wide setup, retained across document changes. The worker owns a
+/// cloned adapter and initializes the job device; the UI receives the finished host.
+#[derive(Default)]
+pub enum PathHost {
+    #[default]
+    NotStarted,
+    /// The worker's answer, and when it started: shader compilation can take minutes.
+    Preparing(std::sync::mpsc::Receiver<Result<ImageHost, String>>, std::time::Instant),
+    Ready(ImageHost),
+    Failed(String),
+}
+
+impl PathHost {
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn start(&mut self, create: impl FnOnce() -> Result<ImageHost, String> + Send + 'static) {
+        if !matches!(self, Self::NotStarted) {
+            return;
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        // Dropping the handle detaches: neither startup nor shutdown joins a driver
+        // that may spend minutes compiling or warming up its pipelines.
+        *self = match std::thread::Builder::new().name("gpu-path-setup".into()).spawn(move || {
+            let result =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(create)).unwrap_or_else(|_| Err("GPU path tracer setup panicked".into()));
+            let _ = tx.send(result);
+        }) {
+            Ok(_) => Self::Preparing(rx, std::time::Instant::now()),
+            Err(e) => Self::failed(format!("could not start setup worker: {e}")),
+        };
+    }
+
+    fn failed(message: String) -> Self {
+        log::warn!("progressive render unavailable: {message}");
+        Self::Failed(message)
+    }
+
+    /// Take the worker's answer if it has come; returns how long a successful setup took.
+    fn poll(&mut self) -> Option<std::time::Duration> {
+        let Self::Preparing(rx, started) = self else { return None };
+        let took = started.elapsed();
+        *self = match rx.try_recv() {
+            Ok(Ok(host)) => Self::Ready(host),
+            Ok(Err(error)) => Self::failed(error),
+            Err(std::sync::mpsc::TryRecvError::Empty) => return None,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => Self::failed("setup worker stopped without returning a host".into()),
+        };
+        matches!(self, Self::Ready(_)).then_some(took)
+    }
+}
+
+/// The samples slider's top end: 2^12 = 4096 samples per pixel.
+const MAX_SAMPLES_EXPONENT: u32 = 12;
+
+/// Setup times kept per adapter, at most.
+const MAX_SETUP_TIMES: usize = 16;
+
+/// The key [`State::setup_seconds`] files an adapter's setup time under: a driver update
+/// usually empties the driver's shader cache, so the driver is part of it.
+pub fn adapter_key(info: &egui_wgpu::wgpu::AdapterInfo) -> String {
+    format!("{} | {:?} | {} {}", info.name.trim(), info.backend, info.driver.trim(), info.driver_info.trim())
+}
+
+/// Remember how long the setup on `key` took, for the next start's estimate.
+fn record_setup(state: &mut State, took: std::time::Duration) {
+    let Some(key) = state.setup_key.clone() else { return };
+    if state.setup_seconds.len() >= MAX_SETUP_TIMES && !state.setup_seconds.contains_key(&key) {
+        return;
+    }
+    state.setup_seconds.insert(key, took.as_secs_f64());
+}
+
+/// Setup times from the preferences: finite, non-negative and at most a day each.
+pub fn load_setup_seconds(value: &serde_json::Value) -> std::collections::BTreeMap<String, f64> {
+    value
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter_map(|(k, v)| Some((k.clone(), v.as_f64().filter(|s| s.is_finite() && (0.0..=86_400.0).contains(s))?)))
+        .take(MAX_SETUP_TIMES)
+        .collect()
+}
+
+/// Minutes and seconds, as `1:05`.
+fn mmss(d: std::time::Duration) -> String {
+    let s = d.as_secs();
+    format!("{}:{:02}", s / 60, s % 60)
+}
+
+/// The path tracer's setup as it goes: a progress bar estimated from the last setup on this
+/// adapter, else a spinner with the time so far. Drivers report no progress of their own.
+fn setup_progress(ui: &mut egui::Ui, app: &SolveApp, started: std::time::Instant) {
+    let elapsed = started.elapsed();
+    let expected = app.render_workspace.setup_key.as_ref().and_then(|k| app.render_workspace.setup_seconds.get(k)).copied();
+    ui.label(app.tr("render.gpu_path_preparing"));
+    match expected.map(|s| std::time::Duration::from_secs_f64(s.max(1.0))) {
+        Some(expected) if elapsed < expected.mul_f64(1.5) => {
+            let fraction = (elapsed.as_secs_f32() / expected.as_secs_f32()).min(0.99);
+            crate::ui_kit::progress(ui, "gpu_path_setup", fraction);
+            ui.label(format!("{} / ~{}", mmss(elapsed), mmss(expected)));
+            // The bar moves with time, so keep drawing while it is shown.
+            ui.ctx().request_repaint_after(std::time::Duration::from_millis(250));
+        }
+        _ => {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label(mmss(elapsed));
+            });
+            if expected.is_none() {
+                ui.small(app.tr("render.gpu_path_first_setup"));
+            }
+        }
+    }
 }
 
 /// Small per-document editor state; GPU uploads and host capabilities stay outside tabs.
@@ -42,12 +164,24 @@ pub struct ViewState {
     job: Option<solidcraft_engine::render::job::JobId>,
     completed: Option<solidcraft_engine::render::job::JobId>,
     transparent: bool,
+    progressive: bool,
+    samples: u32,
     overwrite: bool,
 }
 
 impl Default for ViewState {
     fn default() -> Self {
-        Self { name: "Studio".into(), draft: RenderSetup::default(), dirty: false, job: None, completed: None, transparent: false, overwrite: false }
+        Self {
+            name: "Studio".into(),
+            draft: RenderSetup::default(),
+            dirty: false,
+            job: None,
+            completed: None,
+            transparent: false,
+            progressive: false,
+            samples: 64,
+            overwrite: false,
+        }
     }
 }
 
@@ -55,6 +189,9 @@ impl Default for State {
     fn default() -> Self {
         Self {
             host: None,
+            path_host: PathHost::default(),
+            setup_seconds: Default::default(),
+            setup_key: None,
             image_host: None,
             view: Default::default(),
             revision: u64::MAX,
@@ -63,6 +200,7 @@ impl Default for State {
             key: None,
             scene_signature: None,
             scene: None,
+            image: None,
         }
     }
 }
@@ -99,6 +237,16 @@ pub fn host_executor(max_dimension: u32, depth: bool, samples: u32) -> Result<Ex
 }
 
 pub fn sync_backend(app: &mut SolveApp) {
+    if let Some(took) = app.render_workspace.path_host.poll() {
+        record_setup(&mut app.render_workspace, took);
+    }
+    if let PathHost::Ready(host) = &app.render_workspace.path_host
+        && let Err(e) = app.session.register_render_job_host(host.clone())
+    {
+        app.render_workspace.path_host = PathHost::failed(e.to_string());
+        app.set_status(e.to_string(), true);
+    }
+
     if app.session.render_job_host().is_none()
         && let Some(host) = &app.render_workspace.image_host
         && let Err(e) = app.session.set_render_job_host(Some(host.clone()))
@@ -116,6 +264,10 @@ pub fn sync_backend(app: &mut SolveApp) {
 /// Cooperative work belongs to the frame loop, never to a status/control request. Keep
 /// scheduling frames even after leaving Render so a browser job can finish in Design.
 pub fn tick(app: &mut SolveApp, ctx: &egui::Context) {
+    if matches!(app.render_workspace.path_host, PathHost::Preparing(..)) {
+        // Poll even in Design or an idle window, without continuously redrawing.
+        ctx.request_repaint_after(std::time::Duration::from_millis(100));
+    }
     if let Some(host) = &app.render_workspace.image_host {
         match host.pump(1024) {
             Ok(true) => ctx.request_repaint(),
@@ -129,7 +281,10 @@ pub fn reset_document(app: &mut SolveApp) {
     app.ui.ribbon_context = None;
     let host = app.render_workspace.host.clone();
     let image_host = app.render_workspace.image_host.clone();
-    app.render_workspace = State { host, image_host, ..Default::default() };
+    let path_host = std::mem::take(&mut app.render_workspace.path_host);
+    let setup_seconds = std::mem::take(&mut app.render_workspace.setup_seconds);
+    let setup_key = app.render_workspace.setup_key.take();
+    app.render_workspace = State { host, image_host, path_host, setup_seconds, setup_key, ..Default::default() };
     if active(app) {
         app.ui.tab = "MODEL".into();
     }
@@ -264,7 +419,7 @@ pub fn panel(app: &mut SolveApp, ui: &mut egui::Ui) {
 
 fn image_controls(app: &mut SolveApp, ui: &mut egui::Ui) {
     ui.heading(app.tr("render.image_title"));
-    ui.small(app.tr("render.opaque_image_summary"));
+    ui.small(app.tr(if app.render_workspace.view.progressive { "render.progressive_image_summary" } else { "render.opaque_image_summary" }));
     ui.horizontal(|ui| {
         ui.label(app.tr("render.image_width"));
         if crate::ui_kit::number_field(ui, &mut app.render_workspace.view.draft.width, 1..=4096, 1.0, "").changed() {
@@ -287,11 +442,32 @@ fn image_controls(app: &mut SolveApp, ui: &mut egui::Ui) {
             app.render_workspace.view.dirty = true;
         }
     }
+    match &app.render_workspace.path_host {
+        PathHost::Preparing(_, started) => setup_progress(ui, app, *started),
+        PathHost::Failed(error) => {
+            ui.label(format!("{}: {error}", app.tr("render.gpu_path_failed")));
+        }
+        _ => {}
+    }
+    if matches!(app.render_workspace.path_host, PathHost::Ready(_)) {
+        let label = app.tr("render.image_progressive").to_string();
+        crate::ui_kit::checkbox(ui, &label, &mut app.render_workspace.view.progressive);
+        if app.render_workspace.view.progressive {
+            ui.label(app.tr("render.image_samples"));
+            // Powers of two from 1 to 4096 samples per pixel; requests from elsewhere keep any count.
+            let samples = &mut app.render_workspace.view.samples;
+            let mut exponent = (*samples).max(1).ilog2().min(MAX_SAMPLES_EXPONENT);
+            let slider = crate::ui_kit::Slider { integer: true, format: |e| format!("{}", 1u32 << (e as u32).min(31)), ..Default::default() };
+            if crate::ui_kit::slider(ui, &mut exponent, 0..=MAX_SAMPLES_EXPONENT, slider).changed() {
+                *samples = 1 << exponent.min(MAX_SAMPLES_EXPONENT);
+            }
+        }
+    }
     let transparent_label = app.tr("render.image_transparent").to_string();
     crate::ui_kit::checkbox(ui, &transparent_label, &mut app.render_workspace.view.transparent);
     if crate::ui_kit::button(ui, app.tr("cmd.render_preflight"), crate::ui_kit::Button::Normal).clicked() {
         let settings = RenderSetup { camera: app.cam, ..app.render_workspace.view.draft.clone() };
-        if app.run("render.preflight", json!({"settings":settings,"transparent_background":app.render_workspace.view.transparent})).is_ok() {
+        if app.run("render.preflight", json!({"settings":settings,"transparent_background":app.render_workspace.view.transparent,"progressive":app.render_workspace.view.progressive,"samples":app.render_workspace.view.progressive.then_some(app.render_workspace.view.samples)})).is_ok() {
             app.set_status(app.tr("render.image_supported").to_string(), false);
         }
     }
@@ -343,7 +519,7 @@ fn image_controls(app: &mut SolveApp, ui: &mut egui::Ui) {
     }
     if crate::ui_kit::button(ui, app.tr("render.image_start"), crate::ui_kit::Button::Enabled(!busy)).clicked() {
         let settings = RenderSetup { camera: app.cam, ..app.render_workspace.view.draft.clone() };
-        if let Ok(reply) = app.run("render.start", json!({"settings":settings,"transparent_background":app.render_workspace.view.transparent})) {
+        if let Ok(reply) = app.run("render.start", json!({"settings":settings,"transparent_background":app.render_workspace.view.transparent,"progressive":app.render_workspace.view.progressive,"samples":app.render_workspace.view.progressive.then_some(app.render_workspace.view.samples)})) {
             app.render_workspace.view.job = serde_json::from_value(reply["job"].clone()).ok();
             ui.ctx().request_repaint();
         }
@@ -356,6 +532,56 @@ fn image_controls(app: &mut SolveApp, ui: &mut egui::Ui) {
     {
         export_image(app, job, app.render_workspace.view.overwrite);
     }
+    completed_image(app, ui);
+}
+
+/// The job currently publishes a PNG only after encoding completes. Decode/upload once per
+/// completed job, not once per UI frame; keep the last exportable image during a new render.
+fn completed_image(app: &mut SolveApp, ui: &mut egui::Ui) {
+    let Some(job) = app.render_workspace.view.completed else {
+        app.render_workspace.image = None;
+        return;
+    };
+    if app.render_workspace.image.as_ref().is_none_or(|(old, _)| *old != job) {
+        let result = (|| -> Result<egui::TextureHandle, String> {
+            let handle = app.session.render_job_handle(job).map_err(|e| e.to_string())?;
+            let frame = handle.frame().map_err(|e| e.to_string())?.ok_or("render has no completed image")?;
+            let image = decode_image(frame.png(), frame.info.width, frame.info.height)?;
+            Ok(ui.ctx().load_texture("sc_render_image", image, egui::TextureOptions::LINEAR))
+        })();
+        // Cache errors too, so a bad frame cannot repeatedly allocate or decode on repaint.
+        app.render_workspace.image = Some((job, result));
+    }
+    if let Some((_, image)) = &app.render_workspace.image {
+        match image {
+            Ok(texture) => {
+                ui.add(egui::Image::new(texture).max_size(egui::vec2(ui.available_width(), 240.0)).shrink_to_fit())
+                    .on_hover_text(app.tr("render.image_completed"));
+            }
+            Err(error) => {
+                ui.label(error);
+            }
+        }
+    }
+}
+
+fn decode_image(png: &[u8], width: u32, height: u32) -> Result<egui::ColorImage, String> {
+    let size = (u64::from(width), u64::from(height));
+    let budget = RenderLimits::default();
+    if budget.fit(size.0, size.1, None) != Some(size) {
+        return Err("render image exceeds preview limits".into());
+    }
+    let mut reader = image::ImageReader::with_format(std::io::Cursor::new(png), image::ImageFormat::Png);
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(width);
+    limits.max_image_height = Some(height);
+    limits.max_alloc = Some(budget.max_pixels * 16);
+    reader.limits(limits);
+    let image = reader.decode().map_err(|e| e.to_string())?.to_rgba8();
+    if image.dimensions() != (width, height) {
+        return Err("render image dimensions do not match its job".into());
+    }
+    Ok(egui::ColorImage::from_rgba_unmultiplied([width as usize, height as usize], image.as_raw()))
 }
 
 /// Keep the selected image and overwrite consent fixed while the upstream picker holds model input.
