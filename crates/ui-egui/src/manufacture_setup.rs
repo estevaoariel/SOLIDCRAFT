@@ -497,6 +497,9 @@ fn stock_tab(ui: &mut egui::Ui, draft: &mut MfgSetup) {
         if ui.selectable_label(matches!(draft.stock, Stock::FromPreceding { .. }), "From preceding setup").clicked() {
             draft.stock = Stock::FromPreceding { continue_rest: true };
         }
+        if ui.selectable_label(matches!(draft.stock, Stock::FromSolid { .. }), "From solid").clicked() {
+            draft.stock = Stock::FromSolid { body: String::new() };
+        }
     });
 
     ui.separator();
@@ -586,6 +589,13 @@ fn stock_tab(ui: &mut egui::Ui, draft: &mut MfgSetup) {
         Stock::FromPreceding { continue_rest } => {
             ui.checkbox(continue_rest, "Continue rest machining");
             ui.small("Uses stock remaining from the previous setup.");
+        }
+        Stock::FromSolid { body } => {
+            ui.horizontal(|ui| {
+                ui.label("Body");
+                ui.text_edit_singleline(body);
+            });
+            ui.small("Stock is the named solid in the design.");
         }
     }
 }
@@ -893,7 +903,7 @@ fn save_menu(app: &mut SolveApp, st: &MenuDialogState) -> bool {
         SetupMenuDialog::ManualNc => json!({"manual_nc": st.manual}),
         SetupMenuDialog::MfgModel => json!({"manufacturing_model": st.mfg_model}),
         SetupMenuDialog::ProbeWcs => {
-            app.set_status("Probe WCS snippets land in the probe PR (#2626).".into(), true);
+            app.set_status("Probe WCS snippets land in the probe PR (#2626).", true);
             return false;
         }
         SetupMenuDialog::InsertData => {
@@ -909,7 +919,7 @@ fn save_menu(app: &mut SolveApp, st: &MenuDialogState) -> bool {
         }
     };
     let _ = payload;
-    app.set_status("NC program, folder, pattern and manufacturing-model containers land in follow-up Manufacture PRs.".into(), true);
+    app.set_status("NC program, folder, pattern and manufacturing-model containers land in follow-up Manufacture PRs.", true);
     false
 }
 
