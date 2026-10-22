@@ -263,3 +263,101 @@ fn sketch_modify_keeps_custom_point_ids_that_contain_colons() {
     }
     assert_eq!(h.app.session.world_state().sketch(1).unwrap().sketch.curves.len(), 8);
 }
+
+#[test]
+fn midpoint_tracking_places_circle_centre_away_from_rectangle() {
+    let mut h = Harness::new();
+    h.app.run("sketch.create", json!({"plane":"XY"})).unwrap();
+    h.app.run("sketch.rectangle.two_point", json!({"p0":[0,0],"p1":[20,20]})).unwrap();
+    step(&mut h, json!({"call":"ui.view","params":{"view":"top"}}));
+    h.app.cam.distance = 160.0;
+    h.app.run("sketch.options", json!({"snap":false})).unwrap();
+    h.settle();
+    step(&mut h, json!({"start":"sketch.circle.center"}));
+    step(&mut h, json!({"move":{"sketch":[20,10]}}));
+    h.frames(35);
+    step(&mut h, json!({"move":{"sketch":[40,10.3]}}));
+    let centre = h.app.tool.as_ref().unwrap().hover.as_ref().unwrap().0;
+    assert!((centre.y - 10.0).abs() < 1e-8, "{centre:?}");
+    step(&mut h, json!({"click":{"sketch":[40,10.3]}}));
+    step(&mut h, json!({"click":{"sketch":[45,10]}}));
+    let state = h.app.session.world_state();
+    let sk = &state.sketch(h.app.session.active_sketch.unwrap()).unwrap().sketch;
+    let circle = sk.curves.iter().position(|c| matches!(c.kind, solidcraft_engine::sketch::CurveKind::Circle { .. })).unwrap();
+    assert!((sk.center(circle).unwrap().y - 10.0).abs() < 1e-8);
+    assert_eq!(sk.curves.len(), 5, "Acquiring a midpoint must not add geometry");
+}
+
+#[test]
+fn midpoint_tracking_clears_on_tool_change_and_tracks_both_axes() {
+    for (mid, target, coordinate) in [([20.0, 10.0], [20.3, 40.0], 0), ([10.0, 20.0], [40.0, 20.3], 1)] {
+        let mut h = Harness::new();
+        h.app.run("sketch.create", json!({"plane":"XY"})).unwrap();
+        h.app.run("sketch.rectangle.two_point", json!({"p0":[0,0],"p1":[20,20]})).unwrap();
+        step(&mut h, json!({"call":"ui.view","params":{"view":"top"}}));
+        h.app.cam.distance = 160.0;
+        h.app.run("sketch.options", json!({"snap":false})).unwrap();
+        h.settle();
+        step(&mut h, json!({"start":"sketch.circle.center"}));
+        step(&mut h, json!({"move":{"sketch":mid}}));
+        h.frames(35);
+        step(&mut h, json!({"move":{"sketch":target}}));
+        let p = h.app.tool.as_ref().unwrap().hover.as_ref().unwrap().0;
+        let value = if coordinate == 0 { p.x } else { p.y };
+        assert!((value - mid[coordinate]).abs() < 1e-8);
+        step(&mut h, json!({"key":"Escape"}));
+        step(&mut h, json!({"start":"sketch.circle.center"}));
+        step(&mut h, json!({"move":{"sketch":target}}));
+        let p = h.app.tool.as_ref().unwrap().hover.as_ref().unwrap().0;
+        let value = if coordinate == 0 { p.x } else { p.y };
+        assert!((value - mid[coordinate]).abs() > 0.05, "Tracking leaked to a new tool");
+    }
+}
+
+#[test]
+fn midpoint_tracking_keeps_two_edges_and_snaps_their_crossing() {
+    for references in [[[20.0, 10.0], [10.0, 20.0]], [[10.0, 20.0], [20.0, 10.0]]] {
+        let mut h = Harness::new();
+        h.app.run("sketch.create", json!({"plane":"XY"})).unwrap();
+        h.app.run("sketch.rectangle.two_point", json!({"p0":[0,0],"p1":[20,20]})).unwrap();
+        h.app.run("sketch.options", json!({"snap":false})).unwrap();
+        step(&mut h, json!({"call":"ui.view","params":{"view":"top"}}));
+        h.app.cam.distance = 160.0;
+        h.settle();
+        step(&mut h, json!({"start":"sketch.circle.center"}));
+        for mid in references {
+            step(&mut h, json!({"move":{"sketch":mid}}));
+            h.frames(35);
+        }
+        step(&mut h, json!({"move":{"sketch":[10.3,10.2]}}));
+        let p = h.app.tool.as_ref().unwrap().hover.as_ref().unwrap().0;
+        assert!((p.x - 10.0).abs() < 1e-8 && (p.y - 10.0).abs() < 1e-8, "{p:?}");
+        step(&mut h, json!({"click":{"sketch":[10.3,10.2]}}));
+        step(&mut h, json!({"click":{"sketch":[14,10]}}));
+        let state = h.app.session.world_state();
+        let sk = &state.sketch(h.app.session.active_sketch.unwrap()).unwrap().sketch;
+        let circle = sk.curves.iter().position(|c| matches!(c.kind, solidcraft_engine::sketch::CurveKind::Circle { .. })).unwrap();
+        let p = sk.center(circle).unwrap();
+        assert!((p.x - 10.0).abs() < 1e-8 && (p.y - 10.0).abs() < 1e-8, "{p:?}");
+        assert_eq!(sk.curves.len(), 5);
+    }
+}
+
+#[test]
+fn native_midpoint_tracking_ignores_legacy_plugin_disable_flag() {
+    let mut h = Harness::new();
+    h.app.preferences.look_at_anim = false;
+    h.app.preferences.disabled_plugins.insert("midpoint-tracking".into());
+    h.app.run("sketch.create", json!({"plane":"XY"})).unwrap();
+    h.app.run("sketch.rectangle.two_point", json!({"p0":[0,0],"p1":[20,20]})).unwrap();
+    step(&mut h, json!({"call":"ui.view","params":{"view":"top"}}));
+    h.app.cam.distance = 160.0;
+    h.app.run("sketch.options", json!({"snap":false})).unwrap();
+    h.settle();
+    step(&mut h, json!({"start":"sketch.circle.center"}));
+    step(&mut h, json!({"move":{"sketch":[20,10]}}));
+    h.frames(35);
+    step(&mut h, json!({"move":{"sketch":[40,10.3]}}));
+    let centre = h.app.tool.as_ref().unwrap().hover.as_ref().unwrap().0;
+    assert!((centre.y - 10.0).abs() < 1e-8, "native tracking stays available: {centre:?}");
+}

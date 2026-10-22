@@ -91,6 +91,7 @@ pub struct Tool {
 
 impl Tool {
     pub fn for_command(id: &str) -> Option<Tool> {
+        crate::sketch_tools::clear_midpoint_tracking();
         let (cmd, kind): (&'static str, Kind) = match id {
             "sketch.line" => ("sketch.line", Kind::Draw(0)),
             "sketch.rectangle.two_point" => ("sketch.rectangle.two_point", Kind::Draw(2)),

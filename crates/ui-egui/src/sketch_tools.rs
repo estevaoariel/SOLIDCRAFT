@@ -67,7 +67,20 @@ pub const MODIFIERS: &[ToolModifiers] = &[
     ToolModifiers { tool: "sketch.spun_profile", scopes: NONE, bindings: &[], audit: Audit::VerifiedNoOp },
 ];
 
+/// A midpoint is acquired after a short hover, without placing sketch geometry.
+#[derive(Default)]
+struct MidpointTracking {
+    candidate: Option<(String, f64)>,
+    acquired: Vec<String>,
+    guides: Vec<(Vec2, Vec2)>,
+}
+
+pub fn clear_midpoint_tracking() {
+    MIDPOINT_TRACKING.with(|s| *s.borrow_mut() = MidpointTracking::default());
+}
+
 thread_local! {
+    static MIDPOINT_TRACKING: RefCell<MidpointTracking> = RefCell::new(MidpointTracking::default());
     /// Shift held this frame.
     static SHIFT: Cell<bool> = const { Cell::new(false) };
     /// Glyphs drawn this frame (constraint id, screen centre) and the selected one.
@@ -400,6 +413,27 @@ pub fn refine_snap(
             }
         }
     }
+    MIDPOINT_TRACKING.with(|tracking| {
+        let mut tracking = tracking.borrow_mut();
+        tracking.guides.clear();
+        if app.tool.as_ref().is_some_and(|tool| matches!(tool.kind, Kind::Draw(_))) {
+            if let Some(id) = mid_of.as_ref() {
+                match &tracking.candidate {
+                    Some((candidate, since)) if candidate == id => {
+                        if app.now - since >= 0.4 && !tracking.acquired.contains(id) {
+                            if tracking.acquired.len() == 2 {
+                                tracking.acquired.remove(0);
+                            }
+                            tracking.acquired.push(id.clone());
+                        }
+                    }
+                    _ => tracking.candidate = Some((id.clone(), app.now)),
+                }
+            } else {
+                tracking.candidate = None;
+            }
+        }
+    });
     // The tool's previous point (a click takes the tool out of the app while it runs, so the
     // last hover's is kept).
     let prev = match app.tool.as_ref() {
@@ -454,6 +488,65 @@ pub fn refine_snap(
         && let Some(i) = crate::inference::lines(sk, prev, lp, tol)
     {
         best = Some((i.dist, i.label(), i.at));
+    }
+    // Track horizontal/vertical rays from the acquired midpoint. Actual geometry and
+    // the tool's own point inferences retain priority. Resolve the curve again so edits
+    // cannot leave a stale coordinate or a reference to a removed edge.
+    if !mid_only && best.is_none() {
+        MIDPOINT_TRACKING.with(|tracking| {
+            let mut tracking = tracking.borrow_mut();
+            tracking.acquired.retain(|id| sk.curves.iter().any(|c| &c.id == id));
+            let origins: Vec<Vec2> = tracking
+                .acquired
+                .iter()
+                .filter_map(|id| {
+                    let i = sk.curves.iter().position(|c| &c.id == id)?;
+                    match sk.shape(i) {
+                        Some(solidcraft_engine::sketch::Shape::Line { a, b }) => Some((a + b) * 0.5),
+                        _ => None,
+                    }
+                })
+                .collect();
+            // Two acquired references fix both cursor coordinates at their guide crossing.
+            let mut crossing: Option<(f64, Vec2, Vec2, Vec2)> = None;
+            for (hi, h) in origins.iter().enumerate() {
+                for (vi, v) in origins.iter().enumerate() {
+                    if hi == vi {
+                        continue;
+                    }
+                    let (dx, dy) = ((lp.x - v.x).abs(), (lp.y - h.y).abs());
+                    let p = Vec2::new(v.x, h.y);
+                    let distance = p.dist(lp);
+                    if dx < tol && dy < tol && crossing.is_none_or(|c| distance < c.0) {
+                        crossing = Some((distance, p, *h, *v));
+                    }
+                }
+            }
+            if let Some((distance, p, h, v)) = crossing {
+                best = Some((distance, "Mid HV", p));
+                tracking.guides.extend([(h, p), (v, p)]);
+                return;
+            }
+            let step = solidcraft_engine::view::grid_step(app.cam.half_height()).0 / 10.0;
+            let grid = |v: f64| if sk.view.no_snap { v } else { (v / step).round() * step };
+            for origin in origins.iter().rev() {
+                let (dx, dy) = ((lp.x - origin.x).abs(), (lp.y - origin.y).abs());
+                let candidate = if dy < tol && dx > tol {
+                    Some((dy, "Mid H", Vec2::new(grid(lp.x), origin.y)))
+                } else if dx < tol && dy > tol {
+                    Some((dx, "Mid V", Vec2::new(origin.x, grid(lp.y))))
+                } else {
+                    None
+                };
+                if let Some(candidate) = candidate
+                    && best.is_none_or(|old| candidate.0 < old.0)
+                {
+                    best = Some(candidate);
+                    tracking.guides.clear();
+                    tracking.guides.push((*origin, candidate.2));
+                }
+            }
+        });
     }
     SNAP.with(|s| *s.borrow_mut() = best.map(|(_, l, p)| (l, p)));
     // A midpoint snap is a point argument the commands understand ("mid:<line>").
@@ -1410,16 +1503,42 @@ fn glyph_anchors(sk: &solidcraft_engine::sketch::Sketch, k: &solidcraft_engine::
 /// The inference label next to the snapped cursor (while a tool is active).
 fn snap_hint(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
     if app.tool.is_none() {
+        clear_midpoint_tracking();
         return;
     }
-    let Some((label, p)) = SNAP.with(|s| *s.borrow()) else { return };
     let st = app.session.world_state();
     let Some(ss) = active_sketch(app).and_then(|s| st.sketch(s)) else { return };
-    let Some(sp) = proj.to_screen(ss.plane.to_world(p)) else { return };
     let tk = crate::theme::Tokens::get();
-    let r = egui::Rect::from_min_size(sp + egui::vec2(12.0, -24.0), egui::vec2(24.0, 14.0));
+    MIDPOINT_TRACKING.with(|tracking| {
+        let tracking = tracking.borrow();
+        if tracking.candidate.as_ref().is_some_and(|(id, _)| !tracking.acquired.contains(id)) {
+            painter.ctx().request_repaint_after(std::time::Duration::from_millis(50));
+        }
+        for (origin, end) in &tracking.guides {
+            if let (Some(a), Some(b)) = (proj.to_screen(ss.plane.to_world(*origin)), proj.to_screen(ss.plane.to_world(*end))) {
+                painter.add(egui::Shape::dashed_line(&[a, b], Stroke::new(1.0, tk.rubber_band), 5.0, 4.0));
+            }
+        }
+        for id in &tracking.acquired {
+            if let Some(i) = ss.sketch.curves.iter().position(|c| &c.id == id)
+                && let Some(solidcraft_engine::sketch::Shape::Line { a, b }) = ss.sketch.shape(i)
+                && let Some(p) = proj.to_screen(ss.plane.to_world((a + b) * 0.5))
+            {
+                painter.circle_stroke(p, 4.0, Stroke::new(1.5, tk.sketch_accent));
+            }
+        }
+    });
+    let Some((label, p)) = SNAP.with(|s| *s.borrow()) else { return };
+    let Some(sp) = proj.to_screen(ss.plane.to_world(p)) else { return };
+    let r = egui::Rect::from_min_size(sp + egui::vec2(12.0, -24.0), egui::vec2(52.0, 14.0));
     painter.rect_filled(r, 3.0, tk.accent_soft);
-    painter.text(r.center(), egui::Align2::CENTER_CENTER, label, egui::FontId::proportional(crate::theme::Tokens::get().font_micro), tk.text);
+    painter.text(
+        r.center(),
+        egui::Align2::CENTER_CENTER,
+        app.tr_label(label),
+        egui::FontId::proportional(crate::theme::Tokens::get().font_micro),
+        tk.text,
+    );
 }
 
 /// Per frame, after the viewport is drawn: constraint glyphs, snap hints and analysis marks.
