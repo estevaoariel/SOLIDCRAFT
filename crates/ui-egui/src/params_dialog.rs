@@ -16,6 +16,10 @@ use serde_json::{Value, json};
 use crate::SolveApp;
 use crate::ui_kit::{self, Column};
 
+/// What Import reads. The picker must list them: on macOS, files of a type no filter names
+/// can't be picked (#3216).
+pub(crate) const IMPORT_TYPES: &[&str] = &["csv", "json"];
+
 const UNITS: [&str; 9] = ["mm", "cm", "m", "in", "ft", "deg", "rad", "", "um"];
 
 /// Dialog state (what is being typed; the parameters themselves live in the document).
@@ -203,7 +207,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         .on_hover_text(crate::i18n::tr_label("CSV or JSON: updates existing parameters, adds new ones"))
                         .clicked()
                     {
-                        app.pick_open_command("parameters.import", json!({}), &[]);
+                        app.pick_open_command("parameters.import", json!({}), IMPORT_TYPES);
                     }
                     for (label, ext) in [("Export CSV…", "csv"), ("Export JSON…", "json")] {
                         if ui_kit::icon_label_button(ui, label, "export_tray", true, false).clicked() {
