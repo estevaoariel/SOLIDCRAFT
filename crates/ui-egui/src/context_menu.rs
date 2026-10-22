@@ -588,6 +588,8 @@ fn body_items(app: &SolveApp, bodies: &[String], browser: bool) -> Vec<Item> {
     let one = bodies.len() == 1;
     let locked = bodies.iter().all(|b| app.ui.locked_bodies.contains(b));
     let items = json!(bodies.iter().map(|b| json!({"type": "body", "name": b})).collect::<Vec<_>>());
+    // A mesh body can become a solid one: the conversion runs over the whole closed mesh.
+    let mesh = bodies.first().filter(|_| one).filter(|b| app.session.world_state().body(b).is_some_and(|b| b.body.is_mesh())).cloned();
     let mut v = vec![
         act("ui.moveBodies", "Move/Copy", "move").key("M").with(json!({ "bodies": names })).on(!locked),
         cmd(app, "component.from_bodies", "Create Components from Bodies").with(json!({ "bodies": names })),
@@ -607,6 +609,9 @@ fn body_items(app: &SolveApp, bodies: &[String], browser: bool) -> Vec<Item> {
         act("ui.lock", if locked { "Unlock" } else { "Lock" }, "ground").with(json!({ "bodies": names })),
         act("ui.isolate", "Isolate", "body").with(json!({ "bodies": names })),
     ];
+    if let Some(mesh) = &mesh {
+        v.insert(2, cmd(app, "mesh.convert", "Convert to Solid").with(json!({ "body": mesh })));
+    }
     if one {
         let b = bodies.first().cloned().unwrap_or_default();
         if let Some(component) = crate::dialogs_part_size::component_for_bodies(app, bodies) {
@@ -1299,6 +1304,14 @@ pub fn run_item(app: &mut SolveApp, item: &Item, at: Pos2) {
             }
         }
         "ui.newGroup" | "ui.ungroup" | "ui.groupSelected" => crate::browser::group_action(app, &item.id, &p),
+        // Convert Mesh with the body picked first: it opens the dialog with that mesh chosen.
+        "mesh.convert" if item.params.is_some() => {
+            if let Some(name) = p.get("body").and_then(Value::as_str)
+                && app.run("select.set", json!({"items": [{"type": "body", "name": name}]})).is_ok()
+            {
+                app.start("mesh.convert");
+            }
+        }
         // A plane's Create Sketch is the toolbar's with that plane picked first: it replaces a
         // dialog in progress, and the dialog starts the sketch at once, facing the plane.
         "sketch.create" if item.params.is_some() => {

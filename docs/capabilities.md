@@ -63,8 +63,10 @@ and help is welcome: see [CONTRIBUTING.md](../CONTRIBUTING.md).
   assemblies with joints as URDF for robot simulators (urdf.md);
   3MF, STL, OBJ and glTF 2.0 (`.glb`/`.gltf`, its node tree as components and its materials as
   appearances) import as mesh bodies (they render, measure, move and export; solid features
-  need B-rep bodies). The `mesh.convert` command reconstructs supported closed constant-section parts
-  as parametric solids with planar and circular cylindrical faces;
+  need B-rep bodies). `mesh.convert` (Convert Mesh) rebuilds a closed mesh as a solid body —
+  coplanar triangles fuse into planar faces, a curved surface stays faceted, and a constant-section
+  part is rebuilt exactly with planar and circular cylindrical faces — so booleans, fillets,
+  shell, holes and sketches on its faces work ([mesh-to-solid.md](mesh-to-solid.md));
   STEP import (AP203/AP214/AP242 solids, assemblies, units, names, colours) and IGES import
   (manifold solid B-reps, or trimmed and bounded surfaces sewn into solids) as a base feature
   that later features build on — open a `.step`/`.stp`/`.igs`/`.iges` file, insert one into a

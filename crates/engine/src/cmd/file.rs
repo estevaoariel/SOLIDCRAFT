@@ -8,10 +8,12 @@ pub(crate) mod import;
 
 use serde_json::{Value, json};
 use solidcraft_doc::Document;
+use solidcraft_doc::expr::Kind;
 use solidcraft_io::Format;
 
 use super::CommandSpec;
-use crate::params::{bad, bool_, num, str_, string_list};
+use super::features::check_expr;
+use crate::params::{bad, bool_, expr, num, str_, string_list};
 use crate::{EngineError, Result, Session};
 
 pub static COMMANDS: &[CommandSpec] = &[
@@ -20,7 +22,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("open")
         .key("Ctrl+O")
         .noundo()
-        .params("path: .solidcraft design, or a .step/.stp/.igs/.fcstd/.3dm/.3mf/.stl/.obj/.glb/.gltf file (STEP, IGES, FreeCAD, Rhino, 3MF, STL, OBJ or glTF; opens as a new design holding the file as a component named after it, as file.insert_step and file.insert_mesh make); up?: z|y for a STEP, IGES, FreeCAD, Rhino or glTF file (see file.insert_step and file.insert_mesh); names?: auto|solid|product|instance for a STEP, IGES, FreeCAD or Rhino file (see file.insert_step)"),
+        .params("path: .solidcraft design, or a .step/.stp/.igs/.fcstd/.3dm/.3mf/.stl/.obj/.glb/.gltf file (STEP, IGES, FreeCAD, Rhino, 3MF, STL, OBJ or glTF; opens as a new design holding the file as a component named after it, as file.insert_step and file.insert_mesh make); up?: z|y for a STEP, IGES, FreeCAD, Rhino or glTF file (see file.insert_step and file.insert_mesh); names?: auto|solid|product|instance for a STEP, IGES, FreeCAD or Rhino file (see file.insert_step); as_solid?: bool (3MF, STL, OBJ or glTF: convert each mesh to a solid body where it can be, as mesh.convert does; one that cannot stays a mesh body, with a warning); tolerance?: length expression for that conversion (default 0.05 mm)"),
     CommandSpec::new("file.insert_step", "Insert STEP", insert_step)
         .at("SOLID", "INSERT")
         .icon("import")
@@ -28,7 +30,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("file.insert_mesh", "Insert Mesh", insert_mesh)
         .at("SOLID", "INSERT")
         .icon("import")
-        .params("path: .3mf, .stl, .obj, .glb or .gltf file (its meshes join the design as mesh bodies in a new component named after the file → component, component_name, occurrence; a glTF file's node tree becomes nested components held as one rigid group until component.unlock, a mesh placed again another occurrence, its materials the bodies' appearances, and its metres millimetres); name?; up?: z|y for a glTF file (default y: glTF has Y up, so the import's component is turned a quarter turn about X, Y becoming Z → stand_up: its occurrence; z: the file's axes are kept)"),
+        .params("path: .3mf, .stl, .obj, .glb or .gltf file (its meshes join the design as mesh bodies in a new component named after the file → component, component_name, occurrence; a glTF file's node tree becomes nested components held as one rigid group until component.unlock, a mesh placed again another occurrence, its materials the bodies' appearances, and its metres millimetres); name?; up?: z|y for a glTF file (default y: glTF has Y up, so the import's component is turned a quarter turn about X, Y becoming Z → stand_up: its occurrence; z: the file's axes are kept); as_solid?: bool (default false: convert each imported mesh to a solid body where it can be, as mesh.convert does — the timeline gains one Convert Mesh per body, so a rebuild repeats it; a mesh it cannot convert stays a mesh body, and the import still succeeds → solid_bodies, warnings); tolerance?: length expression for that conversion (default 0.05 mm)"),
     CommandSpec::new("file.save", "Save", save)
         .icon("save")
         .key("Ctrl+S")
@@ -209,7 +211,59 @@ fn insert_mesh(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad(cmd, "only 3MF, STL, OBJ and glTF files (.3mf, .stl, .obj, .glb, .gltf) can be inserted as meshes"));
     }
     let up = mesh_up(p, path, cmd)?;
-    add_mesh(s, path, str_(p, "name"), up)
+    let mut out = add_mesh(s, path, str_(p, "name"), up)?;
+    if bool_(p, "as_solid").unwrap_or(false) {
+        convert_meshes(s, &mut out, p, cmd)?;
+    }
+    Ok(out)
+}
+
+/// Convert the mesh bodies an import made into solids, as `mesh.convert` does: the timeline gains
+/// one Convert Mesh per body, so a file or design that already converted it stays that way
+/// parametrically, and a mesh the conversion cannot take stays a mesh body with a warning instead
+/// of failing the whole import.
+fn convert_meshes(s: &mut Session, out: &mut Value, p: &Value, cmd: &str) -> Result<()> {
+    let Some(feature) = out["feature"].as_u64() else { return Ok(()) };
+    let Some(component) = s.doc.feature(feature).map(|f| f.component) else { return Ok(()) };
+    let tolerance = expr(p, "tolerance").unwrap_or_else(|| "0.05 mm".into());
+    check_expr(s, &tolerance, Kind::Length, cmd, "tolerance")?;
+    let millimetres = s.doc.eval(&s.doc.with_design_unit(&tolerance, Kind::Length), Kind::Length).map_err(|e| bad(cmd, e.to_string()))?;
+    // Bare lengths typed in an inch (or cm…) design mean that unit, as a command would.
+    let tolerance = s.doc.with_design_unit(&tolerance, Kind::Length);
+    let names: Vec<String> = out["created_bodies"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_string).collect();
+    let mut warnings: Vec<String> = out["warnings"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_string).collect();
+    let mut solids = Vec::new();
+    for name in names {
+        // Asked first whether the body converts, so one that cannot stays a mesh body without a
+        // feature that would fail on every rebuild. Then one feature per body, in the import's
+        // component, all inside one rebuild (a glTF may bring many meshes).
+        let convertible = {
+            let state = s.model.state();
+            state.body(&name).map(|b| solidcraft_kernel::convert_mesh(&b.body, millimetres))
+        };
+        match convertible {
+            Some(Ok(_)) => {
+                let kind = solidcraft_doc::FeatureKind::MeshConvert { body: name.clone().into(), tolerance: tolerance.clone().into() };
+                match s.doc_mut().add_feature(kind, None) {
+                    Ok(id) => {
+                        if let Some(f) = s.doc_mut().feature_mut(id) {
+                            f.component = component;
+                        }
+                        solids.push(name);
+                    }
+                    Err(e) => warnings.push(format!("{name}: stayed a mesh body: {e}")),
+                }
+            }
+            Some(Err(e)) => warnings.push(format!("{name}: stayed a mesh body: {e}")),
+            None => {}
+        }
+    }
+    s.refresh();
+    out["solid_bodies"] = json!(solids);
+    if !warnings.is_empty() {
+        out["warnings"] = json!(warnings);
+    }
+    Ok(())
 }
 
 fn insert_step(s: &mut Session, p: &Value) -> Result<Value> {
@@ -247,7 +301,7 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
         // A new, unsaved design holding the file's bodies.
         let stem = std::path::Path::new(path).file_stem().map(|x| x.to_string_lossy().to_string()).unwrap_or_else(|| "Untitled".into());
         let mut fresh = Session::new(Document::new(&stem));
-        let r = if solidcraft_io::is_step_path(path) {
+        let mut r = if solidcraft_io::is_step_path(path) {
             add_step(&mut fresh, path, None, &step_options(p, "doc.open")?)?
         } else {
             add_mesh(&mut fresh, path, None, mesh_up(p, path, "doc.open")?)?
@@ -257,11 +311,14 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
             fresh.active_component = c;
             fresh.active_occurrence_path = Some(fresh.doc.first_path(c));
         }
+        if bool_(p, "as_solid").unwrap_or(false) && solidcraft_io::is_mesh_path(path) {
+            convert_meshes(&mut fresh, &mut r, p, "doc.open")?;
+        }
         fresh.undo.clear();
         s.replace_design(fresh);
         let errors = s.model.results.iter().filter(|r| r.error.is_some()).count();
         let mut out = json!({"path": path, "features": s.doc.features.len(), "errors": errors, "bodies": r["bodies"], "warnings": r["warnings"]});
-        for k in ["component", "component_name", "occurrence", "subcomponents", "rigid_joints", "stand_up"] {
+        for k in ["component", "component_name", "occurrence", "subcomponents", "rigid_joints", "stand_up", "solid_bodies"] {
             if let Some(v) = r.get(k) {
                 out[k] = v.clone();
             }

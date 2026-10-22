@@ -6247,7 +6247,7 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
             if doc.model_body_component(source) != f.component {
                 return Err(DocError::Invalid("activate the mesh body's component before converting it".into()));
             }
-            let converted = kernel::convert_prismatic_mesh(&source.body, tolerance)?;
+            let converted = kernel::convert_mesh(&source.body, tolerance)?;
             let converted = converted.with_color(source.body.color());
             let result = ModelBody::new(source.name.clone(), converted, f.id);
             let target = st.bodies.get_mut(index).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;

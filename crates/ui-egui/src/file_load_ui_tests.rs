@@ -271,6 +271,40 @@ fn a_control_import_passes_up_and_names_on() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A control-channel import of a mesh asked for a solid body gets one: as_solid reaches the
+/// import through the file loader, and the reply says which bodies it converted.
+#[test]
+fn a_control_mesh_import_as_a_solid_converts_the_body() {
+    let dir = scratch("mesh-as-solid");
+    let path = dir.join("stepped.stl").to_string_lossy().to_string();
+    let mut src = Session::default();
+    src.execute("solid.box", &json!({"length":30,"width":20,"height":10})).unwrap();
+    src.execute("solid.box", &json!({"length":15,"width":10,"height":15,"corner":[5,5,10],"operation":"join"})).unwrap();
+    src.execute("file.save_mesh", &json!({"path": path})).unwrap();
+
+    let mut w = Win::new();
+    let (tx, rx) = std::sync::mpsc::channel();
+    w.app.control_rx = Some(rx);
+    let (req, reply_rx) =
+        crate::control::ControlRequest::new("engine.execute", json!({"command": "file.insert_mesh", "params": {"path": path, "as_solid": true}}));
+    tx.send(req).unwrap();
+    let mut reply = None;
+    for _ in 0..100_000 {
+        w.frame(vec![]);
+        reply = reply_rx.try_recv().ok();
+        if reply.is_some() {
+            break;
+        }
+    }
+    let reply = reply.expect("the import was answered");
+    assert_eq!(reply["ok"], true, "{reply}");
+    let result = &reply["result"];
+    assert_eq!(result["solid_bodies"].as_array().map(Vec::len), Some(1), "{result}");
+    let name = result["created_bodies"][0].as_str().unwrap_or_default().to_string();
+    assert!(!w.app.session.model.state().body(&name).unwrap().body.is_mesh(), "as_solid reached the import");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// An opened design is in the window before its bodies are meshed: the view draws the bodies
 /// meshed so far (never meshing one itself), framed from their outlines, until all are.
 #[test]

@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 
 use solidcraft_geom::{Loop2, Plane, Region2, Vec2, Vec3};
 
-use crate::{Body, KernelError, Result};
+use crate::{Body, EdgeSpec, FaceSpec, KernelError, Result, SurfSpec};
 
 const MAX_TRIANGLES: usize = 50_000;
 const MAX_BOUNDARY: usize = 8192;
@@ -18,55 +18,22 @@ fn invalid(message: &str) -> KernelError {
     KernelError::Invalid(format!("mesh conversion: {message}"))
 }
 
-/// A mesh over the triangle budget: how big it is, the limit, and that only constant-section
-/// parts convert, so a smaller freeform mesh would still be refused (#346).
+/// A mesh over the triangle budget: how big it is and the limit (#346).
 fn over_budget(triangles: usize) -> KernelError {
-    invalid(&format!(
-        "the mesh has {triangles} triangles, more than the {MAX_TRIANGLES} conversion can take; only closed constant-section parts (one profile extruded straight) can be converted, so a freeform mesh is refused at any size"
-    ))
+    invalid(&format!("the mesh has {triangles} triangles, more than the {MAX_TRIANGLES} the conversion can take; simplify it first"))
 }
+
+/// Most faces a general conversion may sew: every face left after fusing coplanar triangles is a
+/// truck face, and sewing costs time and memory in proportion.
+const MAX_FACES: usize = 20_000;
 
 /// Reconstruct a constant-section mesh as analytic planes and, where certified
 /// within `tolerance` mm, circular cylinders. The source mesh is not modified.
 /// Unsupported shapes are refused instead of silently returning a faceted solid.
 pub fn convert_prismatic_mesh(body: &Body, tolerance: f64) -> Result<Body> {
     crate::guard("convert prismatic mesh", || {
-        if !tolerance.is_finite() || !(1e-6..=1.).contains(&tolerance) {
-            return Err(invalid("tolerance must be between 0.000001 and 1 mm"));
-        }
-        let input = body.mesh.as_ref().ok_or_else(|| invalid("select a mesh body"))?;
-        let welded = weld(input, tolerance)?;
+        let (welded, axes, _) = prepared(body, tolerance)?;
         let mesh = welded.mesh.as_ref().ok_or_else(|| invalid("empty mesh"))?;
-        if mesh.triangles.len() > MAX_TRIANGLES {
-            return Err(over_budget(mesh.triangles.len()));
-        }
-        let mut edges: BTreeMap<(u32, u32), (usize, i32)> = BTreeMap::new();
-        let mut axes: BTreeMap<(i64, i64, i64), (Vec3, f64)> = BTreeMap::new();
-        for triangle in &mesh.triangles {
-            let [a, b, c] = *triangle;
-            let (Some(pa), Some(pb), Some(pc)) = (mesh.positions.get(a as usize), mesh.positions.get(b as usize), mesh.positions.get(c as usize))
-            else {
-                return Err(invalid("triangle refers to a missing vertex"));
-            };
-            let cross = (*pb - *pa).cross(*pc - *pa);
-            let Some(mut n) = cross.normalized() else { return Err(invalid("degenerate triangle")) };
-            for (a, b) in [(a, b), (b, c), (c, a)] {
-                let entry = edges.entry((a.min(b), a.max(b))).or_default();
-                entry.0 += 1;
-                entry.1 += if a < b { 1 } else { -1 };
-            }
-            if n.x < -1e-8 || (n.x.abs() <= 1e-8 && (n.y < -1e-8 || (n.y.abs() <= 1e-8 && n.z < 0.))) {
-                n = -n;
-            }
-            let key = ((n.x * 1e7).round() as i64, (n.y * 1e7).round() as i64, (n.z * 1e7).round() as i64);
-            let entry = axes.entry(key).or_insert((n, 0.));
-            entry.1 += cross.len();
-        }
-        if edges.values().any(|&(count, balance)| count != 2 || balance != 0) {
-            return Err(invalid("mesh must be closed and consistently oriented, with two triangles per edge"));
-        }
-        let mut axes: Vec<_> = axes.into_values().collect();
-        axes.sort_by(|a, b| b.1.total_cmp(&a.1));
         for (axis, _) in axes.into_iter().take(16) {
             if let Some(result) = extrusion(mesh, axis, tolerance)? {
                 return Ok(result);
@@ -74,6 +41,75 @@ pub fn convert_prismatic_mesh(body: &Body, tolerance: f64) -> Result<Body> {
         }
         Err(invalid("this mesh is not a supported constant-section prism; no geometry was converted"))
     })
+}
+
+/// Reconstruct any closed, manifold mesh as a solid body. Triangles sharing a plane fuse into one
+/// planar face, holes and all; a triangle on a curved surface (a bore's wall, a fillet) becomes a
+/// facet of its own, so a slicer's 3MF or STL gets the operations that need a solid. The exact
+/// prismatic reconstruction is tried first, and the source mesh is not modified.
+pub fn convert_mesh(body: &Body, tolerance: f64) -> Result<Body> {
+    crate::guard("convert mesh", || {
+        let (welded, axes, signed_volume) = prepared(body, tolerance)?;
+        let mesh = welded.mesh.as_ref().ok_or_else(|| invalid("empty mesh"))?;
+        for (axis, _) in axes.into_iter().take(16) {
+            if let Some(result) = extrusion(mesh, axis, tolerance)? {
+                return Ok(result);
+            }
+        }
+        planar_solid(mesh, tolerance, signed_volume)
+    })
+}
+
+/// The welded mesh body once it is known to be closed, consistently oriented and facing outwards,
+/// the directions its triangles' normals take (the most common first, by area, which the prismatic
+/// reconstruction tries as its extrusion axes), and the volume its triangles enclose.
+fn prepared(body: &Body, tolerance: f64) -> Result<(Body, Vec<(Vec3, f64)>, f64)> {
+    if !tolerance.is_finite() || !(1e-6..=1.).contains(&tolerance) {
+        return Err(invalid("tolerance must be between 0.000001 and 1 mm"));
+    }
+    let input = body.mesh.as_ref().ok_or_else(|| invalid("select a mesh body"))?;
+    let welded = weld(input, tolerance)?;
+    let mesh = welded.mesh.as_ref().ok_or_else(|| invalid("empty mesh"))?;
+    if mesh.triangles.len() > MAX_TRIANGLES {
+        return Err(over_budget(mesh.triangles.len()));
+    }
+    if mesh.triangles.len() < 4 {
+        return Err(invalid("a solid needs at least four triangles, two shells at the least"));
+    }
+    let mut edges: BTreeMap<(u32, u32), (usize, i32)> = BTreeMap::new();
+    let mut axes: BTreeMap<(i64, i64, i64), (Vec3, f64)> = BTreeMap::new();
+    let mut signed_volume = 0.;
+    for triangle in &mesh.triangles {
+        let [a, b, c] = *triangle;
+        let (Some(pa), Some(pb), Some(pc)) = (mesh.positions.get(a as usize), mesh.positions.get(b as usize), mesh.positions.get(c as usize)) else {
+            return Err(invalid("triangle refers to a missing vertex"));
+        };
+        let cross = (*pb - *pa).cross(*pc - *pa);
+        let Some(mut n) = cross.normalized() else { return Err(invalid("degenerate triangle")) };
+        signed_volume += pa.dot(pb.cross(*pc)) / 6.;
+        for (a, b) in [(a, b), (b, c), (c, a)] {
+            let entry = edges.entry((a.min(b), a.max(b))).or_default();
+            entry.0 += 1;
+            entry.1 += if a < b { 1 } else { -1 };
+        }
+        if n.x < -1e-8 || (n.x.abs() <= 1e-8 && (n.y < -1e-8 || (n.y.abs() <= 1e-8 && n.z < 0.))) {
+            n = -n;
+        }
+        let key = ((n.x * 1e7).round() as i64, (n.y * 1e7).round() as i64, (n.z * 1e7).round() as i64);
+        let entry = axes.entry(key).or_insert((n, 0.));
+        entry.1 += cross.len();
+    }
+    if edges.values().any(|&(count, balance)| count != 2 || balance != 0) {
+        return Err(invalid("mesh must be closed and consistently oriented, with two triangles per edge"));
+    }
+    // A consistently oriented mesh whose triangles face inwards passes the edge check, but
+    // the body it describes is turned inside out: its signed volume would be negative.
+    if !signed_volume.is_finite() || signed_volume <= 0. {
+        return Err(invalid("the mesh's triangles face inwards; flip them before converting"));
+    }
+    let mut axes: Vec<_> = axes.into_values().collect();
+    axes.sort_by(|a, b| b.1.total_cmp(&a.1));
+    Ok((welded, axes, signed_volume))
 }
 
 fn weld(mesh: &crate::meshbody::TriMesh, tolerance: f64) -> Result<Body> {
@@ -303,6 +339,196 @@ fn extrusion(mesh: &crate::meshbody::TriMesh, axis: Vec3, tolerance: f64) -> Res
     Ok(Some(body))
 }
 
+/// The mesh as a solid of planar faces: neighbouring triangles on one plane fuse into a single
+/// face (holes and all), and every other triangle stays a facet of its own. The faces share the
+/// welded mesh vertices exactly, so they sew along their edges without booleans.
+fn planar_solid(mesh: &crate::meshbody::TriMesh, tolerance: f64, signed_volume: f64) -> Result<Body> {
+    let (positions, triangles) = (&mesh.positions, &mesh.triangles);
+    let bounds = positions.iter().fold(solidcraft_geom::Aabb3::EMPTY, |mut b, p| {
+        b.add(*p);
+        b
+    });
+    let size = bounds.size().len().max(1.);
+    let epsilon = (size * 1e-7).min(tolerance * 0.01).max(1e-9);
+    // Fusing triangles into one face makes that face's boundary hold their vertices, so it is
+    // only planar to the depth they sit off the region's plane: keep that well inside the
+    // 1e-6 mm truck's `attach_plane` allows, or the face is refused (a slicer's f32 mesh has
+    // its flat faces rounded by about 1e-5 mm, so they stay one facet per triangle instead).
+    let planar = 1e-7_f64.min(epsilon);
+    // Long work reports to whoever waits for it (the import card) and stops when they cancel.
+    let watch = crate::watch::current();
+    let cancelled = || watch.as_ref().is_some_and(|w| w.cancelled());
+    let report = |done: usize, total: usize| {
+        if let Some(w) = watch.as_ref() {
+            w.progress("converting", done, total);
+        }
+    };
+    let total = triangles.len();
+    report(0, total);
+    // Which triangles share each edge; the check in `prepared` leaves exactly two.
+    let mut owners: BTreeMap<(u32, u32), Vec<usize>> = BTreeMap::new();
+    for (t, triangle) in triangles.iter().enumerate() {
+        let [a, b, c] = *triangle;
+        for (u, v) in [(a, b), (b, c), (c, a)] {
+            owners.entry((u.min(v), u.max(v))).or_default().push(t);
+        }
+    }
+    let mut normals = Vec::with_capacity(triangles.len());
+    for triangle in triangles {
+        let [a, b, c] = *triangle;
+        let vertex = |i: u32| positions.get(i as usize).copied().ok_or_else(|| invalid("triangle refers to a missing vertex"));
+        let (pa, pb, pc) = (vertex(a)?, vertex(b)?, vertex(c)?);
+        normals.push((pb - pa).cross(pc - pa).normalized().ok_or_else(|| invalid("degenerate triangle"))?);
+    }
+    // Fuse neighbouring triangles that lie on one plane, so a flat face (and the wall of a
+    // polygonal hole) becomes one face instead of two triangles.
+    let mut region = vec![usize::MAX; triangles.len()];
+    let mut regions: Vec<Vec<usize>> = Vec::new();
+    for seed in 0..triangles.len() {
+        if seed % 256 == 0 {
+            if cancelled() {
+                return Err(crate::watch::cancelled_error("mesh conversion"));
+            }
+            report(seed, total);
+        }
+        if region.get(seed).copied() != Some(usize::MAX) {
+            continue;
+        }
+        if regions.len() >= MAX_FACES {
+            return Err(too_many_faces());
+        }
+        let Some(&normal) = normals.get(seed) else { continue };
+        let Some(apex) = triangles.get(seed).and_then(|t| t.first()).and_then(|&i| positions.get(i as usize)).copied() else {
+            return Err(invalid("triangle refers to a missing vertex"));
+        };
+        let offset = normal.dot(apex);
+        let id = regions.len();
+        region[seed] = id;
+        let mut members = vec![seed];
+        let mut stack = vec![seed];
+        while let Some(t) = stack.pop() {
+            let Some(&[a, b, c]) = triangles.get(t) else { continue };
+            for (u, v) in [(a, b), (b, c), (c, a)] {
+                let Some(shared) = owners.get(&(u.min(v), u.max(v))) else { continue };
+                for &other in shared {
+                    if other == t || region.get(other).copied() != Some(usize::MAX) {
+                        continue;
+                    }
+                    let on_plane = triangles
+                        .get(other)
+                        .is_some_and(|o| o.iter().all(|&k| positions.get(k as usize).is_some_and(|p| (normal.dot(*p) - offset).abs() <= planar)));
+                    if on_plane {
+                        region[other] = id;
+                        members.push(other);
+                        stack.push(other);
+                    }
+                }
+            }
+        }
+        members.sort_unstable();
+        regions.push(members);
+    }
+    report(total, total);
+    if cancelled() {
+        return Err(crate::watch::cancelled_error("mesh conversion"));
+    }
+    let mut faces = Vec::with_capacity(regions.len());
+    for members in &regions {
+        let loops = face_loops(members, &region, &owners, positions, triangles)?;
+        if loops.is_empty() {
+            return Err(invalid("a face of the mesh has no boundary"));
+        }
+        faces.push(FaceSpec { loops, surface: SurfSpec::Plane, probe: None });
+    }
+    let body = crate::sew(&faces).map_err(|e| match e {
+        KernelError::Invalid(detail) => invalid(&format!("the faces cannot be sewn into a solid: {detail}")),
+        other => other,
+    })?;
+    let repairs = body.validity();
+    if !repairs.is_empty() {
+        return Err(invalid("the converted solid did not pass validity checks"));
+    }
+    let rebuilt = crate::measure(&body)?.volume;
+    if !rebuilt.is_finite() || (rebuilt - signed_volume).abs() > signed_volume.abs() * 1e-6 + size * size * 1e-9 {
+        return Err(invalid("the converted solid's volume does not match the mesh"));
+    }
+    Ok(body)
+}
+
+fn too_many_faces() -> KernelError {
+    invalid(&format!("the mesh leaves more than {MAX_FACES} faces after fusing coplanar triangles; simplify it before converting"))
+}
+
+/// The boundary loops of one planar region, as the analytic edges of one face: every boundary
+/// edge runs with the region on its left, so the outer loop is counter-clockwise about the face's
+/// outward normal and a hole is clockwise, as sewing wants them.
+fn face_loops(
+    members: &[usize],
+    region: &[usize],
+    owners: &BTreeMap<(u32, u32), Vec<usize>>,
+    positions: &[Vec3],
+    triangles: &[[u32; 3]],
+) -> Result<Vec<Vec<EdgeSpec>>> {
+    let id = members.first().and_then(|t| region.get(*t)).copied().unwrap_or(usize::MAX);
+    let mut next: BTreeMap<u32, u32> = BTreeMap::new();
+    let mut boundary_edges = 0usize;
+    for &t in members {
+        let Some(&[a, b, c]) = triangles.get(t) else { continue };
+        for (u, v) in [(a, b), (b, c), (c, a)] {
+            let Some(shared) = owners.get(&(u.min(v), u.max(v))) else {
+                return Err(invalid("the mesh is not closed"));
+            };
+            // The face keeps the edge when the triangle on its other side is another region's.
+            if shared.iter().all(|&other| other == t || region.get(other).copied() == Some(id)) {
+                continue;
+            }
+            boundary_edges += 1;
+            if boundary_edges > MAX_BOUNDARY {
+                return Err(invalid("a face of the mesh has too long a boundary to convert"));
+            }
+            if next.insert(u, v).is_some() {
+                return Err(invalid("the mesh's face boundary branches at a vertex; split that point before converting"));
+            }
+        }
+    }
+    let mut loops = Vec::new();
+    while let Some((&start, _)) = next.iter().next() {
+        let mut u = start;
+        let mut points = Vec::new();
+        for _ in 0..=MAX_BOUNDARY {
+            let Some(v) = next.remove(&u) else { break };
+            points.push(positions.get(u as usize).copied().ok_or_else(|| invalid("triangle refers to a missing vertex"))?);
+            u = v;
+            if u == start {
+                break;
+            }
+        }
+        if u != start {
+            return Err(invalid("the mesh's face boundary is open"));
+        }
+        // Every boundary vertex stays: a merged face must share each mesh edge with the face on
+        // its other side exactly, or a vertex dropped along a straight edge (a T-junction) would
+        // leave the shell open.
+        // Only a point repeating the one before it is dropped (a zero-length edge is refused).
+        let mut kept: Vec<Vec3> = Vec::with_capacity(points.len());
+        for p in points {
+            if kept.last().is_none_or(|q| q.dist(p) > 0.0) {
+                kept.push(p);
+            }
+        }
+        while kept.len() > 1 && kept.first().is_some_and(|a| kept.last().is_some_and(|b| a.dist(*b) <= 0.0)) {
+            kept.pop();
+        }
+        if kept.len() < 3 {
+            return Err(invalid("a face of the mesh is degenerate"));
+        }
+        let loop_edges =
+            kept.iter().copied().zip(kept.iter().copied().cycle().skip(1)).take(kept.len()).map(|(a, b)| EdgeSpec::Line { a, b }).collect();
+        loops.push(loop_edges);
+    }
+    Ok(loops)
+}
+
 fn certify_nesting(raw: &[Loop2], fitted: &[Loop2], epsilon: f64, size: f64) -> Result<()> {
     if raw.len() > MAX_LOOPS {
         return Err(KernelError::Invalid(format!(
@@ -458,6 +684,132 @@ mod tests {
         assert_eq!(fit_loop(&points, 0.2, 1e-6).segs.len(), 2);
     }
 
+    /// A stepped block: a box with a smaller box standing on it, which no single profile
+    /// extruded straight can make, so the general conversion (not the prismatic one) builds it.
+    fn stepped_block() -> Body {
+        let base = crate::box_solid(Vec3::ZERO, Vec3::new(30., 20., 10.)).unwrap();
+        let boss = crate::box_solid(Vec3::new(5., 5., 10.), Vec3::new(20., 15., 25.)).unwrap();
+        crate::boolean(&base, &boss, crate::BoolOp::Union).unwrap().unwrap()
+    }
+
+    fn mesh_at(body: &Body, tolerance: f64) -> Body {
+        let mesh = body.tessellate_with(tolerance, true).unwrap();
+        crate::mesh_body(&mesh.positions, &mesh.triangles).unwrap()
+    }
+
+    #[test]
+    fn a_nonprismatic_mesh_converts_to_a_solid_that_takes_booleans() {
+        let source = stepped_block();
+        let expected = crate::measure(&source).unwrap().volume;
+        let converted = convert_mesh(&mesh_of(&source), 0.05).unwrap();
+        assert!(!converted.is_mesh());
+        assert!(converted.validity().is_empty(), "{:?}", converted.validity());
+        assert!((crate::measure(&converted).unwrap().volume - expected).abs() < 1e-6);
+        // The flat faces fused: a stepped block is 12 planes, not 2 triangles each.
+        assert_eq!(converted.faces(0.01).unwrap().len(), 11);
+        // The whole point of converting: the solid body takes the operations that refuse a mesh.
+        let tool = crate::cylinder(Vec3::new(25., 15., -5.), Vec3::new(0., 0., 20.), 3., 20.).unwrap();
+        let cut = crate::boolean(&converted, &tool, crate::BoolOp::Cut).unwrap().unwrap();
+        // The hole is measured through the new cylindrical face, so allow its tessellation.
+        let hole = std::f64::consts::PI * 9. * 10.;
+        assert!((crate::measure(&cut).unwrap().volume - (expected - hole)).abs() < 0.5, "{:?}", crate::measure(&cut).unwrap().volume);
+    }
+
+    #[test]
+    fn a_flat_face_meeting_a_rounded_one_converts_without_t_junctions() {
+        let boxed = crate::box_solid(Vec3::ZERO, Vec3::new(40., 30., 20.)).unwrap();
+        // Round one vertical edge: the flat faces then meet facets along shared vertices, and a
+        // fused flat face must keep the ones along a straight edge (dropping them was a
+        // T-junction that left the shell open on a real 3MF).
+        let filleted = crate::fillet(&boxed, &[Vec3::new(40., 0., 10.)], 8.).unwrap();
+        let mesh = mesh_of(&filleted);
+        let mesh_volume = mesh.mesh.as_ref().unwrap().to_mesh().measure().volume;
+        let converted = convert_mesh(&mesh, 0.05).unwrap();
+        assert!(converted.validity().is_empty(), "{:?}", converted.validity());
+        // The converted solid is the mesh (its fillet faceted), so it measures the mesh's volume.
+        assert!((crate::measure(&converted).unwrap().volume - mesh_volume).abs() < mesh_volume * 1e-6);
+        assert!((mesh_volume - crate::measure(&filleted).unwrap().volume).abs() < 1.0);
+    }
+
+    #[test]
+    fn a_mesh_rounded_like_f32_converts_without_asking_for_one_plane() {
+        // A slicer's STL or 3MF rounds coordinates to f32, so a flat face's points are no longer
+        // exactly on one plane: they stay one facet per triangle, rather than fusing into a face
+        // truck refuses ("cannot attach a plane to a wire that is not on one plane").
+        let mesh = mesh_of(&crate::box_solid(Vec3::ZERO, Vec3::new(60., 40., 20.)).unwrap());
+        let inner = mesh.mesh.as_ref().unwrap();
+        let positions: Vec<Vec3> = inner
+            .positions
+            .iter()
+            .enumerate()
+            .map(|(i, p)| {
+                let d = 3e-6 * ((i % 5) as f64 - 2.0);
+                Vec3::new(p.x + d, p.y - d * 0.5, p.z + d * 0.25)
+            })
+            .collect();
+        let rounded = crate::mesh_body(&positions, &inner.triangles).unwrap();
+        let converted = convert_mesh(&rounded, 0.05).unwrap();
+        assert!(converted.validity().is_empty(), "{:?}", converted.validity());
+        let expected = rounded.mesh.as_ref().unwrap().to_mesh().measure().volume;
+        assert!((crate::measure(&converted).unwrap().volume - expected).abs() < expected * 1e-6);
+    }
+
+    #[test]
+    fn a_freeform_mesh_converts_as_facets_and_keeps_its_volume() {
+        let sphere = crate::sphere(Vec3::ZERO, 10.).unwrap();
+        let mesh = mesh_at(&sphere, 0.8);
+        let source_volume = mesh.mesh.as_ref().unwrap().to_mesh().measure().volume;
+        let converted = convert_mesh(&mesh, 0.05).unwrap();
+        assert!(!converted.is_mesh());
+        assert!(converted.validity().is_empty(), "{:?}", converted.validity());
+        assert!((crate::measure(&converted).unwrap().volume - source_volume).abs() < source_volume * 1e-6);
+        assert!(converted.faces(0.01).unwrap().len() > 4, "a curved surface stays faceted");
+    }
+
+    /// A watch that records the progress it is told, and cancels at its Nth check.
+    struct Probe {
+        checks: std::sync::atomic::AtomicUsize,
+        cancel_at: usize,
+        last: std::sync::Mutex<(usize, usize)>,
+    }
+
+    impl crate::watch::Watch for Probe {
+        fn cancelled(&self) -> bool {
+            self.checks.fetch_add(1, std::sync::atomic::Ordering::Relaxed) >= self.cancel_at
+        }
+        fn progress(&self, stage: &'static str, done: usize, total: usize) {
+            assert_eq!(stage, "converting");
+            *self.last.lock().unwrap() = (done, total);
+        }
+    }
+
+    #[test]
+    fn a_watched_conversion_reports_progress_and_stops_when_cancelled() {
+        let mesh = mesh_of(&stepped_block());
+        let triangles = mesh.mesh.as_ref().map(|m| m.triangles.len()).unwrap_or(0);
+        // It reports its triangles as it goes...
+        let probe = std::sync::Arc::new(Probe { checks: Default::default(), cancel_at: usize::MAX, last: Default::default() });
+        let converted = crate::watch::watching(probe.clone(), || convert_mesh(&mesh, 0.05)).unwrap();
+        assert!(!converted.is_mesh());
+        assert_eq!(*probe.last.lock().unwrap(), (triangles, triangles));
+        // ...and stops at the next check once the watch cancels it.
+        let probe = std::sync::Arc::new(Probe { checks: Default::default(), cancel_at: 0, last: Default::default() });
+        let err = crate::watch::watching(probe.clone(), || convert_mesh(&mesh, 0.05)).unwrap_err().to_string();
+        assert!(err.contains("mesh conversion cancelled"), "{err}");
+        assert_eq!(probe.last.lock().unwrap().1, triangles, "it said how much work it had taken on");
+    }
+
+    #[test]
+    fn a_mesh_wound_inwards_is_turned_outward_before_converting() {
+        let mesh = mesh_of(&crate::box_solid(Vec3::ZERO, Vec3::new(10., 10., 10.)).unwrap());
+        let inner = mesh.mesh.as_ref().unwrap();
+        let flipped: Vec<[u32; 3]> = inner.triangles.iter().map(|[a, b, c]| [*a, *c, *b]).collect();
+        let inside_out = crate::mesh_body(&inner.positions, &flipped).unwrap();
+        let converted = convert_mesh(&inside_out, 0.05).unwrap();
+        assert!(!converted.is_mesh());
+        assert!((crate::measure(&converted).unwrap().volume - 1000.).abs() < 1e-6);
+    }
+
     #[test]
     fn refuses_open_nonprismatic_and_hostile_inputs() {
         let open = crate::mesh_body(&[Vec3::ZERO, Vec3::X, Vec3::Y], &[[0, 1, 2]]).unwrap();
@@ -476,16 +828,16 @@ mod tests {
     }
 
     #[test]
-    fn a_mesh_over_the_budget_says_how_big_it_is_and_what_converts() {
-        // #346: a freeform mesh just over the limit (a strip of 50001 triangles) is refused with
-        // its size, the limit, and that only constant-section parts convert at any size.
+    fn a_mesh_over_the_budget_says_how_big_it_is() {
+        // #346: a mesh just over the limit (a strip of 50001 triangles) is refused with its size
+        // and the limit, so the reason is clear.
         let n = MAX_TRIANGLES + 1;
         let positions: Vec<Vec3> = (0..n + 2).map(|k| Vec3::new((k / 2) as f64, (k % 2) as f64, 0.)).collect();
         let triangles: Vec<[u32; 3]> = (0..n as u32).map(|i| [i, i + 1, i + 2]).collect();
         let body = crate::mesh_body(&positions, &triangles).unwrap();
-        let err = convert_prismatic_mesh(&body, 0.05).unwrap_err().to_string();
+        let err = convert_mesh(&body, 0.05).unwrap_err().to_string();
         assert!(err.contains("50001 triangles") && err.contains("50000"), "{err}");
-        assert!(err.contains("constant-section") && err.contains("freeform"), "{err}");
+        assert!(err.contains("simplify"), "{err}");
         let mesh = crate::meshbody::TriMesh { positions: vec![Vec3::ZERO; MAX_TRIANGLES * 3 + 1], triangles: vec![] };
         let err = weld(&mesh, 0.05).unwrap_err().to_string();
         assert!(err.contains("150001 vertices") && err.contains("150000"), "{err}");

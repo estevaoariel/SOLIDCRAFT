@@ -48,8 +48,12 @@ a temporary folder and opens it in the chosen slicer instead of asking for a fil
 list shows the slicers found on the computer with their icons; **Custom…** adds any other program
 to the top of the list (kept between runs; hover an entry you added and press Delete to remove it).
 
-Closed mechanical meshes with a constant cross-section can be rebuilt as solids with the
-`mesh.convert` command (command palette, scripts and the control channel).
+A closed mesh can be rebuilt as a **solid body** with **Convert to Solid** (right-click a mesh
+body) or the `mesh.convert` command, so booleans, fillets, shell, holes and sketches on its faces
+work on it. Coplanar triangles become one planar face and a curved surface stays faceted; a
+constant-section part is rebuilt exactly, cylinders and all. **Preferences → Design → Import
+meshes as solids** converts a mesh as it is imported. See
+[`docs/mesh-to-solid.md`](https://github.com/bherbruck/solidcraft/blob/main/docs/mesh-to-solid.md).
 
 **File → Export 3MF…** with the format changed to **3MF with face tags** (`file.export` or `file.save_mesh` with `format: "3mf-tagged"`) writes an
 ordinary 3MF in which every triangle also names the B-rep face it lies on and every coordinate

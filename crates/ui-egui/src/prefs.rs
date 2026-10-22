@@ -467,6 +467,9 @@ preference_settings! {
     /// Draw the parts browser on a translucent card over the 3D view instead of a column of its
     /// own, so the workspace keeps the whole window width.
     browser_float: bool = false, 0 => check("Float it over the workspace");
+    /// Convert meshes imported from a 3MF, STL, OBJ or glTF file to solid bodies where the
+    /// conversion can take them (`file.insert_mesh` and `doc.open` get `as_solid`).
+    import_meshes_as_solid: bool = false, PAGE_DESIGN => check("Import meshes as solids", "3MF, STL, OBJ and glTF meshes join the design as solid bodies where the conversion can take them, so booleans, fillets, shell and holes work on them; a mesh that cannot be converted stays a mesh body");
     /// The wheel zooms toward the point under the cursor (else toward the view's centre).
     zoom_to_cursor: bool = true, 1 => check("Zoom to the cursor", "The wheel zooms toward the point under the cursor (off: toward the view's centre)");
     /// Spread discrete wheel input across frames (off: apply each event immediately).
@@ -1462,6 +1465,7 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                 ui_kit::Text::Note("orientation"),
             );
             setting::offer_stand_up(app, ui);
+            setting::import_meshes_as_solid(app, ui);
         }
         PAGE_GRAPHICS => {
             ui_kit::row(ui, app.tr("ui.graphics_preset"), |ui| graphics_preset_selector(app, ui));

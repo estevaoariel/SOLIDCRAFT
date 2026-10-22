@@ -283,12 +283,15 @@ pub fn tool_definitions() -> Vec<Value> {
              materials appearances); the result reports the component (id, component_name). Replaces the current design; insert into it \
              instead with the file.insert_step (STEP) or file.insert_mesh (mesh) commands. A STEP file from a system \
              that has Y up opens lying on its back: `up: \"y\"` turns its component a quarter turn about X (Y becomes Z). glTF is Y up, \
-             so it is turned by default (`up: \"z\"` keeps its axes). `names` picks what the bodies are named after when the solids' own names say nothing useful.",
+             so it is turned by default (`up: \"z\"` keeps its axes). `names` picks what the bodies are named after when the solids' own names say nothing useful. \
+             `as_solid: true` converts each imported mesh to a solid body where it can be, as file.insert_mesh does (a mesh that cannot be converted stays a mesh body, with a warning; docs/mesh-to-solid.md).",
             obj(
                 json!({
                     "path": string("Path to a .solidcraft, .step/.stp, .3mf, .stl, .obj, .glb or .gltf file"),
                     "up": {"type": "string", "enum": ["z", "y"], "description": "STEP and glTF only. z keeps the file's axes; y: the file has Y up, so its bodies are turned to stand Z up. Default: z for STEP, y for glTF"},
                     "names": {"type": "string", "enum": ["auto", "solid", "product", "instance"], "description": "STEP, IGES, FreeCAD and Rhino. auto (default): keep meaningful solid names, replace placeholders with the nearest named product, else instance; solid: the solid's own name; product: the part's name; instance: the occurrence's name, else the product's"},
+                    "as_solid": {"type": "boolean", "description": "A mesh file only. Convert each imported mesh to a solid body where it can be, so booleans and the other solid features work on it; a mesh that cannot be converted stays a mesh body, with a warning"},
+                    "tolerance": string("A mesh file only. Tolerance of the conversion (default 0.05 mm)"),
                 }),
                 &["path"],
             ),
@@ -468,7 +471,7 @@ fn dispatch(b: &mut dyn Backend, name: &str, a: &Map<String, Value>) -> Result<V
         "undo" => exec(b, "edit.undo", json!({})),
         "redo" => exec(b, "edit.redo", json!({})),
         "new_design" => exec(b, "file.new", pick(a, &["name"])),
-        "open" => exec(b, "doc.open", pick(a, &["path", "up", "names"])),
+        "open" => exec(b, "doc.open", pick(a, &["path", "up", "names", "as_solid", "tolerance"])),
         "save" => exec(b, "file.save", pick(a, &["path", "format"])),
         other => Err(format!("unknown tool `{other}`")),
     }

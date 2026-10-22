@@ -223,6 +223,26 @@ fn agent_builds_box_fillet_hole() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `open` hands a mesh file's `as_solid` to the import: the design holds a solid body, which a
+/// boolean then cuts, and the reply says which bodies were converted.
+#[test]
+fn open_imports_a_mesh_as_a_solid() {
+    let mut s = server();
+    let dir = std::env::temp_dir().join(format!("solidcraft-mcp-solid-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("stepped.stl").to_string_lossy().to_string();
+    tool(&mut s, "execute", json!({"command": "solid.box", "params": {"length":30,"width":20,"height":10}}));
+    tool(&mut s, "execute", json!({"command": "solid.box", "params": {"length":15,"width":10,"height":15,"corner":[5,5,10],"operation":"join"}}));
+    tool(&mut s, "execute", json!({"command": "file.save_mesh", "params": {"path": path}}));
+    let r = tool(&mut s, "open", json!({"path": path, "as_solid": true}));
+    assert_eq!(r["solid_bodies"].as_array().map(Vec::len), Some(1), "{r}");
+    assert!(rel(volume(&mut s), 8250.0) < 1e-6, "{}", volume(&mut s));
+    // A boolean proves it is a solid body, not a mesh.
+    tool(&mut s, "execute", json!({"command": "solid.cylinder", "params": {"diameter":6,"height":20,"base":[25,15,-5],"operation":"cut"}}));
+    assert!(volume(&mut s) < 8250.0 - 100.0, "{}", volume(&mut s));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `open` hands `up` and `names` to the STEP import, and the tool's schema refuses other values.
 #[test]
 fn open_stands_a_y_up_step_file_up() {

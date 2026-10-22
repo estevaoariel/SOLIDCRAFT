@@ -16,7 +16,7 @@ use crate::{
 pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("mesh.convert", "Convert Mesh", convert)
         .icon("import")
-        .params("body?: mesh body name (default: the selected mesh body); tolerance?: length expression (default 0.05 mm): reconstruct a closed constant-section mechanical mesh as editable planar and cylindrical faces, with a parametric timeline feature; name?"),
+        .params("body?: mesh body name (default: the selected mesh body; it may be in any component, the conversion is authored where the body is); tolerance?: length expression (default 0.05 mm): rebuild a closed mesh as a solid body, with a parametric timeline feature — coplanar triangles fuse into planar faces (holes and all) and a curved surface stays faceted, so booleans, fillets, shell, holes and sketches on its faces work; a constant-section part is rebuilt exactly with planar and circular cylindrical faces; name?"),
 ];
 
 /// The mesh body to convert: `body`, else the one selected body.
@@ -32,7 +32,7 @@ fn target(s: &Session, p: &Value, cmd: &str) -> Result<String> {
     }
 }
 
-fn convert(s: &mut Session, p: &Value) -> Result<Value> {
+pub(super) fn convert(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "mesh.convert";
     let state = s.model.state();
     let body = target(s, p, cmd)?;
@@ -40,10 +40,18 @@ fn convert(s: &mut Session, p: &Value) -> Result<Value> {
     if !source.body.is_mesh() {
         return Err(bad(cmd, "select a mesh body"));
     }
-    if s.doc.model_body_component(source) != s.active_component {
-        return Err(bad(cmd, "activate the mesh body's component before converting it"));
-    }
+    // The conversion is authored where the body is, so a mesh in another component converts
+    // without activating that component first (the right-click menu, a script).
+    let component = s.doc.model_body_component(source);
     let tolerance = expr(p, "tolerance").unwrap_or_else(|| "0.05 mm".into());
     check_expr(s, &tolerance, Kind::Length, cmd, "tolerance")?;
-    add_feature(s, p, FeatureKind::MeshConvert { body: body.into(), tolerance })
+    let saved = s.active_component;
+    s.active_component = component;
+    let out = add_feature(s, p, FeatureKind::MeshConvert { body: body.into(), tolerance });
+    s.active_component = saved;
+    let out = out?;
+    if component != saved {
+        s.refresh();
+    }
+    Ok(out)
 }

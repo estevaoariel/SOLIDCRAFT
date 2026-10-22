@@ -64,7 +64,7 @@ impl Request {
     fn command(&self) -> (&'static str, Value) {
         match &self.kind {
             Kind::Open => ("doc.open", self.params()),
-            Kind::Insert if solidcraft_engine::io::is_mesh_path(&self.path) => ("file.insert_mesh", json!({"path": self.path})),
+            Kind::Insert if solidcraft_engine::io::is_mesh_path(&self.path) => ("file.insert_mesh", self.params()),
             Kind::Insert => ("file.insert_step", self.params()),
             Kind::Recover { id, dir } => ("doc.recover", json!({"id": id, "dir": dir})),
             Kind::ExportDxf => ("file.export_view_dxf", Value::Object(self.options.clone())),
@@ -196,7 +196,20 @@ impl FileLoad {
 }
 
 pub fn begin(app: &mut SolveApp, path: &str, insert: bool) {
-    let _ = begin_request(app, Request::new(path, if insert { Kind::Insert } else { Kind::Open }));
+    let mut request = Request::new(path, if insert { Kind::Insert } else { Kind::Open });
+    request.options = import_options(app, path);
+    let _ = begin_request(app, request);
+}
+
+/// The options a file the user opened or dropped is imported with: a mesh the preference asks to
+/// import as a solid (Preferences: Design → Import meshes as solids). The import command converts
+/// it where it can, and says so when it cannot.
+fn import_options(app: &SolveApp, path: &str) -> serde_json::Map<String, Value> {
+    let mut options = serde_json::Map::new();
+    if solidcraft_engine::io::is_mesh_path(path) && app.preferences.import_meshes_as_solid {
+        options.insert("as_solid".into(), json!(true));
+    }
+    options
 }
 
 /// Queue a file operation; on the web (no threads) it runs now.
@@ -277,11 +290,11 @@ pub fn control(app: &mut SolveApp, req: crate::control::ControlRequest) -> Optio
             return None;
         }
     };
-    let options = if kind == Kind::ExportDxf {
-        params.and_then(Value::as_object).cloned().unwrap_or_default()
-    } else {
-        ["up", "names"].iter().filter_map(|k| Some((k.to_string(), params?.get(*k).filter(|v| !v.is_null())?.clone()))).collect()
-    };
+    // What the caller asked besides the path goes to the command as given: a STEP file's up and
+    // names, a mesh's as_solid and tolerance, a DXF export's options. (path is carried beside
+    // them; the request puts it back.)
+    let mut options: serde_json::Map<String, Value> = params.and_then(Value::as_object).cloned().unwrap_or_default();
+    options.remove("path");
     let _ = begin_request(app, Request { path: path.into(), kind, reply: Some(req.reply.clone()), scope, options });
     None
 }
@@ -1001,6 +1014,19 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_preference_imports_meshes_as_solids_and_leaves_the_others_alone() {
+        let mut app = SolveApp::new(Session::default(), Default::default());
+        assert!(import_options(&app, "part.stl").is_empty(), "off by default");
+        app.preferences.import_meshes_as_solid = true;
+        for mesh in ["part.stl", "part.3mf", "part.obj", "part.glb"] {
+            assert_eq!(import_options(&app, mesh).get("as_solid"), Some(&json!(true)), "{mesh}");
+        }
+        for other in ["part.step", "part.igs", "design.solidcraft"] {
+            assert!(import_options(&app, other).is_empty(), "{other}");
+        }
+    }
 
     #[test]
     fn dxf_export_progress_keeps_frames_alive_and_never_adopts_a_worker_document() {

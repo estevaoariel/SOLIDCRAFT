@@ -72,6 +72,40 @@ fn appearance_browser_action_targets_the_clicked_body() {
 }
 
 #[test]
+fn a_mesh_body_offers_convert_to_solid_and_a_solid_body_does_not() {
+    use solidcraft_engine::doc::{Document, FeatureKind, MeshData};
+    use solidcraft_engine::geom::Vec3;
+    let solid_box = solidcraft_engine::kernel::box_solid(Vec3::ZERO, Vec3::new(10., 20., 30.)).unwrap();
+    let mesh = solid_box.tessellate(0.01).unwrap();
+    let mut doc = Document::default();
+    doc.add_feature(
+        FeatureKind::MeshImport {
+            file: "box.stl".into(),
+            meshes: vec![MeshData {
+                name: "Mesh".into(),
+                positions: mesh.positions.iter().flat_map(|p| [p.x, p.y, p.z]).collect(),
+                triangles: mesh.triangles.iter().flatten().copied().collect(),
+                color: None,
+            }],
+        },
+        Some("Imported mesh"),
+    )
+    .unwrap();
+    let mut app = SolveApp::new(Session::new(doc), Services::default());
+    let name = app.session.model.state().bodies[0].name.clone();
+    let item = find(&context_menu::items(&app, &Target::Body { name: name.clone() }), "Convert to Solid");
+    assert!(item.enabled);
+    context_menu::run_item(&mut app, &item, pos2(0.0, 0.0));
+    assert!(matches!(app.dialog.as_ref().map(|d| &d.kind), Some(crate::dialogs::Kind::MeshConvert { .. })));
+    assert_eq!(app.dialog.as_ref().unwrap().inputs[0].items, vec![solidcraft_engine::Sel::Body { name }]);
+    crate::dialogs::cancel(&mut app);
+    // A solid body has nothing to convert.
+    let solid = sample_app();
+    let b = body(&solid);
+    assert!(context_menu::items(&solid, &Target::Body { name: b }).iter().all(|i| i.label != "Convert to Solid"));
+}
+
+#[test]
 fn appearance_component_action_assigns_an_inherited_look() {
     let mut app = sample_app();
     let created = app.run("component.create", json!({"name": "Painted part"})).unwrap();
