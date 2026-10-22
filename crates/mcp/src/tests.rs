@@ -48,6 +48,46 @@ fn tool(s: &mut Server, name: &str, args: Value) -> Value {
     if c["type"] == "text" { serde_json::from_str(c["text"].as_str().unwrap()).unwrap_or(Value::Null) } else { c.clone() }
 }
 
+/// A large whitespace prefix must not evade the raw 16 MiB JSON-RPC line limit.
+#[test]
+fn whitespace_does_not_bypass_mcp_request_limit() {
+    let mut s = server();
+    let request = format!("{}{}", " ".repeat(solidcraft_engine::MAX_LINE), r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#);
+    let reply: Value = serde_json::from_str(&s.handle_line(&request).expect("size error")).unwrap();
+    assert_eq!(reply["error"]["code"], -32600, "{reply}");
+    assert!(reply["result"].is_null(), "oversized request must not execute: {reply}");
+}
+
+/// The transport must discard an oversized line in bounded space and resume on the next one.
+#[test]
+fn oversized_mcp_stdio_line_does_not_poison_the_next_request() {
+    let mut bytes = vec![b'X'; solidcraft_engine::MAX_LINE + 1];
+    bytes.extend_from_slice(b"\n{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"ping\"}\n");
+    let input = std::io::BufReader::with_capacity(64, std::io::Cursor::new(bytes));
+    let mut output = Vec::new();
+    server().serve(input, &mut output).unwrap();
+    let text = String::from_utf8(output).unwrap();
+    let replies: Vec<Value> = text.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+    assert_eq!(replies.len(), 2, "{text}");
+    assert_eq!(replies[0]["error"]["code"], -32600, "{}", replies[0]);
+    assert_eq!(replies[1]["id"], 2, "{}", replies[1]);
+    assert_eq!(replies[1]["result"], json!({}), "{}", replies[1]);
+}
+
+/// Preserve parse-error framing and accept an unterminated final line.
+#[test]
+fn mcp_stdio_recovers_after_invalid_utf8_and_accepts_eof() {
+    let input = b"\xff\n{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"ping\"}";
+    let mut output = Vec::new();
+    server().serve(std::io::Cursor::new(input), &mut output).unwrap();
+    let text = String::from_utf8(output).unwrap();
+    let replies: Vec<Value> = text.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+    assert_eq!(replies.len(), 2, "{text}");
+    assert_eq!(replies[0]["error"]["code"], -32700);
+    assert_eq!(replies[1]["id"], 3);
+    assert_eq!(replies[1]["result"], json!({}));
+}
+
 #[test]
 fn crash_reports_are_listed_and_read_without_changing_the_design() {
     let mut s = server();
