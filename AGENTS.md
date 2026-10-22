@@ -35,7 +35,9 @@ People trust SolidCraft with their designs; a crash loses their work. **This out
   method), the Windows-only `apps/solidcraft/src/native_crash.rs` (the exception filter that
   records crashes inside native code such as graphics drivers) and the Windows-only
   `apps/solidcraft/src/native_frame.rs` (the window procedure that answers the resize-border hit
-  test of the window without OS decorations).
+  test of the window without OS decorations). One more, accepted in #3236, is not FFI:
+  `crates/gpu-native/src/pipeline_cache.rs` (native only; wgpu marks seeding a pipeline cache
+  from disk `unsafe`), so that `solidcraft-gpu` keeps `forbid`.
 - **Errors are `Result<T, E>`** through the crate's error type and `?`. An unfinished feature
   returns an error ("not supported yet: …"); it never panics.
 - **Input-derived numbers are hostile** (command parameters, design files, control-channel

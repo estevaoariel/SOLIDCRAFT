@@ -9,6 +9,7 @@ license.workspace = true
 workspace = true
 
 [dependencies]
+robust = "1.2"
 solidcraft-geom = { workspace = true }
 solidcraft-render = { workspace = true }
 wgpu = { workspace = true }
@@ -20,8 +21,12 @@ serde = { workspace = true }
 pollster = { workspace = true }
 # Native backends, so tests and the CLI can open a device without a window.
 wgpu = { workspace = true, features = ["metal", "vulkan", "dx12", "gles"] }
+# The persistent pipeline cache (src/shader_cache.rs): wgpu's unsafe call, and the file checksum.
+solidcraft-gpu-native = { workspace = true }
+sha2 = { workspace = true }
 
 [dev-dependencies]
+image = { workspace = true }
 solidcraft-kernel = { workspace = true }
 # Headless pictures of real designs (capture tests).
 solidcraft-engine = { workspace = true }

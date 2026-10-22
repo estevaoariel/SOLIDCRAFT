@@ -4265,16 +4265,27 @@ dependencies = [
 name = "solidcraft-gpu"
 version = "0.19.0"
 dependencies = [
+ "image",
  "log",
  "naga",
  "pollster 0.4.0",
+ "robust",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "solidcraft-engine",
  "solidcraft-geom",
+ "solidcraft-gpu-native",
  "solidcraft-kernel",
  "solidcraft-render",
  "thiserror 2.0.21",
+ "wgpu",
+]
+
+[[package]]
+name = "solidcraft-gpu-native"
+version = "0.16.2"
+dependencies = [
  "wgpu",
 ]
 
