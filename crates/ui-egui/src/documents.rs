@@ -225,8 +225,8 @@ pub fn new_design(app: &mut SolveApp) {
     }
 }
 
-/// The tab strip's +: always a new tab, except over the blank design the start page covers
-/// (a launch), which New takes as [`new_design`] does.
+/// Create a new tab directly; the File view chooses units before using [`new_design`].
+/// An untouched blank launch design is reused.
 pub fn new_tab(app: &mut SolveApp) {
     if app.file_picker_busy() {
         return;
@@ -590,7 +590,7 @@ pub fn tabs(app: &mut SolveApp, ui: &mut egui::Ui, r: Rect, x0: f32, x1: f32) {
             d.remove::<(usize, egui::Pos2)>(menu_id);
         }
     });
-    // New design: a new tab showing the start page.
+    // Choose a new design, open or sample from the File view before creating a tab.
     let pr = Rect::from_center_size(pos2(x + 14.0, r.center().y), vec2(22.0, 22.0));
     let presp = ui.interact(pr, ui.id().with("doc_new"), Sense::click());
     if presp.hovered() {
@@ -604,8 +604,9 @@ pub fn tabs(app: &mut SolveApp, ui: &mut egui::Ui, r: Rect, x0: f32, x1: f32) {
     );
     // A file loading into the window keeps the tabs as they are (dragging still moves it).
     let idle = !app.file_load.busy();
-    if presp.on_hover_text("New Design (Ctrl+N)").clicked() && idle {
-        new_tab(app);
+    crate::scenario::publish_handle("tab:new", pr.center());
+    if presp.on_hover_text(app.tr("ui.start_page")).clicked() && idle {
+        app.home.show(app.session.revision);
     }
     match (shut, pick) {
         _ if !idle => {}
@@ -1013,10 +1014,9 @@ mod tests {
         assert!(active_is_blank(&a) && a.home.open);
     }
 
-    /// The tab strip's + opens a tab every time, an empty design's included; over the start
-    /// page's blank design (a launch) it uses that design.
+    /// Direct tab creation remains available, including reuse of an untouched launch design.
     #[test]
-    fn plus_opens_a_tab_every_time() {
+    fn direct_new_tab_reuses_the_launch_design_then_opens_a_tab_every_time() {
         let mut a = app();
         a.home.open = true;
         new_tab(&mut a);

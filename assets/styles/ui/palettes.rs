@@ -8,6 +8,35 @@ const fn icon_primary(rgb: [u8; 3]) -> Color32 {
 impl Tokens {
     pub const fn light() -> Tokens {
         Tokens {
+            file_dim: Color32::from_rgb(58, 70, 86),
+            file_recovery_well: Color32::from_rgb(247, 226, 184),
+            file_action_height: 32.0,
+            file_back_height: 40.0,
+            file_recovery_icon: 32.0,
+            file_grid_gap: 14.0,
+            file_background: Color32::from_rgb(247, 249, 251),
+            file_surface: Color32::WHITE,
+            file_border: Color32::from_rgb(224, 229, 236),
+            file_image_tint: Color32::WHITE,
+            file_rail: Color32::from_rgb(35, 110, 173),
+            file_rail_ink: Color32::WHITE,
+            file_rail_hover: Color32::from_rgb(43, 118, 180),
+            file_primary: Color32::from_rgb(227, 240, 251),
+            file_primary_ink: Color32::from_rgb(26, 80, 127),
+            file_primary_border: Color32::from_rgb(50, 139, 211),
+            file_recovery: Color32::from_rgb(255, 246, 229),
+            file_recovery_ink: Color32::from_rgb(122, 74, 5),
+            file_recovery_border: Color32::from_rgb(240, 210, 154),
+            file_nav_width: 248.0,
+            file_nav_height: 38.0,
+            file_tile_height: 84.0,
+            file_tile_icon: 44.0,
+            file_recent_height: 52.0,
+            file_sample_image_height: 84.0,
+            file_content_inset_x: 40.0,
+            file_content_inset_y: 32.0,
+            file_section_gap: 28.0,
+            font_start_title: 28.0,
             space_2: 2.0,
             space_3: 3.0,
             space_4: 4.0,
@@ -236,6 +265,19 @@ impl Tokens {
         t.sketch_mode_tint = 0.12;
         t.sketch_footer_icon_size = 15.0;
         t.font_section_tracking = 0.04;
+        t.file_dim = Color32::from_rgb(180, 187, 200);
+        t.file_recovery_well = Color32::from_rgb(92, 68, 32);
+        t.file_background = Color32::from_rgb(31, 35, 43);
+        t.file_surface = Color32::from_rgb(39, 43, 52);
+        t.file_border = Color32::from_rgb(63, 69, 82);
+        t.file_rail = Color32::from_rgb(30, 80, 128);
+        t.file_rail_hover = Color32::from_rgb(46, 99, 149);
+        t.file_primary = Color32::from_rgb(27, 48, 72);
+        t.file_primary_ink = Color32::from_rgb(156, 199, 245);
+        t.file_primary_border = Color32::from_rgb(58, 136, 238);
+        t.file_recovery = Color32::from_rgb(67, 51, 28);
+        t.file_recovery_ink = Color32::from_rgb(245, 204, 137);
+        t.file_recovery_border = Color32::from_rgb(115, 88, 43);
         t.app_bar = Color32::from_rgb(28, 31, 38);
         t.toolbar = Color32::from_rgb(39, 43, 52);
         t.panel = Color32::from_rgb(39, 43, 52);

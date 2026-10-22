@@ -857,9 +857,14 @@ pub fn apply(app: &mut SolveApp, ctx: &egui::Context) {
 /// Callers: a launch with no file, New on a design that is already empty, `file.new`, and the
 /// blank design left when the last tab closes. A design that already has features is unchanged.
 pub fn apply_new_design(app: &mut SolveApp) {
-    if app.session.doc.features.is_empty() && app.session.doc.units != app.preferences.default_units {
+    apply_new_design_units(app, &app.preferences.default_units.clone());
+}
+
+/// Explicit units for a new-design tile; the user's default preference stays unchanged.
+pub(crate) fn apply_new_design_units(app: &mut SolveApp, units: &str) {
+    if app.session.doc.features.is_empty() && app.session.doc.units != units {
         let saved = !app.session.is_dirty();
-        if app.session.execute("document.units", &json!({ "units": app.preferences.default_units })).is_ok() {
+        if app.session.execute("document.units", &json!({ "units": units })).is_ok() {
             app.session.undo.pop();
             if saved {
                 app.session.mark_saved();

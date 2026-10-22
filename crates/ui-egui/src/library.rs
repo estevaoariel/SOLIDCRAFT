@@ -796,13 +796,13 @@ mod tests {
     }
 
     #[test]
-    fn gear_is_available_before_selection_and_home_remains_original() {
+    fn gear_is_available_before_selection_and_home_remains_open() {
         let mut h = Harness::new();
         let selected = h.dir.to_string_lossy().into_owned();
         folder_picker(&mut h, Some(selected));
         h.app.home.open = true;
         h.frames(3);
-        assert!(h.widget("SolidCraft").is_some());
+        assert!(crate::scenario::rect_of("home:page").is_some());
         assert!(h.widget("Change CAD directory").is_some());
         h.step(&json!({"click":{"handle":"library:settings"}})).unwrap();
         crate::file_picker::tick(&mut h.app, &h.ctx);
@@ -810,7 +810,7 @@ mod tests {
         h.frames(3);
         assert_eq!(h.app.library.root.as_ref(), Some(&h.dir));
         assert!(h.app.home.open);
-        assert!(h.widget("SolidCraft").is_some());
+        assert!(crate::scenario::rect_of("home:page").is_some());
     }
 
     #[test]
@@ -1135,7 +1135,7 @@ mod tests {
         assert_eq!(h.app.library.root.as_ref(), Some(&h.dir));
         h.call("ui.resize", json!({"width":800,"height":600}));
         h.frames(3);
-        assert!(h.widget("SolidCraft").is_some());
+        assert!(crate::scenario::rect_of("home:page").is_some());
     }
     #[cfg(unix)]
     #[test]

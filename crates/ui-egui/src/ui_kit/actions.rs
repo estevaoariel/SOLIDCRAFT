@@ -263,23 +263,33 @@ fn button_row_surface<const N: usize>(ui: &mut Ui, key: &str, states: [bool; N],
     clicked
 }
 
-/// Secondary button variants preserve native sizing and enabled-button translation.
+/// Shared button variants preserve native sizing and enabled-button translation.
+#[derive(Clone, Copy)]
 pub enum Button {
     Normal,
+    Primary,
     Small,
     Enabled(bool),
+}
+
+fn button_widget(label: egui::WidgetText, options: Button) -> egui::Button<'static> {
+    let t = Tokens::get();
+    match options {
+        Button::Small => egui::Button::new(label).small(),
+        Button::Primary => {
+            let ink = if crate::theme::contrast_ratio(t.on_accent, t.form_primary) >= 4.5 { t.on_accent } else { t.tab_on_fill_dark };
+            egui::Button::new(label.color(ink)).fill(t.form_primary)
+        }
+        _ => egui::Button::new(label),
+    }
 }
 
 pub fn button(ui: &mut Ui, label: impl Into<egui::WidgetText>, options: Button) -> Response {
     let label = label.into();
     let key = label.text().to_owned();
-    let draw = |ui: &mut Ui, label| match options {
-        Button::Small => ui.small_button(label),
-        _ => ui.button(label),
-    };
     let response = match options {
-        Button::Enabled(enabled) => ui.add_enabled_ui(enabled, |ui| draw(ui, crate::i18n::tr_label(&key).into())).inner,
-        _ => draw(ui, label),
+        Button::Enabled(enabled) => ui.add_enabled_ui(enabled, |ui| ui.add(button_widget(crate::i18n::tr_label(&key).into(), options))).inner,
+        _ => ui.add(button_widget(label, options)),
     };
     pointer_on_hover(ui, &response);
     let key = if matches!(options, Button::Enabled(_)) { crate::i18n::tr_label(&key) } else { &key };
@@ -287,12 +297,34 @@ pub fn button(ui: &mut Ui, label: impl Into<egui::WidgetText>, options: Button) 
     response
 }
 
-/// Accent action outside the footer. Tokens: `accent, on_accent; scope tokens`.
+/// The same button at an existing rectangle, with stable identity and centred native text.
+/// Tokens: shared button colours; caller supplies its token-sized rectangle and optional typography.
+pub(crate) fn button_at(ui: &mut Ui, id: &str, rect: egui::Rect, label: impl Into<egui::WidgetText>, options: Button) -> Response {
+    let label = label.into();
+    let key = label.text().to_owned();
+    let response = ui
+        .scope_builder(
+            egui::UiBuilder::new().id_salt(id).max_rect(rect).layout(egui::Layout::centered_and_justified(egui::Direction::LeftToRight)),
+            |ui| {
+                super::scope(ui, |ui| {
+                    let draw = |ui: &mut Ui, label| ui.add_sized(rect.size(), button_widget(label, options));
+                    match options {
+                        Button::Enabled(enabled) => ui.add_enabled_ui(enabled, |ui| draw(ui, crate::i18n::tr_label(&key).into())).inner,
+                        _ => draw(ui, label),
+                    }
+                })
+            },
+        )
+        .inner;
+    pointer_on_hover(ui, &response);
+    publish_button(ui, &response, &key);
+    response
+}
+
+/// Accent action outside the footer, using the same shared button component.
 #[cfg(any(not(target_arch = "wasm32"), test))]
 pub(crate) fn primary_button(ui: &mut Ui, label: &str) -> Response {
-    let t = Tokens::get();
-    let response = ui.add(egui::Button::new(RichText::new(crate::i18n::tr_label(label)).color(t.on_accent)).fill(t.form_primary));
-    pointer_on_hover(ui, &response);
+    let response = button(ui, crate::i18n::tr_label(label), Button::Primary);
     scenario::publish_target(&format!("dialog:button:{label}"), response.rect);
     response
 }
