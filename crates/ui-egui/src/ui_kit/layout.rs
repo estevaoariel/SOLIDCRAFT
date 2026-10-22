@@ -156,7 +156,7 @@ pub(crate) fn figure_rows(
     let height = stack.max(row_height() * 4.0);
     let (rect, _) = ui.allocate_exact_size(vec2(width, height), egui::Sense::hover());
     let figure = egui::Rect::from_min_size(rect.min, vec2((t.form_label_width * 1.4).min(width * 0.45), height));
-    let left = (figure.right() + label_gap(width)).min(rect.right());
+    let left = (figure.right() + label_gap(ui, width)).min(rect.right());
     let focused = ui.ctx().memory(|m| m.focused()).and_then(|f| ui.ctx().read_response(f)).map(|r| r.rect);
     let mut enter = false;
     let mut top = rect.top() + (height - stack) / 2.0;
