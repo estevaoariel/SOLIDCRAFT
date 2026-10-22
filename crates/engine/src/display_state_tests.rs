@@ -1,4 +1,4 @@
-//! The display-state value (`crate::display_state`) and the commands that save, apply, rename and delete states.
+//! Isolate's layers and the display-state value (`crate::display_state`).
 
 use serde_json::json;
 
@@ -24,6 +24,10 @@ fn sorted(v: &[String]) -> Vec<String> {
     v
 }
 
+fn isolate(s: &mut Session, keep: &[&String]) -> serde_json::Value {
+    s.execute("display.isolate", &json!({"items": keep})).unwrap()
+}
+
 fn hide(s: &mut Session, names: &[&String]) {
     s.execute("browser.visibility", &json!({"items": names, "visible": false})).unwrap();
 }
@@ -41,6 +45,153 @@ fn snapshot_captures_applies_and_compares() {
     s.apply_visibility(&one);
     assert_eq!(hidden(&s), vec![n[0].clone()]);
     assert_eq!(s.capture_visibility(), one);
+}
+
+#[test]
+fn isolate_hides_the_rest_and_exit_restores_the_exact_prior_state() {
+    let (mut s, n) = session();
+    // Parts hidden by hand before the isolation, and a hidden sketch/origin item.
+    hide(&mut s, &[&n[1], &n[2]]);
+    s.visibility.hidden_origin.push("XY".into());
+    let before = s.visibility.clone();
+    let r = isolate(&mut s, &[&n[0], &n[1]]);
+    assert_eq!(r["level"], 1);
+    assert_eq!(s.isolation_depth(), 1);
+    // Everything but the selection is hidden (the selected, previously hidden part shows).
+    assert_eq!(hidden(&s), sorted(&n[2..]));
+    assert!(s.body_visible(&n[0]) && s.body_visible(&n[1]) && !s.body_visible(&n[2]));
+    s.execute("display.unisolate", &json!({})).unwrap();
+    assert_eq!(s.visibility, before);
+    assert_eq!(s.isolation_depth(), 0);
+    assert!(!s.body_visible(&n[1]) && !s.body_visible(&n[2]) && s.body_visible(&n[3]));
+}
+
+#[test]
+fn parts_hidden_by_hand_while_a_layer_is_active_belong_to_it() {
+    let (mut s, n) = session();
+    hide(&mut s, &[&n[5]]);
+    isolate(&mut s, &[&n[0], &n[1], &n[2]]);
+    // Hide one isolated part by hand, and show one that the layer hid.
+    hide(&mut s, &[&n[1]]);
+    s.execute("browser.visibility", &json!({"items": [&n[3]], "visible": true})).unwrap();
+    assert!(!s.body_visible(&n[1]) && s.body_visible(&n[3]));
+    s.execute("display.unisolate", &json!({})).unwrap();
+    // The hand-hidden part is visible again; n[3] is shown as before; n[5] stays hidden.
+    assert!(s.body_visible(&n[1]));
+    assert_eq!(hidden(&s), vec![n[5].clone()]);
+}
+
+#[test]
+fn layers_stack_and_leave_one_at_a_time_or_all_at_once() {
+    let (mut s, n) = session();
+    hide(&mut s, &[&n[7]]);
+    let base = s.visibility.clone();
+    assert_eq!(isolate(&mut s, &[&n[0], &n[1], &n[2], &n[3]])["level"], 1);
+    let first = s.visibility.clone();
+    hide(&mut s, &[&n[3]]);
+    let second_before = s.visibility.clone();
+    assert_eq!(isolate(&mut s, &[&n[0], &n[1]])["level"], 2);
+    assert_eq!(hidden(&s), sorted(&n[2..]));
+    assert_eq!(s.execute("display.unisolate", &json!({})).unwrap()["level"], 1);
+    assert_eq!(s.visibility, second_before);
+    assert_ne!(s.visibility, first, "the hand edit made in layer 1 is part of layer 1's state");
+    assert_eq!(s.execute("display.unisolate", &json!({})).unwrap()["level"], 0);
+    assert_eq!(s.visibility, base);
+    // All at once, from three levels.
+    isolate(&mut s, &[&n[0], &n[1], &n[2]]);
+    isolate(&mut s, &[&n[0], &n[1]]);
+    isolate(&mut s, &[&n[0]]);
+    assert_eq!(s.isolation_depth(), 3);
+    let r = s.execute("display.unisolate_all", &json!({})).unwrap();
+    assert_eq!((r["left"].as_bool(), r["level"].as_u64()), (Some(true), Some(0)));
+    assert_eq!(s.visibility, base);
+}
+
+#[test]
+fn nothing_to_isolate_or_to_leave_changes_nothing() {
+    let (mut s, n) = session();
+    hide(&mut s, &[&n[4]]);
+    let before = s.visibility.clone();
+    let rev = s.revision;
+    // An empty selection is a no-op, not a layer that hides everything.
+    assert_eq!(isolate(&mut s, &[])["isolated"], 0);
+    assert_eq!(s.execute("display.isolate", &json!({"paths": []})).unwrap()["isolated"], 0);
+    assert_eq!(s.isolation_depth(), 0);
+    assert_eq!(s.visibility, before);
+    // Leaving when not isolated is a no-op too.
+    assert_eq!(s.execute("display.unisolate", &json!({})).unwrap()["left"], false);
+    assert_eq!(s.execute("display.unisolate_all", &json!({})).unwrap()["left"], false);
+    assert_eq!(s.visibility, before);
+    assert_eq!(s.revision, rev);
+    // Unknown bodies and bad input are refused and leave no layer.
+    let bogus = "No such body".to_string();
+    assert!(s.execute("display.isolate", &json!({"items": [&n[0], &bogus]})).is_err());
+    assert!(s.execute("display.isolate", &json!({})).is_err());
+    assert!(s.execute("display.isolate", &json!({"items": [&n[0]], "paths": [[1]]})).is_err());
+    assert!(s.execute("display.isolate", &json!({"paths": [[999_999]]})).is_err());
+    assert_eq!(s.isolation_depth(), 0);
+    assert_eq!(s.visibility, before);
+}
+
+#[test]
+fn the_design_and_dirty_state_use_the_state_before_the_isolation() {
+    let (mut s, n) = session();
+    hide(&mut s, &[&n[5]]);
+    s.mark_saved();
+    assert!(!s.is_dirty());
+    isolate(&mut s, &[&n[0]]);
+    // Isolating is not a change to the design.
+    assert!(!s.is_dirty());
+    assert_eq!(s.design().visibility.hidden_bodies, vec![n[5].clone()]);
+    isolate(&mut s, &[&n[0], &n[1]]);
+    hide(&mut s, &[&n[0]]);
+    assert!(!s.is_dirty());
+    assert_eq!(s.design().visibility.hidden_bodies, vec![n[5].clone()]);
+    assert_eq!(*s.saved_view(), s.isolation[0].before.visibility);
+    // Saving while isolated saves the base; leaving afterwards is still clean.
+    s.mark_saved();
+    s.execute("display.unisolate_all", &json!({})).unwrap();
+    assert!(!s.is_dirty());
+    assert_eq!(s.design().visibility.hidden_bodies, vec![n[5].clone()]);
+    // A design that is not isolated and has nothing hidden writes no visibility.
+    s.execute("browser.visibility", &json!({"folder": "bodies", "visible": true})).unwrap();
+    assert!(s.is_dirty());
+    assert!(s.design().visibility.is_empty());
+}
+
+#[test]
+fn the_layers_follow_a_renamed_body_and_are_not_copied_to_previews() {
+    let (mut s, n) = session();
+    hide(&mut s, &[&n[5]]);
+    isolate(&mut s, &[&n[0]]);
+    s.execute("body.rename", &json!({"body": &n[5], "name": "Renamed"})).unwrap();
+    assert_eq!(s.isolation[0].before.visibility.hidden_bodies, vec!["Renamed".to_string()]);
+    let copy = s.scratch();
+    assert_eq!(copy.isolation_depth(), 0);
+    s.execute("display.unisolate", &json!({})).unwrap();
+    assert_eq!(s.visibility.hidden_bodies, vec!["Renamed".to_string()]);
+}
+
+#[test]
+fn isolating_placements_is_a_layer_and_browser_visibility_isolate_still_works() {
+    // Eight parts: two placed components.
+    let mut s = Session::new(generated_assembly(8));
+    let n: Vec<String> = s.world_state().bodies.iter().map(|b| b.name.clone()).collect();
+    hide(&mut s, &[&n[11]]);
+    let before = s.visibility.clone();
+    let occs: Vec<u64> = s.doc.occurrences.iter().map(|o| o.id).collect();
+    assert!(occs.len() >= 2);
+    let r = s.execute("browser.visibility", &json!({"paths": [[occs[0]]], "visible": true, "isolate": true})).unwrap();
+    assert_eq!(r["isolated"], json!([[occs[0]]]));
+    assert_eq!(s.isolation_depth(), 1);
+    assert!(s.visibility.hidden_occurrences.contains(&vec![occs[1]]));
+    let after_one = s.visibility.clone();
+    // The same again hides nothing more: no new layer, as that would pretend something happened.
+    assert!(s.execute("display.isolate", &json!({"paths": [[occs[0]]]})).is_err());
+    assert_eq!(s.isolation_depth(), 1);
+    assert_eq!(s.visibility, after_one);
+    s.execute("display.unisolate_all", &json!({})).unwrap();
+    assert_eq!(s.visibility, before);
 }
 
 #[test]
@@ -96,7 +247,7 @@ fn display_states_are_renamed_deleted_listed_and_undone() {
 }
 
 #[test]
-fn states_follow_renames_and_ignore_missing_bodies() {
+fn states_follow_renames_and_ignore_missing_bodies_and_apply_over_a_layer() {
     let (mut s, n) = session();
     hide(&mut s, &[&n[4]]);
     s.execute("display.save", &json!({"name": "S"})).unwrap();
@@ -107,6 +258,14 @@ fn states_follow_renames_and_ignore_missing_bodies() {
     s.execute("browser.visibility", &json!({"folder": "bodies", "visible": true})).unwrap();
     s.execute("display.apply", &json!({"state": "S"})).unwrap();
     assert!(!s.body_visible("Renamed") && s.body_visible(&n[0]));
+    // Applied while isolated, it belongs to the layer: leaving restores what was there before.
+    s.execute("browser.visibility", &json!({"folder": "bodies", "visible": true})).unwrap();
+    let before = s.visibility.clone();
+    isolate(&mut s, &[&n[0]]);
+    s.execute("display.apply", &json!({"state": "S"})).unwrap();
+    assert_eq!(s.isolation_depth(), 1);
+    s.execute("display.unisolate", &json!({})).unwrap();
+    assert_eq!(s.visibility, before);
 }
 
 #[test]

@@ -300,7 +300,7 @@ fn sel_sketch(app: &SolveApp) -> Option<u64> {
 }
 
 /// Bodies the selection touches (bodies, and the bodies of selected faces and edges).
-fn touched_bodies(app: &SolveApp) -> Vec<String> {
+pub(crate) fn touched_bodies(app: &SolveApp) -> Vec<String> {
     let mut v: Vec<String> = Vec::new();
     for s in &app.session.selection {
         let b = match s {
@@ -578,7 +578,11 @@ fn viewport_items(app: &SolveApp) -> Vec<Item> {
             || !app.session.visibility.hidden_sketches.is_empty()
             || !app.session.visibility.hidden_folders.is_empty();
         v.push(act("ui.showAll", "Show All", "eye").on(anything_hidden));
-        v.push(act("ui.showAll", "Unisolate", "eye").on(!app.session.visibility.hidden_bodies.is_empty()));
+        let isolated = app.session.isolation_depth();
+        v.push(act("ui.unisolate", "Exit Isolation", "eye").key("Ctrl+Shift+I").on(isolated > 0));
+        if isolated > 1 {
+            v.push(act("ui.unisolateAll", "Exit All Isolations", "eye").key("Ctrl+Alt+I"));
+        }
         v.push(display_states_item(app));
         v.push(Item::sep());
         v.push(cmd(app, "solid.extrude", "Extrude"));
@@ -628,7 +632,7 @@ fn body_items(app: &SolveApp, bodies: &[String], browser: bool) -> Vec<Item> {
         Item::sep(),
         act(if all_hidden { "ui.show" } else { "ui.hide" }, "Show/Hide", "eye").key("V").with(json!({ "bodies": names })),
         act("ui.lock", if locked { "Unlock" } else { "Lock" }, "ground").with(json!({ "bodies": names })),
-        act("ui.isolate", "Isolate", "body").with(json!({ "bodies": names })),
+        act("ui.isolate", "Isolate", "body").key("Ctrl+I").with(json!({ "bodies": names })),
     ];
     if one {
         let b = bodies.first().cloned().unwrap_or_default();
@@ -1037,8 +1041,12 @@ pub fn run_item(app: &mut SolveApp, item: &Item, at: Pos2) {
             app.ui.show_sketches = true;
         }
         "ui.isolate" => {
-            app.session.visibility.hidden_bodies =
-                app.session.world_state().bodies.iter().map(|b| b.name.clone()).filter(|b| !bodies.contains(b)).collect();
+            // A new layer; with nothing to isolate it does nothing.
+            if !bodies.is_empty()
+                && let Err(e) = app.run("display.isolate", json!({ "items": bodies }))
+            {
+                app.set_status(e, true);
+            }
         }
         "ui.displaySave" => crate::browser::save_display_state(app, None),
         "ui.displayUpdate" => {
@@ -1051,6 +1059,8 @@ pub fn run_item(app: &mut SolveApp, item: &Item, at: Pos2) {
                 crate::browser::apply_display_state(app, v);
             }
         }
+        "ui.unisolate" => drop(crate::isolation_banner::exit_one(app)),
+        "ui.unisolateAll" => drop(crate::isolation_banner::exit_all(app)),
         "ui.lock" => {
             let locked = bodies.iter().all(|b| app.ui.locked_bodies.contains(b));
             if locked {
@@ -1199,7 +1209,7 @@ pub fn run_item(app: &mut SolveApp, item: &Item, at: Pos2) {
             }
         }
         "ui.isolateOccurrence" => {
-            let _ = app.run("browser.visibility", json!({"visible": true, "paths": [p["path"]], "isolate": true}));
+            let _ = app.run("display.isolate", json!({"paths": [p["path"]]}));
         }
         "ui.canvasVisible" => drop(app.run("canvas.edit", p)),
         "ui.toolbarPin" | "ui.toolbarRemove" | "ui.toolbarReset" | "ui.toolbarCustomize" | "ui.shortcutPin" => {

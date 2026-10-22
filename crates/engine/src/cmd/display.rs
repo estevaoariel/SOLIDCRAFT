@@ -1,17 +1,27 @@
-//! Display state commands: save what is shown (and how it looks) under a name, apply, rename,
-//! delete and list them. They are saved with the design (see `crate::display_state`).
+//! Display commands: Isolate in layers, and display states. The layers are view state: never saved,
+//! not undo steps; the states are saved with the design (see `crate::display_state`).
 
 use serde_json::{Value, json};
 
 use super::CommandSpec;
 use solidcraft_doc::display_state::NamedDisplayState;
 
+use super::browser::keys;
 use crate::params::{bad, str_};
 use crate::{Result, Session};
 
 pub static COMMANDS: &[CommandSpec] = &[
+    CommandSpec::new("display.isolate", "Isolate", isolate).icon("eye").noundo().params(
+        "items?: [body names] (all other bodies are hidden), or paths?: [[occurrence ids]] (exact placements and what is under them). A new layer on top of any active one; an empty list does nothing. View state: not saved, not an undo step",
+    ),
+    CommandSpec::new("display.unisolate", "Exit Isolation", unisolate).icon("eye").noundo().params(
+        "none; leaves the top layer: what was shown before it comes back exactly, parts hidden by hand while it was active included. Does nothing when not isolated",
+    ),
+    CommandSpec::new("display.unisolate_all", "Exit All Isolations", unisolate_all).icon("eye").noundo().params(
+        "none; leaves every layer: the view from before the first isolation comes back exactly. Does nothing when not isolated",
+    ),
     CommandSpec::new("display.save", "New Display State", save).icon("list").params(
-        "name? (replaces the state of that name, keeping its place in the list). Saves what is shown now and how the bodies look (colours, appearances); the camera is not stored, Named Views do that",
+        "name? (replaces the state of that name, keeping its place in the list). Saves what is shown now and how the bodies look (colours, appearances); while isolated it saves the isolated view. The camera is not stored, Named Views do that",
     ),
     CommandSpec::new("display.apply", "Apply Display State", apply).icon("list").noundo().params(
         "state: name. Shows what the state shows (missing bodies are ignored, bodies added since are shown) and the looks it stored. The camera is not moved. View state: not an undo step",
@@ -20,6 +30,52 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("display.delete", "Delete Display State", delete).icon("delete").params("state: name"),
     CommandSpec::new("display.list", "List Display States", list).icon("list").noundo().doc_only(),
 ];
+
+fn isolate(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "display.isolate";
+    match (p.get("items"), p.get("paths")) {
+        (Some(_), Some(_)) => Err(bad(cmd, "give `items` or `paths`, not both")),
+        (Some(_), None) => {
+            let items = keys(p, "items", cmd)?;
+            if items.is_empty() {
+                return Ok(json!({"isolated": 0, "level": s.isolation_depth()}));
+            }
+            let level = s.isolate_bodies(&items)?;
+            Ok(json!({"isolated": items.len(), "level": level}))
+        }
+        (None, Some(value)) => {
+            let list = value.as_array().filter(|a| a.len() <= 10_000).ok_or_else(|| bad(cmd, "`paths` must list at most 10000 occurrence paths"))?;
+            if list.is_empty() {
+                return Ok(json!({"isolated": 0, "level": s.isolation_depth()}));
+            }
+            let paths: Vec<Vec<u64>> = list
+                .iter()
+                .map(|value| {
+                    let path = value
+                        .as_array()
+                        .filter(|a| !a.is_empty() && a.len() <= 64)
+                        .and_then(|a| a.iter().map(Value::as_u64).collect::<Option<Vec<_>>>())
+                        .ok_or_else(|| bad(cmd, "each path must list 1..64 occurrence ids"))?;
+                    s.occurrence_placement(&path).map_err(|e| bad(cmd, e.to_string()))?;
+                    Ok(path)
+                })
+                .collect::<Result<_>>()?;
+            let level = s.isolate_paths(&paths)?;
+            Ok(json!({"isolated": paths.len(), "level": level}))
+        }
+        (None, None) => Err(bad(cmd, "`items` or `paths` is required")),
+    }
+}
+
+fn unisolate(s: &mut Session, _p: &Value) -> Result<Value> {
+    let left = s.unisolate();
+    Ok(json!({"left": left, "level": s.isolation_depth()}))
+}
+
+fn unisolate_all(s: &mut Session, _p: &Value) -> Result<Value> {
+    let left = s.unisolate_all();
+    Ok(json!({"left": left, "level": s.isolation_depth()}))
+}
 
 fn state_index(s: &Session, p: &Value, cmd: &str) -> Result<usize> {
     let k = str_(p, "state").ok_or_else(|| bad(cmd, "`state` must be a display state name"))?;
@@ -56,7 +112,7 @@ fn apply(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(looks) = state.appearances.as_ref().filter(|a| **a != s.doc.appearances) {
         s.doc_mut().appearances = looks.clone();
     }
-    Ok(json!({ "state": state.name }))
+    Ok(json!({ "state": state.name, "level": s.isolation_depth() }))
 }
 
 fn rename(s: &mut Session, p: &Value) -> Result<Value> {

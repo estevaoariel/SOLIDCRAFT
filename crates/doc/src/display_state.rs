@@ -1,5 +1,6 @@
 //! A display state as a value: how the design is shown (what is hidden), captured, applied and
-//! compared. Named states saved with the design hold the same value, with the looks of the bodies.
+//! compared. A stack of these, each temporary and unnamed, is Isolate's layers
+//! (`Session::isolate_bodies`); named states saved with the design are the same value.
 
 use serde::{Deserialize, Serialize};
 

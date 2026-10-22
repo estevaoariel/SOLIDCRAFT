@@ -291,6 +291,9 @@ pub struct Session {
     /// What is hidden or shown in the view (`browser.visibility`): saved with the design, not an
     /// undo step. A design brings its saved visibility when it opens (`Session::new`).
     pub visibility: Visibility,
+    /// Isolate's layers (`display.isolate`): volatile view state, never saved. While there are
+    /// layers, `visibility` is the isolated view and `saved_view()` the state the file holds.
+    pub(crate) isolation: Vec<display_state::IsolationLayer>,
     /// The camera `view.apply` asked the view to use (view state, not saved). The desktop app
     /// moves its viewport there and takes it; headless renders keep using it until a standard
     /// view is chosen.
@@ -441,6 +444,7 @@ impl Session {
             next_checkpoint: 1,
             saved_visibility: visibility.clone(),
             visibility,
+            isolation: Vec::new(),
             camera: None,
             render_viewport: None,
             render_jobs: Default::default(),
@@ -474,11 +478,11 @@ impl Session {
 
     /// The design has changes not in its file: in the document, or in what is hidden.
     pub fn is_dirty(&self) -> bool {
-        (!Arc::ptr_eq(&self.doc, &self.saved) && *self.doc != *self.saved) || self.visibility != self.saved_visibility
+        (!Arc::ptr_eq(&self.doc, &self.saved) && *self.doc != *self.saved) || *self.saved_view() != self.saved_visibility
     }
     pub fn mark_saved(&mut self) {
         self.saved = self.doc.clone();
-        self.saved_visibility = self.visibility.clone();
+        self.saved_visibility = self.saved_view().clone();
     }
 
     pub fn render_backend(&self) -> render::BackendDescriptor {
@@ -533,11 +537,12 @@ impl Session {
 
     /// The design as a file holds it: the document with what is hidden in it.
     pub fn design(&self) -> std::borrow::Cow<'_, Document> {
-        if self.visibility.is_empty() {
+        let visibility = self.saved_view();
+        if visibility.is_empty() {
             return std::borrow::Cow::Borrowed(&*self.doc);
         }
         let mut doc = (*self.doc).clone();
-        doc.visibility = self.visibility.clone();
+        doc.visibility = visibility.clone();
         std::borrow::Cow::Owned(doc)
     }
     /// The design has changes not in its file (a recovered design).
@@ -973,6 +978,7 @@ impl Session {
             checkpoints: Vec::new(),
             next_checkpoint: 1,
             visibility: self.visibility.clone(),
+            isolation: Vec::new(),
             camera: self.camera,
             render_viewport: self.render_viewport.clone(),
             render_jobs: self.render_jobs.scratch(),
@@ -1203,6 +1209,8 @@ mod tests;
 mod thread_tests;
 #[cfg(test)]
 mod view_bounds_tests;
+#[cfg(test)]
+mod visibility_bench;
 #[cfg(test)]
 mod world_placement_cache_tests;
 

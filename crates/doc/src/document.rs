@@ -2548,6 +2548,10 @@ impl Visibility {
             self.hidden_bodies.push(name.to_string());
         }
     }
+    /// Hide every body of `all` except those in `keep` (the old Isolate).
+    pub fn hide_all_bodies_except(&mut self, all: impl IntoIterator<Item = String>, keep: &[String]) {
+        self.hidden_bodies = all.into_iter().filter(|b| !keep.contains(b)).collect();
+    }
     /// Hide or show one origin item or construction geometry (by name).
     pub fn set_origin_hidden(&mut self, name: &str, hidden: bool) {
         self.hidden_origin.retain(|x| x != name);

@@ -415,7 +415,7 @@ impl Harness {
             if let Some(id) = s.get("start").and_then(Value::as_str) {
                 self.call("ui.start", json!({ "command": id }))
             } else if let Some(k) = s.get("key").and_then(Value::as_str) {
-                self.call("ui.key", json!({"key": k, "shift": flag("shift"), "cmd": flag("cmd")}))
+                self.call("ui.key", json!({"key": k, "shift": flag("shift"), "cmd": flag("cmd"), "alt": flag("alt")}))
             } else if let Some(t) = s.get("text").and_then(Value::as_str) {
                 self.call("ui.text", json!({ "text": t }))
             } else if let Some(at) = s.get("click") {
