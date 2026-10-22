@@ -1780,7 +1780,7 @@
   "ui.space_mouse_kind_cap": "Návrat do středu",
   "ui.space_mouse_kind_question": "Jaký typ 3D myši to je?",
   "ui.space_mouse_kind_trackball": "Trackball",
-  "ui.space_mouse_looks_like_cap": "Hodnota zůstává, dokud ji držíte, jako u hlavice.",
+  "ui.space_mouse_looks_like_cap": "Hodnota zůstává, dokud ji držíte, jako u zařízení typu „Návrat do středu“.",
   "ui.space_mouse_looks_like_trackball": "Hodnota se vrací zpět, jakmile přestanete hýbat, jako u trackballu.",
   "ui.space_mouse_motion_rotation_x": "Rotace X",
   "ui.space_mouse_motion_rotation_y": "Rotace Y",

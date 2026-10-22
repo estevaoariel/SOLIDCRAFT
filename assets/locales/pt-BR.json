@@ -1780,7 +1780,7 @@
   "ui.space_mouse_kind_cap": "Retorno ao centro",
   "ui.space_mouse_kind_question": "Que tipo de mouse 3D é?",
   "ui.space_mouse_kind_trackball": "Trackball",
-  "ui.space_mouse_looks_like_cap": "O valor se mantém enquanto você segura, como em uma tampa.",
+  "ui.space_mouse_looks_like_cap": "O valor se mantém enquanto você segura, como em um dispositivo do tipo “Retorno ao centro”.",
   "ui.space_mouse_looks_like_trackball": "O valor volta assim que você para de mover, como em um trackball.",
   "ui.space_mouse_motion_rotation_x": "Rotação X",
   "ui.space_mouse_motion_rotation_y": "Rotação Y",

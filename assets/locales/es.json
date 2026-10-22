@@ -1780,7 +1780,7 @@
   "ui.space_mouse_kind_cap": "Retorno al centro",
   "ui.space_mouse_kind_question": "¿Qué tipo de ratón 3D es?",
   "ui.space_mouse_kind_trackball": "Trackball",
-  "ui.space_mouse_looks_like_cap": "La lectura se mantiene mientras sujetas, como en un capuchón.",
+  "ui.space_mouse_looks_like_cap": "La lectura se mantiene mientras sujetas, como en un dispositivo de tipo «Retorno al centro».",
   "ui.space_mouse_looks_like_trackball": "La lectura vuelve atrás en cuanto dejas de moverte, como en un trackball.",
   "ui.space_mouse_motion_rotation_x": "Rotación X",
   "ui.space_mouse_motion_rotation_y": "Rotación Y",

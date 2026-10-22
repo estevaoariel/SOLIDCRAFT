@@ -1779,7 +1779,7 @@
   "ui.space_mouse_kind_cap": "Merkeze dönüş",
   "ui.space_mouse_kind_question": "Ne tür bir 3B fare?",
   "ui.space_mouse_kind_trackball": "İztopu",
-  "ui.space_mouse_looks_like_cap": "Tuttuğunuz sürece değer yerinde kalıyor, başlıkta olduğu gibi.",
+  "ui.space_mouse_looks_like_cap": "Tuttuğunuz sürece değer yerinde kalıyor, “Merkeze dönüş” türü bir aygıttaki gibi.",
   "ui.space_mouse_looks_like_trackball": "Hareketi bırakır bırakmaz değer geri dönüyor, iztopunda olduğu gibi.",
   "ui.space_mouse_motion_rotation_x": "Dönme X",
   "ui.space_mouse_motion_rotation_y": "Dönme Y",

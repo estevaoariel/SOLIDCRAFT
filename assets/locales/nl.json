@@ -1765,7 +1765,7 @@
   "ui.space_mouse_not_calibrated": "Niet gekalibreerd",
   "ui.space_mouse_offer": "Je 3D-muis kalibreren verhelpt verwisselde of omgekeerde assen en stelt snelheid en gevoel in.",
   "ui.space_mouse_offer_never": "Niet meer tonen",
-  "ui.space_mouse_offer_swap": "Overschakelen naar Hidraw (direct stuurprogramma)",
+  "ui.space_mouse_offer_swap": "Naar Hidraw wisselen (direct)",
   "ui.space_mouse_reading": "Uitlezen",
   "ui.space_mouse_reset_view": "Weergave resetten",
   "ui.space_mouse_restore": "3D-muis standaardwaarden herstellen",

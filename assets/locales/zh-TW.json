@@ -1769,7 +1769,7 @@
   "ui.space_mouse_reading": "讀值",
   "ui.space_mouse_reset_view": "重設檢視",
   "ui.space_mouse_restore": "還原 3D 滑鼠預設值",
-  "ui.space_mouse_restore_ask": "要將驅動程式、速度、各軸的反向、速度與指派，以及圖片位置和是否顯示於 3D 檢視還原為預設值嗎？校正、按鈕對應和測試模型會保留。",
+  "ui.space_mouse_restore_ask": "要將驅動程式、速度、各軸的反向、速度與指定，以及圖片位置和是否顯示於 3D 檢視還原為預設值嗎？校準、按鈕對應和測試模型會保留。",
   "ui.space_mouse_step_lift": "向上提起搖桿帽，保持住，然後鬆開。",
   "ui.space_mouse_step_press": "向下按壓搖桿帽，保持住，然後鬆開。",
   "ui.space_mouse_step_pull": "把搖桿帽拉向自己，保持住，然後鬆開。",
