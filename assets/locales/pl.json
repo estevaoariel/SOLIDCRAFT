@@ -1809,7 +1809,7 @@
   "ui.space_mouse_reset_axes": "Przywróć przypisanie osi",
   "ui.space_mouse_reset_view": "Resetuj widok",
   "ui.space_mouse_restore": "Przywróć ustawienia myszy 3D",
-  "ui.space_mouse_restore_ask": "Przywrócić domyślne wartości sterownika, szybkości, odwrócenia, szybkości i przypisania każdej osi oraz położenia obrazka i tego, czy jest widoczny w widoku 3D? Kalibracja, przypisanie przycisków i model testowy zostaną zachowane.",
+  "ui.space_mouse_restore_ask": "Przywrócić domyślne ustawienia myszy 3D? Kalibracja i przypisanie przycisków zostają.",
   "ui.space_mouse_section": "Mysz 3D",
   "ui.space_mouse_show_in_view": "Pokazuj mysz 3D w widoku 3D",
   "ui.space_mouse_show_in_view_tip": "Obraz twojej myszy 3D w lewym dolnym rogu, który porusza się razem z nią.",

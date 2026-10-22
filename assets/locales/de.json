@@ -1813,7 +1813,7 @@
   "ui.space_mouse_reset_axes": "Achsenzuordnung zurücksetzen",
   "ui.space_mouse_reset_view": "Ansicht zurücksetzen",
   "ui.space_mouse_restore": "3D-Maus-Standardwerte wiederherstellen",
-  "ui.space_mouse_restore_ask": "Treiber, Geschwindigkeit, Umkehrung, Geschwindigkeit und Zuordnung jeder Achse sowie Position des Bildes und Anzeige in der 3D-Ansicht auf die Standardwerte zurücksetzen? Kalibrierung, Tastenbelegung und das Testmodell bleiben erhalten.",
+  "ui.space_mouse_restore_ask": "3D-Maus-Einstellungen auf die Standardwerte zurücksetzen? Kalibrierung und Tastenbelegung bleiben.",
   "ui.space_mouse_section": "3D-Maus",
   "ui.space_mouse_show_in_view": "3D-Maus in der 3D-Ansicht anzeigen",
   "ui.space_mouse_show_in_view_tip": "Ein Bild Ihrer 3D-Maus unten links, das sich mit ihr bewegt.",

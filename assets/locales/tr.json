@@ -1808,7 +1808,7 @@
   "ui.space_mouse_reset_axes": "Eksen atamasını sıfırla",
   "ui.space_mouse_reset_view": "Görünümü sıfırla",
   "ui.space_mouse_restore": "3D fare varsayılanlarını geri yükle",
-  "ui.space_mouse_restore_ask": "Sürücü, hız, her eksenin ters çevirme, hız ve atama ayarları ile resmin konumu ve 3B görünümde gösterilip gösterilmeyeceği varsayılanlara döndürülsün mü? Kalibrasyon, düğme eşlemesi ve test modeli korunur.",
+  "ui.space_mouse_restore_ask": "3D fare ayarları varsayılanlara döndürülsün mü? Kalibrasyon ve düğme eşlemesi korunur.",
   "ui.space_mouse_section": "3D fare",
   "ui.space_mouse_show_in_view": "3B fareyi 3B görünümde göster",
   "ui.space_mouse_show_in_view_tip": "Sol alt köşede, siz hareket ettirdikçe hareket eden bir 3B fare resmi.",

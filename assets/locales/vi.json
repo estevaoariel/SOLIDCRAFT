@@ -1809,7 +1809,7 @@
   "ui.space_mouse_reset_axes": "Đặt lại phép gán trục",
   "ui.space_mouse_reset_view": "Đặt lại khung nhìn",
   "ui.space_mouse_restore": "Khôi phục mặc định chuột 3D",
-  "ui.space_mouse_restore_ask": "Khôi phục mặc định cho trình điều khiển, tốc độ, đảo chiều, tốc độ và gán của từng trục, vị trí hình và việc hiển thị trong khung nhìn 3D? Hiệu chuẩn, gán nút và mô hình thử được giữ lại.",
+  "ui.space_mouse_restore_ask": "Đặt cài đặt chuột 3D về mặc định? Hiệu chuẩn và gán nút được giữ nguyên.",
   "ui.space_mouse_section": "Chuột 3D",
   "ui.space_mouse_show_in_view": "Hiện chuột 3D trong khung nhìn 3D",
   "ui.space_mouse_show_in_view_tip": "Hình chuột 3D của bạn ở góc dưới bên trái, chuyển động theo bạn.",

@@ -1815,7 +1815,7 @@
   "ui.space_mouse_reset_axes": "Réinitialiser l'attribution des axes",
   "ui.space_mouse_reset_view": "Réinitialiser la vue",
   "ui.space_mouse_restore": "Rétablir les réglages de la souris 3D",
-  "ui.space_mouse_restore_ask": "Rétablir les valeurs par défaut du pilote, de la vitesse, de l'inversion, de la vitesse et de l'assignation de chaque axe, ainsi que de la position de l'image et de son affichage dans la vue 3D ? Le calibrage, l'assignation des boutons et le modèle de test sont conservés.",
+  "ui.space_mouse_restore_ask": "Remettre les réglages de la souris 3D par défaut ? Votre calibrage et l'assignation des boutons sont conservés.",
   "ui.space_mouse_section": "Souris 3D",
   "ui.space_mouse_show_in_view": "Afficher la souris 3D dans la vue 3D",
   "ui.space_mouse_show_in_view_tip": "Une image de votre souris 3D dans le coin inférieur gauche, qui bouge quand vous la bougez.",

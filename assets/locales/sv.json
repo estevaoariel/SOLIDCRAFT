@@ -1780,7 +1780,7 @@
   "ui.space_mouse_reading": "Avläsning",
   "ui.space_mouse_reset_view": "Återställ vyn",
   "ui.space_mouse_restore": "Återställ 3D-musens standardvärden",
-  "ui.space_mouse_restore_ask": "Vill du återställa standardvärdena för drivrutin, hastighet, varje axels inversion, hastighet och tilldelning samt bildens placering och om den visas i 3D-vyn? Din kalibrering, knapptilldelning och testmodellen behålls.",
+  "ui.space_mouse_restore_ask": "Vill du återställa 3D-musens inställningar till standard? Din kalibrering och knapptilldelning behålls.",
   "ui.space_mouse_step_lift": "Lyft knappen uppåt, håll den och släpp sedan.",
   "ui.space_mouse_step_press": "Tryck ned knappen, håll den och släpp sedan.",
   "ui.space_mouse_step_pull": "Dra knappen mot dig, håll den och släpp sedan.",

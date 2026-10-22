@@ -1780,7 +1780,7 @@
   "ui.space_mouse_reading": "Pembacaan",
   "ui.space_mouse_reset_view": "Atur ulang tampilan",
   "ui.space_mouse_restore": "Pulihkan bawaan mouse 3D",
-  "ui.space_mouse_restore_ask": "Kembalikan ke bawaan: driver, kecepatan, pembalikan, kecepatan, dan penetapan tiap sumbu, serta posisi gambar dan apakah ditampilkan di tampilan 3D? Kalibrasi, pemetaan tombol, dan model uji tetap disimpan.",
+  "ui.space_mouse_restore_ask": "Kembalikan pengaturan mouse 3D ke bawaan? Kalibrasi dan pemetaan tombol tetap ada.",
   "ui.space_mouse_step_lift": "Angkat cap ke atas, tahan, lalu lepaskan.",
   "ui.space_mouse_step_press": "Tekan cap ke bawah, tahan, lalu lepaskan.",
   "ui.space_mouse_step_pull": "Tarik cap ke arah Anda, tahan, lalu lepaskan.",

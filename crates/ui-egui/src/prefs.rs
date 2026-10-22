@@ -1650,11 +1650,9 @@ fn space_mouse_section(app: &mut SolveApp, ui: &mut egui::Ui) {
             // Restore this section's settings (after asking); the calibration, the button mapping and the
             // test model are not touched.
             if app.space_mouse.restore_pending {
-                // The question names what is reset and what is kept, on its own line so that it wraps at
-                // any width; the buttons are under it.
-                ui_kit::row(ui, "", |ui| {
-                    ui_kit::text(ui, app.tr("ui.space_mouse_restore_ask"), ui_kit::Text::Note("space_mouse_restore_ask"));
-                });
+                // A short question on its own, not in a row (a row has one line's height and cut it off), so
+                // that it wraps to its whole height at any width; the buttons are under it.
+                ui_kit::text(ui, app.tr("ui.space_mouse_restore_ask"), ui_kit::Text::Note("space_mouse_restore_ask"));
                 ui_kit::row(ui, "", |ui| {
                     if ui_kit::button(ui, app.tr("ui.space_mouse_restore"), ui_kit::Button::Normal).clicked() {
                         restore_space_mouse_defaults(app);
@@ -2632,16 +2630,14 @@ mod tests {
         h
     }
 
-    /// The question says what goes back to its default and what stays, in every language.
+    /// The question is short, says what stays, and exists in every language.
     #[test]
-    fn the_restore_question_names_the_settings_it_resets_and_the_ones_it_keeps() {
+    fn the_restore_question_is_short_and_says_what_stays() {
         let english = crate::i18n::tr("ui.space_mouse_restore_ask");
-        for word in ["driver", "speed", "invert", "assignment", "position", "3D view", "calibration", "button mapping", "test model"] {
-            assert!(english.contains(word), "{word} is not named in: {english}");
-        }
+        assert_eq!(english, "Set the 3D mouse settings back to their defaults? Your calibration and button mapping stay.");
         for catalog in crate::i18n::LOCALES {
             let text = crate::i18n::Locale::for_language(catalog.id).text("ui.space_mouse_restore_ask");
-            assert!(text.chars().count() > 40 && text != "ui.space_mouse_restore_ask", "{}", catalog.id);
+            assert!(text.chars().count() > 20 && text.chars().count() < 140 && text != "ui.space_mouse_restore_ask", "{}", catalog.id);
         }
     }
 
@@ -2828,12 +2824,36 @@ mod tests {
             h.call("ui.resize", serde_json::json!({"width": 1600, "height": 4000}));
             crate::prefs::open_at(&mut h.app, 1);
             h.frames(6);
+            // The restore question is up, so its whole text can be checked too.
+            h.app.space_mouse.restore_pending = true;
             // The frame's language is only set while it runs, so the texts come from the catalog itself.
             let text = |key: &str| crate::i18n::Locale::for_language(catalog.id).text(key).to_string();
             let section = format!("dialog:section:{}", text("ui.space_mouse_section"));
             scroll_to_and_click(&mut h, &section);
             h.frames(30);
             let body = crate::scenario::rect_of("prefs:page_body").expect("the page body");
+            // The question: all of it is laid out (its box is as tall as its wrapped text needs) and the
+            // buttons start below it.
+            let question = text("ui.space_mouse_restore_ask");
+            match crate::scenario::rect_of("dialog:note:space_mouse_restore_ask") {
+                Some(note) => {
+                    let t = crate::theme::Tokens::get();
+                    let needed = h.ctx.fonts_mut(|fonts| {
+                        fonts.layout(question.clone(), egui::FontId::proportional(t.font_small), egui::Color32::WHITE, note.width()).size().y
+                    });
+                    if note.height() + 0.5 < needed {
+                        too_wide.push(format!("{} question is {:.0} px tall, its text needs {needed:.0}", catalog.id, note.height()));
+                    }
+                    if note.left() < body.left() - 0.5 || note.right() > body.right() + 0.5 {
+                        too_wide.push(format!("{} question {:.0}..{:.0} outside the page", catalog.id, note.left(), note.right()));
+                    }
+                    let cancel = crate::scenario::rect_of(&format!("dialog:button::{}", text("ui.cancel")));
+                    if cancel.is_some_and(|cancel| cancel.top() < note.bottom() - 0.5) {
+                        too_wide.push(format!("{} the buttons overlap the question", catalog.id));
+                    }
+                }
+                None => too_wide.push(format!("{} question not drawn", catalog.id)),
+            }
             for key in keys {
                 let label = text(key);
                 let Some(rect) = crate::scenario::rect_of(&format!("dialog:button::{label}")) else {

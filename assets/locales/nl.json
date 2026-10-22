@@ -1780,7 +1780,7 @@
   "ui.space_mouse_reading": "Uitlezen",
   "ui.space_mouse_reset_view": "Weergave resetten",
   "ui.space_mouse_restore": "3D-muis standaardwaarden herstellen",
-  "ui.space_mouse_restore_ask": "Stuurprogramma, snelheid, omkering, snelheid en toewijzing van elke as, en de positie van de afbeelding en of die in de 3D-weergave staat terugzetten naar de standaardwaarden? Je kalibratie, knoppentoewijzing en het testmodel blijven behouden.",
+  "ui.space_mouse_restore_ask": "De 3D-muisinstellingen terugzetten naar de standaardwaarden? Je kalibratie en knoppentoewijzing blijven staan.",
   "ui.space_mouse_step_lift": "Til de dop omhoog, houd vast en laat dan los.",
   "ui.space_mouse_step_press": "Druk de dop omlaag, houd vast en laat dan los.",
   "ui.space_mouse_step_pull": "Trek de dop naar u toe, houd vast en laat dan los.",

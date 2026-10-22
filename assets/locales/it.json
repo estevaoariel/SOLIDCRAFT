@@ -1812,7 +1812,7 @@
   "ui.space_mouse_reset_axes": "Ripristina assegnazione assi",
   "ui.space_mouse_reset_view": "Ripristina vista",
   "ui.space_mouse_restore": "Ripristina impostazioni mouse 3D",
-  "ui.space_mouse_restore_ask": "Ripristinare i valori predefiniti di driver, velocità, inversione, velocità e assegnazione di ogni asse, posizione dell'immagine e visualizzazione nella vista 3D? Calibrazione, assegnazione dei pulsanti e modello di prova vengono mantenuti.",
+  "ui.space_mouse_restore_ask": "Riportare le impostazioni del mouse 3D ai valori predefiniti? Calibrazione e assegnazione dei pulsanti restano.",
   "ui.space_mouse_section": "Mouse 3D",
   "ui.space_mouse_show_in_view": "Mostra il mouse 3D nella vista 3D",
   "ui.space_mouse_show_in_view_tip": "Un'immagine del tuo mouse 3D nell'angolo in basso a sinistra, che si muove quando lo muovi.",

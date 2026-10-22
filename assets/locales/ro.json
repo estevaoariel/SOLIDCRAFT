@@ -1780,7 +1780,7 @@
   "ui.space_mouse_reading": "Valoare citită",
   "ui.space_mouse_reset_view": "Resetează vizualizarea",
   "ui.space_mouse_restore": "Restaurează implicitele mouse-ului 3D",
-  "ui.space_mouse_restore_ask": "Restaurezi valorile implicite pentru driver, viteză, inversarea, viteza și atribuirea fiecărei axe, poziția imaginii și afișarea ei în vizualizarea 3D? Calibrarea, atribuirea butoanelor și modelul de test sunt păstrate.",
+  "ui.space_mouse_restore_ask": "Revii la valorile implicite ale setărilor mouse-ului 3D? Calibrarea și atribuirea butoanelor rămân.",
   "ui.space_mouse_step_lift": "Ridicați capacul în sus, țineți-l, apoi eliberați-l.",
   "ui.space_mouse_step_press": "Apăsați capacul în jos, țineți-l, apoi eliberați-l.",
   "ui.space_mouse_step_pull": "Trageți capacul spre dumneavoastră, țineți-l, apoi eliberați-l.",

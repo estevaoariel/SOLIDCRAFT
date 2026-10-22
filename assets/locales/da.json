@@ -1809,7 +1809,7 @@
   "ui.space_mouse_reset_axes": "Nulstil aksetildeling",
   "ui.space_mouse_reset_view": "Nulstil visning",
   "ui.space_mouse_restore": "Gendan 3D-musens standardværdier",
-  "ui.space_mouse_restore_ask": "Gendan standardværdierne for driver, hastighed, hver akses vending, hastighed og tildeling samt billedets placering og om det vises i 3D-visningen? Din kalibrering, knaptildeling og testmodellen beholdes.",
+  "ui.space_mouse_restore_ask": "Sæt 3D-musens indstillinger tilbage til standard? Din kalibrering og knaptildeling bliver.",
   "ui.space_mouse_section": "3D-mus",
   "ui.space_mouse_show_in_view": "Vis 3D-musen i 3D-visningen",
   "ui.space_mouse_show_in_view_tip": "Et billede af din 3D-mus i nederste venstre hjørne, der bevæger sig, når du bevæger den.",

@@ -1809,7 +1809,7 @@
   "ui.space_mouse_reset_axes": "Restablecer asignación de eixes",
   "ui.space_mouse_reset_view": "Restablecer vista",
   "ui.space_mouse_restore": "Restaurar valores do rato 3D",
-  "ui.space_mouse_restore_ask": "Restaurar aos valores predeterminados o controlador, a velocidade, a inversión, a velocidade e a asignación de cada eixe, e a posición da imaxe e se se mostra na vista 3D? A calibración, a asignación de botóns e o modelo de proba consérvanse.",
+  "ui.space_mouse_restore_ask": "Volver aos valores predeterminados da configuración do rato 3D? A calibración e a asignación de botóns consérvanse.",
   "ui.space_mouse_section": "Rato 3D",
   "ui.space_mouse_show_in_view": "Mostrar o rato 3D na vista 3D",
   "ui.space_mouse_show_in_view_tip": "Unha imaxe do teu rato 3D na esquina inferior esquerda que se move cando o moves.",
