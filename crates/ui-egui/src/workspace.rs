@@ -246,7 +246,7 @@ pub const SECTIONS: &[Section] = &[
     },
     // Sketch dimensions are driven by parameters, so they are one click away while sketching.
     Section { tab: "SKETCH", panel: "CONFIGURE", promoted: 2, ids: CONFIGURE },
-    Section { tab: "SKETCH", panel: "FINISH SKETCH", promoted: 1, ids: &["sketch.finish"] },
+    Section { tab: "SKETCH", panel: "FINISH SKETCH", promoted: 2, ids: &["sketch.finish", "sketch.cancel"] },
     // New Sketch leads the tab, as on MODEL: a sheet part starts from a sketch (#3250).
     Section { tab: "SHEET METAL", panel: "SKETCH", promoted: 1, ids: &["sketch.create"] },
     Section {
@@ -301,6 +301,7 @@ pub const RIBBON_LABELS: &[(&str, &str)] = &[
     ("sheet.export_dxf", "Export DXF"),
     ("sheet.flat_pattern", "Flat Pattern"),
     ("sheet.manage_rules", "Sheet Rules"),
+    ("sketch.cancel", "Cancel"),
     ("sketch.circle.center", "Circle"),
     ("sketch.constraint.coincident", "Coincident"),
     ("sketch.constraint.horizontal_vertical", "Horiz./Vert."),

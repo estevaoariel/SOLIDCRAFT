@@ -7,7 +7,7 @@ use solidcraft_sketch::{Analysis, Budget, ConstraintKind, CurveKind, Hold, Point
 
 use super::{CommandSpec, in_sketch};
 use crate::params::{bad, bool_, expr, num, req_vec2, str_, string_list, vec2, vec3};
-use crate::{EngineError, Result, Session};
+use crate::{EngineError, Result, Session, SketchEntry};
 
 #[path = "sketch_dimensioned.rs"]
 mod dimensioned;
@@ -32,6 +32,11 @@ pub static COMMANDS: &[CommandSpec] = &[
         .params("plane: XY|XZ|YZ | construction plane name or id | {origin?: [x,y,z] numbers in mm, default [0,0,0] (not an expression), x_dir, y_dir} | {face: [world x,y,z], body?: exact world body, index?: face index, path?: complete occurrence ids, fixed?: bool}; new face attachments require a unique certified source (a flat face of a sheet metal body attaches to its panel instead, in the flat pattern's coordinates), fixed:true explicitly freezes the selected plane; offset?: expr, flip?: bool | \"x\" | \"y\" (not on a face: sketch the plane from its other side, so the normal and the default extrude direction are reversed; a half turn about the plane's own x or y axis, true picks the one keeping the sketch's y axis upward; offset still moves along the unflipped normal), project_edges?: bool, name?"),
     CommandSpec::new("sketch.edit", "Edit Sketch", edit_sketch).noundo().icon("sketch").params("sketch: id or name"),
     CommandSpec::new("sketch.finish", "Finish Sketch", finish_sketch).at("SKETCH", "FINISH SKETCH").icon("finish").enabled(in_sketch).noundo(),
+    CommandSpec::new("sketch.cancel", "Cancel Sketch", cancel_sketch)
+        .at("SKETCH", "FINISH SKETCH")
+        .icon("sketch_cancel")
+        .enabled(in_sketch)
+        .params("Leaves the sketch without keeping what changed since it was created or opened for editing: the design goes back to how it was then (a new sketch is removed), as one step that Undo brings back. Refused when the undo history no longer leads back to that point (use Undo instead)"),
     CommandSpec::new("sketch.line", "Line", draw_line)
         .at("SKETCH", "CREATE")
         .icon("line")
@@ -718,6 +723,7 @@ pub(super) fn create_face_profile(s: &mut Session, p: &Value, body: &str, index:
 }
 
 fn create_sketch_with_plane(s: &mut Session, p: &Value, plane: PlaneRef, internal_body: Option<(&str, usize)>) -> Result<Value> {
+    let before = entry_point(s);
     if face::is_face(p) {
         face::capture_positions(s, &plane)?;
     }
@@ -735,6 +741,7 @@ fn create_sketch_with_plane(s: &mut Session, p: &Value, plane: PlaneRef, interna
         f.component = comp;
     }
     s.active_sketch = Some(id);
+    s.sketch_entry = Some(SketchEntry { sketch: id, ..before });
     let name = s.doc.feature(id).map(|f| f.name.clone()).unwrap_or_default();
     // Sketching on a face projects the face's edges (unless turned off).
     let face = p.get("plane").and_then(|v| v.get("face")).and_then(vec3);
@@ -785,13 +792,56 @@ fn edit_sketch(s: &mut Session, p: &Value) -> Result<Value> {
         s.active_component = component;
         s.active_occurrence_path = (!path.is_empty()).then_some(path);
     }
+    if s.active_sketch != Some(id) || s.sketch_entry.as_ref().is_none_or(|entry| entry.sketch != id) {
+        s.sketch_entry = Some(SketchEntry { sketch: id, ..entry_point(s) });
+    }
     s.active_sketch = Some(id);
     s.revision += 1;
     Ok(json!({"sketch": id, "name": name}))
 }
 
+/// The design and undo history as they are now, where a sketch is entered (its id set after).
+fn entry_point(s: &Session) -> SketchEntry {
+    SketchEntry { sketch: 0, doc: s.doc.clone(), undo_len: s.undo.len(), undo_top: s.undo.last().map(|snap| snap.doc.clone()) }
+}
+
+/// Cancel Sketch (#3838): the design as it was when the open sketch was entered. The entry is
+/// used only while the undo history still runs through it: the same steps before it, and every
+/// step since taken in this sketch. Otherwise the steps since can't be told apart from others,
+/// and Undo is the way back.
+fn cancel_sketch(s: &mut Session, _p: &Value) -> Result<Value> {
+    let cmd = "sketch.cancel";
+    let id = s.active_sketch.ok_or_else(|| bad(cmd, "no sketch is being edited"))?;
+    let entry = s.sketch_entry.clone().filter(|entry| entry.sketch == id);
+    let current = entry.filter(|entry| {
+        let top = entry.undo_len.checked_sub(1).and_then(|i| s.undo.get(i)).map(|snap| &snap.doc);
+        let same_before = s.undo.len() >= entry.undo_len
+            && match (top, &entry.undo_top) {
+                (Some(a), Some(b)) => std::sync::Arc::ptr_eq(a, b),
+                (None, None) => true,
+                _ => false,
+            };
+        // The step that created the sketch was taken before it was open: its state is the entry's.
+        let since = s.undo.get(entry.undo_len..).unwrap_or_default();
+        same_before
+            && since.iter().enumerate().all(|(i, snap)| snap.active_sketch == Some(id) || (i == 0 && std::sync::Arc::ptr_eq(&snap.doc, &entry.doc)))
+    });
+    let Some(entry) = current else {
+        return Err(bad(cmd, "the undo history no longer leads back to where this sketch was opened: use Undo to go back"));
+    };
+    let created = entry.doc.feature(id).is_none();
+    // As Undo does: the session evaluates the design it is given.
+    s.doc = entry.doc;
+    s.active_sketch = None;
+    s.sketch_entry = None;
+    s.selection.clear();
+    s.revision += 1;
+    Ok(json!({"sketch": id, "removed": created}))
+}
+
 fn finish_sketch(s: &mut Session, _p: &Value) -> Result<Value> {
     let id = s.active_sketch.take();
+    s.sketch_entry = None;
     s.revision += 1;
     let profiles = id.and_then(|i| s.model.state().sketch(i).map(|ss| ss.profiles.len())).unwrap_or(0);
     Ok(json!({"sketch": id, "profiles": profiles}))

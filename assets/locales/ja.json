@@ -692,6 +692,7 @@
   "cmd.sketch_auto_constrain_from_datum": "基準から自動拘束",
   "cmd.sketch_auto_project": "参照上のエッジを自動投影",
   "cmd.sketch_blend_curve": "ブレンド曲線",
+  "cmd.sketch_cancel": "スケッチをキャンセル",
   "cmd.sketch_chain": "チェーン",
   "cmd.sketch_chamfer_distance_angle": "距離と角度の面取り",
   "cmd.sketch_chamfer_equal_distance": "等距離面取り",

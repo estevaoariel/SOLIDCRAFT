@@ -692,6 +692,7 @@
   "cmd.sketch_auto_constrain_from_datum": "AutoConstrain from datum",
   "cmd.sketch_auto_project": "Auto-Project Edges on Reference",
   "cmd.sketch_blend_curve": "Blend Curve",
+  "cmd.sketch_cancel": "Cancel Sketch",
   "cmd.sketch_chain": "Chain",
   "cmd.sketch_chamfer_distance_angle": "Distance and Angle Chamfer",
   "cmd.sketch_chamfer_equal_distance": "Equal Distance Chamfer",

@@ -166,6 +166,16 @@ pub struct Snapshot {
     pub pending_moves: std::collections::BTreeMap<u64, solidcraft_doc::Mat>,
 }
 
+/// Where the open sketch was entered (`sketch.create`, `sketch.edit`): the design before it and
+/// the undo history then, so `sketch.cancel` can tell the entry still describes the history.
+#[derive(Clone)]
+pub(crate) struct SketchEntry {
+    pub(crate) sketch: u64,
+    pub(crate) doc: Arc<Document>,
+    pub(crate) undo_len: usize,
+    pub(crate) undo_top: Option<Arc<Document>>,
+}
+
 /// A copy of a session that evaluates commands ahead of it ([`Session::ahead`]).
 pub struct Ahead(Session);
 
@@ -237,6 +247,8 @@ pub struct Session {
     pub redo: Vec<Snapshot>,
     /// Sketch feature being edited (sketch mode).
     pub active_sketch: Option<u64>,
+    /// The design as it was when the open sketch was entered, for Cancel Sketch.
+    pub(crate) sketch_entry: Option<SketchEntry>,
     pub selection: Vec<Sel>,
     pub path: Option<String>,
     /// One-shot display-only notification during doc.open, before authoritative evaluation.
@@ -406,6 +418,7 @@ impl Session {
             undo: Vec::new(),
             redo: Vec::new(),
             active_sketch: None,
+            sketch_entry: None,
             selection: Vec::new(),
             path: None,
             open_preview: None,
@@ -937,6 +950,7 @@ impl Session {
             undo: Vec::new(),
             redo: Vec::new(),
             active_sketch: self.active_sketch,
+            sketch_entry: None,
             selection: self.selection.clone(),
             path: None,
             open_preview: None,

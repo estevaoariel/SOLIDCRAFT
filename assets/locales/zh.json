@@ -692,6 +692,7 @@
   "cmd.sketch_auto_constrain_from_datum": "基于基准自动约束",
   "cmd.sketch_auto_project": "自动投影边到参考",
   "cmd.sketch_blend_curve": "混合曲线",
+  "cmd.sketch_cancel": "取消草图",
   "cmd.sketch_chain": "连续链",
   "cmd.sketch_chamfer_distance_angle": "距离和角度倒角",
   "cmd.sketch_chamfer_equal_distance": "等距倒角",
