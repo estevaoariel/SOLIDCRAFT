@@ -114,7 +114,7 @@ pub(super) fn footer_with_left(
         egui::CornerRadius { nw: 0, ne: 0, sw: corners.sw.saturating_sub(1), se: corners.se.saturating_sub(1) },
         t.dialog_footer,
     );
-    ui.painter().hline(band.x_range(), band.top(), t.secondary_border(t.dialog_rule));
+    t.secondary_hline(ui.painter(), band.x_range(), band.top(), t.dialog_rule);
     scenario::publish_rect("dialog:footer", band);
     scenario::publish_count("dialog:ok:enabled", f64::from(ok_enabled && ui.is_enabled()));
     let inner = band.shrink2(vec2(t.space_12, t.space_10));
@@ -216,7 +216,7 @@ pub(crate) struct PairButton<'a> {
 /// Equal-width secondary actions with optional icons and selected state. Tokens: `form_button_height, control_*, selected_bg, hover, font_label, text, icon/fill, accent, sketch_footer_icon_size, space_4/6/10`.
 pub(crate) fn button_pair(ui: &mut egui::Ui, key: &str, states: [bool; 2], buttons: [PairButton<'_>; 2]) -> (bool, bool) {
     let t = Tokens::get();
-    ui.painter().hline(ui.max_rect().x_range(), ui.cursor().top(), t.secondary_border(t.dialog_rule));
+    t.secondary_hline(ui.painter(), ui.max_rect().x_range(), ui.cursor().top(), t.dialog_rule);
     let mut clicked = [false; 2];
     egui::Frame::NONE.inner_margin(egui::Margin::symmetric(t.space_10 as i8, t.space_6 as i8)).show(ui, |ui| {
         ui.horizontal(|ui| {

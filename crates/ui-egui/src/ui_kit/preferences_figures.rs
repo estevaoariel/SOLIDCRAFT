@@ -184,7 +184,7 @@ pub(crate) fn paint_layout(ui: &mut egui::Ui, state: super::preferences::LayoutP
     let size = vec2(super::metrics::dimension(ui.available_width()), t.space_24 * 7.0 + t.space_6);
     let (outer, _) = ui.allocate_exact_size(size, egui::Sense::hover());
     let p = ui.painter().with_clip_rect(outer);
-    p.rect(outer, t.radius_lg, t.control_fill, t.secondary_border(t.dialog_rule), egui::StrokeKind::Inside);
+    t.secondary_rect(&p, outer, t.radius_lg, t.control_fill, t.dialog_rule);
     let r = outer.shrink(t.space_8);
     let c = Canvas { rect: r };
     p.rect(r, t.control_radius, t.viewport_top, t.control_border_stroke(t.control_border), egui::StrokeKind::Inside);

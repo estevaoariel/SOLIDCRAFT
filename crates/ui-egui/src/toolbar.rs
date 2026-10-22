@@ -896,10 +896,7 @@ fn ribbon_tabs(app: &mut SolveApp, ui: &mut egui::Ui, row: Rect) {
             Stroke::new(2.0, panel_accent(&t, &app.ui.tab, "")),
         );
     } else {
-        ui.painter().line_segment(
-            [row.left_bottom() - vec2(0.0, 0.5), row.right_bottom() - vec2(0.0, 0.5)],
-            t.secondary_border(t.toolbar.lerp_to_gamma(t.border, 0.5)),
-        );
+        t.secondary_line(ui.painter(), [row.left_bottom() - vec2(0.0, 0.5), row.right_bottom() - vec2(0.0, 0.5)], t.toolbar.lerp_to_gamma(t.border, 0.5));
     }
 }
 
@@ -954,7 +951,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
             t.accent,
         );
         if !floating {
-            painter.line_segment([ws.right_top(), ws.right_bottom()], t.secondary_border(t.border));
+            t.secondary_line(&painter, [ws.right_top(), ws.right_bottom()], t.border);
         }
         let render = crate::render_workspace::active(app);
         let workspace_icon = if render { "ws_render" } else { "ws_design" };
@@ -1211,10 +1208,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
             if !collapsed && drawn > large.len() {
                 if !gallery.is_empty() {
                     // A quiet rule sets the grid apart from the large button before it.
-                    painter.line_segment(
-                        [pos2(button_x - 1.5, top + 8.0), pos2(button_x - 1.5, top + button_height.min(46.0))],
-                        t.secondary_border(t.toolbar.lerp_to_gamma(t.border, 0.5)),
-                    );
+                    t.secondary_line(&painter, [pos2(button_x - 1.5, top + 8.0), pos2(button_x - 1.5, top + button_height.min(46.0))], t.toolbar.lerp_to_gamma(t.border, 0.5));
                 }
                 for c in &gallery {
                     let index = crate::workspace::CONSTRAINT_GALLERY.iter().position(|id| *id == c.id).unwrap_or(0);

@@ -221,11 +221,7 @@ impl FileView {
         let t = Tokens::get();
         ui.add_space(t.space_10);
         let (rect, _) = ui.allocate_exact_size(vec2(dimension(ui.available_width()), 1.0), Sense::hover());
-        ui.painter().hline(
-            (rect.left() + t.space_12)..=(rect.right() - t.space_12).max(rect.left() + t.space_12),
-            rect.center().y,
-            t.secondary_border(t.file_rail_ink.gamma_multiply(0.25)),
-        );
+        t.secondary_hline(ui.painter(), (rect.left() + t.space_12)..=(rect.right() - t.space_12).max(rect.left() + t.space_12), rect.center().y, t.file_rail_ink.gamma_multiply(0.25));
         ui.add_space(t.space_10);
     }
 
@@ -432,7 +428,7 @@ fn recovery_panel(
     let border = if banner { t.file_recovery_border } else { t.file_border };
     egui::Frame::NONE
         .fill(fill)
-        .stroke(if banner { Stroke::new(1.0, border) } else { t.secondary_border(border) })
+        .stroke(if banner { Stroke::new(1.0, border) } else { t.tertiary_border(border) })
         .corner_radius(t.radius_xl)
         .inner_margin(egui::Margin::symmetric(t.space_16 as i8, t.space_12 as i8))
         .show(ui, |ui| {

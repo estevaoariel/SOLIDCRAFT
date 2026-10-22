@@ -59,7 +59,7 @@ fn header_impl(ui: &mut Ui, icon: &str, title: &str, collapsed: Option<&mut bool
     let title_response = ui.interact(title_rect, ui.make_persistent_id("title_text"), egui::Sense::hover());
     title_response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, ui.is_enabled(), title));
     scenario::publish_rect("dialog:header", rect);
-    ui.painter().hline(rect.x_range(), rect.bottom(), t.secondary_border(t.dialog_rule));
+    t.secondary_hline(ui.painter(), rect.x_range(), rect.bottom(), t.dialog_rule);
 }
 
 /// A bounded docked or floating card. Uses form_card_width and the caller's tokenised frame.
@@ -622,7 +622,7 @@ fn page_list_sized<S>(ui: &mut Ui, selected: &mut usize, pages: &[WindowPage<S>]
     let width = (t.form_label_width * 2.0 + t.space_24 * 2.0).min(body.width());
     let nav = egui::Rect::from_min_size(body.min, vec2(width, body.height()));
     ui.painter().rect_filled(nav, 0.0, t.dialog_footer);
-    ui.painter().vline(nav.right(), nav.y_range(), t.secondary_border(t.dialog_rule));
+    t.secondary_vline(ui.painter(), nav.right(), nav.y_range(), t.dialog_rule);
     scenario::publish_rect("dialog:pages", nav);
     *selected = (*selected).min(pages.len().saturating_sub(1));
     ui.scope_builder(egui::UiBuilder::new().max_rect(nav.shrink2(vec2(t.space_8, t.space_6))), |ui| {

@@ -40,7 +40,7 @@ pub(crate) fn status_header(ui: &mut egui::Ui, key: &str, name: &str, status: St
             crate::scenario::publish_count(&format!("{key}:constrained_fraction"), f64::from(fraction));
         })
         .response;
-    ui.painter().hline(ui.max_rect().x_range(), ui.cursor().top(), t.secondary_border(t.dialog_rule));
+    t.secondary_hline(ui.painter(), ui.max_rect().x_range(), ui.cursor().top(), t.dialog_rule);
     crate::scenario::publish_target(&format!("{key}:status_header"), response.rect);
     response
 }

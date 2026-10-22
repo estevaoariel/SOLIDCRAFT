@@ -97,7 +97,7 @@ pub(crate) fn settings_bindings(ui: &mut Ui, bindings: &[(&[&str], &str)]) {
     for (keys, action) in bindings {
         let width = super::metrics::dimension(ui.available_width());
         let (r, _) = ui.allocate_exact_size(vec2(width, t.control_height + t.space_2), Sense::hover());
-        ui.painter().hline(r.x_range(), r.bottom(), t.secondary_border(t.dialog_rule));
+        t.secondary_hline(ui.painter(), r.x_range(), r.bottom(), t.dialog_rule);
         let mut left = r.left();
         for key in *keys {
             let galley = ui.painter().layout_no_wrap((*key).into(), FontId::proportional(t.font_small), t.form_ink);

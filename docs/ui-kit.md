@@ -513,14 +513,13 @@ circular compass and native widget-owned tooltip content, does not acquire an in
 ```json
 "borders": {
   "primary": {"width": 2, "color": "#ffffff"},
-  "primary_inset": {"width": 0.75, "color": "#e5efff", "gap": 3},
-  "secondary": {"width": 1, "color": "#e5efff"},
+  "secondary": {"width": 1, "color": "#e5efff", "pattern": "dotted"},
   "tertiary": {"width": 1, "color": "#102748"},
   "control": {"width": 1, "color": "#a8c8ed"}
 }
 ```
 
-Those are Blueprint's settings. Every other existing theme retains its previous appearance.
+Those are Blueprint's settings: a single primary outline and dotted secondary rules. Secondary roles optionally accept `pattern`: `solid` (default) or `dotted`; this pattern follows horizontal/vertical rules and secondary content outlines. Other roles keep solid strokes. Every other existing theme retains its previous appearance.
 Missing roles preserve each surface's existing width and colour, including overrides in
 `colors`; exporting keeps omitted roles absent so reimport cannot flatten those legacy
 surface differences. Dark/Light and the Gruvbox families share border geometry.

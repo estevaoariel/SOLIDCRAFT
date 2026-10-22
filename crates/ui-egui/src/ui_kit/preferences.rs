@@ -296,7 +296,7 @@ fn paint_preference_figure(p: &egui::Painter, rect: Rect, figure: PreferenceFigu
         return;
     }
     p.rect_filled(rect, t.control_radius, t.viewport_top);
-    p.rect_stroke(rect, t.control_radius, t.secondary_border(t.dialog_rule), egui::StrokeKind::Inside);
+    t.secondary_rect(&p, rect, t.control_radius, egui::Color32::TRANSPARENT, t.dialog_rule);
     match figure {
         PreferenceFigure::Theme { .. } => {}
         PreferenceFigure::Quality(sides) => {
@@ -454,7 +454,7 @@ pub(crate) fn scale_specimen(ui: &mut Ui, scale: f32) {
     let t = Tokens::get();
     let scale = if scale.is_finite() { scale.clamp(0.5, 2.5) / ui.ctx().zoom_factor().max(0.5) } else { 1.0 };
     let (r, _) = ui.allocate_exact_size(vec2(dimension(ui.available_width()), t.space_24 * 4.0 + t.space_16), Sense::hover());
-    ui.painter().rect(r, t.radius_lg, t.control_fill, t.secondary_border(t.dialog_rule), egui::StrokeKind::Inside);
+    t.secondary_rect(ui.painter(), r, t.radius_lg, t.control_fill, t.dialog_rule);
     let p = ui.painter().with_clip_rect(r.shrink(t.space_8));
     let font = FontId::proportional(t.font_label * scale);
     p.text(
@@ -516,7 +516,7 @@ pub(crate) fn settings_inline_note(ui: &mut Ui, text: &str) {
 pub(crate) fn font_specimen(ui: &mut Ui, text: &str) {
     let t = Tokens::get();
     let (r, _) = ui.allocate_exact_size(vec2(dimension(ui.available_width()), t.control_height + t.space_10), Sense::hover());
-    ui.painter().rect(r, t.control_radius, t.control_fill, t.secondary_border(t.dialog_rule), egui::StrokeKind::Inside);
+    t.secondary_rect(ui.painter(), r, t.control_radius, t.control_fill, t.dialog_rule);
     paint_text(ui, r.shrink2(vec2(t.space_12, 0.0)), text, FontId::proportional(t.font_button), t.form_ink, false);
 }
 

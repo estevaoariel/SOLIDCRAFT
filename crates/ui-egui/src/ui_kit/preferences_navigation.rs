@@ -42,7 +42,7 @@ fn settings_gesture(ui: &mut Ui, keys: &[String], action: &str) {
     let width = dimension(ui.available_width());
     let (rect, response) = ui.allocate_exact_size(vec2(width, t.control_height + t.space_2), Sense::hover());
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, ui.is_enabled(), format!("{}: {action}", keys.join(" + "))));
-    ui.painter().hline(rect.x_range(), rect.bottom(), t.secondary_border(t.dialog_rule));
+    t.secondary_hline(ui.painter(), rect.x_range(), rect.bottom(), t.dialog_rule);
     let key_width = (t.form_label_width * 2.0 + t.space_24 + t.space_6).min(width * 0.57);
     let key_rect = Rect::from_min_size(rect.min, vec2(key_width, rect.height()));
     let p = ui.painter().with_clip_rect(key_rect);
@@ -107,7 +107,7 @@ pub(crate) fn settings_axis_row(
 ) {
     let t = Tokens::get();
     let (rect, _) = ui.allocate_exact_size(vec2(dimension(ui.available_width()), t.control_height + t.space_4), Sense::hover());
-    ui.painter().hline(rect.x_range(), rect.bottom(), t.secondary_border(t.dialog_rule));
+    t.secondary_hline(ui.painter(), rect.x_range(), rect.bottom(), t.dialog_rule);
     let [label_rect, live_rect, invert_rect, speed_rect, source_rect] = axis_columns(rect);
     paint_text(ui, label_rect, name, FontId::proportional(t.font_label), t.form_ink, false);
     ui.interact(label_rect, ui.id().with("axis_name"), Sense::hover()).on_hover_text(name);

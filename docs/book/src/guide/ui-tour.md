@@ -207,5 +207,5 @@ Theme files can also define `borders`: `primary` outer outlines, `secondary` maj
 rules, `tertiary` small dividers and independent `control` outlines. Each accepts a `width`
 from 0 to 4 UI points and a `color` in hex. Optional `primary_inset` adds a companion outline
 inside panel chrome, with a `gap` from 0 to 12 points. Missing settings keep existing borders.
-Blueprint uses white outer and section lines with dark minor dividers. Focus, selection and
+Blueprint uses a single white outer outline, dotted section lines and dark minor dividers. Secondary rules optionally accept `pattern: "dotted"`; the default is `solid`. Focus, selection and
 error outlines retain their semantic colours. See the UI-kit border hierarchy for the schema.

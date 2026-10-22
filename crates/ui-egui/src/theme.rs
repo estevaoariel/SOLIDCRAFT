@@ -41,6 +41,8 @@ pub enum BorderRole {
 pub struct Borders {
     pub primary: Option<Stroke>,
     pub secondary: Option<Stroke>,
+    /// Pattern for secondary section rules; solid preserves existing themes.
+    pub secondary_dotted: bool,
     pub tertiary: Option<Stroke>,
     pub control: Option<Stroke>,
     pub primary_inset: Option<InsetBorder>,
@@ -54,7 +56,7 @@ pub struct InsetBorder {
 }
 
 impl Borders {
-    pub const LEGACY: Self = Self { primary: None, secondary: None, tertiary: None, control: None, primary_inset: None };
+    pub const LEGACY: Self = Self { primary: None, secondary: None, secondary_dotted: false, tertiary: None, control: None, primary_inset: None };
 
     pub fn stroke(self, role: BorderRole, fallback: Stroke) -> Stroke {
         match role {
@@ -74,6 +76,60 @@ impl Tokens {
     pub fn secondary_border(&self, color: Color32) -> Stroke {
         self.borders.stroke(BorderRole::Secondary, Stroke::new(1.0, color))
     }
+    /// Secondary rules share a pattern as well as a stroke. Dot count is bounded for tiny widths.
+    fn secondary_dots(&self, painter: &egui::Painter, path: &[egui::Pos2], stroke: Stroke) {
+        if stroke.width <= 0.0 || path.iter().any(|p| !p.is_finite()) {
+            return;
+        }
+        let length: f32 = path.windows(2).map(|pair| pair.first().zip(pair.get(1)).map_or(0.0, |(a, b)| a.distance(*b))).sum();
+        if !length.is_finite() {
+            return;
+        }
+        let spacing = (stroke.width * 3.0).max(3.0).max(length / 4096.0);
+        painter.extend(egui::Shape::dotted_line(path, stroke.color, spacing, stroke.width * 0.5));
+    }
+
+    pub fn secondary_line(&self, painter: &egui::Painter, points: [egui::Pos2; 2], color: Color32) {
+        let stroke = self.secondary_border(color);
+        if self.borders.secondary_dotted {
+            self.secondary_dots(painter, &points, stroke);
+        } else {
+            painter.line_segment(points, stroke);
+        }
+    }
+
+    pub fn secondary_hline(&self, painter: &egui::Painter, range: impl Into<egui::emath::Rangef>, y: f32, color: Color32) {
+        let range = range.into();
+        self.secondary_line(painter, [egui::pos2(range.min, y), egui::pos2(range.max, y)], color);
+    }
+
+    pub fn secondary_vline(&self, painter: &egui::Painter, x: f32, range: impl Into<egui::emath::Rangef>, color: Color32) {
+        let range = range.into();
+        self.secondary_line(painter, [egui::pos2(x, range.min), egui::pos2(x, range.max)], color);
+    }
+
+    pub fn secondary_rect(&self, painter: &egui::Painter, rect: egui::Rect, radius: impl Into<egui::CornerRadius>, fill: Color32, color: Color32) {
+        let stroke = self.secondary_border(color);
+        let radius = radius.into();
+        if !self.borders.secondary_dotted {
+            painter.rect(rect, radius, fill, stroke, egui::StrokeKind::Inside);
+            return;
+        }
+        painter.rect_filled(rect, radius, fill);
+        let rect = rect.shrink(stroke.width * 0.5);
+        if !rect.is_finite() || !rect.is_positive() {
+            return;
+        }
+        let mut rounding: egui::epaint::CornerRadiusF32 = radius.into();
+        rounding -= stroke.width * 0.5;
+        let mut path = Vec::new();
+        egui::epaint::tessellator::path::rounded_rectangle(&mut path, rect, rounding);
+        if let Some(first) = path.first().copied() {
+            path.push(first);
+        }
+        self.secondary_dots(painter, &path, stroke);
+    }
+
     pub fn tertiary_border(&self, color: Color32) -> Stroke {
         self.borders.stroke(BorderRole::Tertiary, Stroke::new(1.0, color))
     }

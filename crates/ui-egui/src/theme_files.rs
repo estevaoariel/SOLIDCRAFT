@@ -124,7 +124,9 @@ pub(crate) fn parse_borders(values: &BTreeMap<String, Value>) -> Result<crate::t
     let mut borders = Borders::default();
     for (key, value) in values {
         let obj = value.as_object().ok_or_else(|| format!("`borders.{key}` must be an object"))?;
-        if obj.keys().any(|k| k != "color" && k != "width" && !(key == "primary_inset" && k == "gap")) {
+        if obj.keys().any(|k| {
+            k != "color" && k != "width" && !(key == "primary_inset" && k == "gap") && !(key == "secondary" && k == "pattern")
+        }) {
             return Err(format!("`borders.{key}` has an unknown setting"));
         }
         let number = |name: &str, max: f64| -> Result<f32, String> {
@@ -143,7 +145,15 @@ pub(crate) fn parse_borders(values: &BTreeMap<String, Value>) -> Result<crate::t
         let stroke = egui::Stroke::new(width, color);
         match key.as_str() {
             "primary" => borders.primary = Some(stroke),
-            "secondary" => borders.secondary = Some(stroke),
+            "secondary" => {
+                borders.secondary = Some(stroke);
+                borders.secondary_dotted = match obj.get("pattern") {
+                    None => false,
+                    Some(Value::String(pattern)) if pattern == "solid" => false,
+                    Some(Value::String(pattern)) if pattern == "dotted" => true,
+                    _ => return Err("`borders.secondary.pattern` must be solid or dotted".into()),
+                };
+            }
             "tertiary" => borders.tertiary = Some(stroke),
             "control" => borders.control = Some(stroke),
             "primary_inset" => borders.primary_inset = Some(InsetBorder { stroke, gap: number("gap", 12.0)? }),
@@ -384,6 +394,11 @@ pub fn export(name: &str, base: Base, t: &Tokens) -> Value {
             borders.insert(key.into(), json!({"width": stroke.width, "color": format_color(stroke.color)}));
         }
     }
+    if t.borders.secondary_dotted
+        && let Some(secondary) = borders.get_mut("secondary").and_then(Value::as_object_mut)
+    {
+        secondary.insert("pattern".into(), json!("dotted"));
+    }
     if let Some(inset) = t.borders.primary_inset {
         borders.insert("primary_inset".into(), json!({"width": inset.stroke.width, "color": format_color(inset.stroke.color), "gap": inset.gap}));
     }
@@ -465,7 +480,7 @@ mod tests {
     fn border_roles_roundtrip_on_either_base_and_preserve_legacy_defaults() {
         use crate::theme::{BorderRole, Borders};
         let settings = json!({
-            "primary":{"width":4,"color":"#ffffff"}, "secondary":{"width":1.5,"color":"#aabbcc"},
+            "primary":{"width":4,"color":"#ffffff"}, "secondary":{"width":1.5,"color":"#aabbcc","pattern":"dotted"},
             "tertiary":{"width":0,"color":"#00000000"}, "control":{"width":0.5,"color":"#123456"},
             "primary_inset":{"width":0.75,"color":"#ffffff80","gap":12}
         });
@@ -479,6 +494,7 @@ mod tests {
             let file = from_value(&json!({"format":FORMAT,"name":"New","base":base,"borders":settings})).unwrap();
             let t = resolve(&file);
             assert_eq!(t.primary_border(Color32::BLACK).width, 4.0);
+            assert!(t.borders.secondary_dotted);
             assert_eq!(t.tertiary_border(Color32::WHITE).width, 0.0);
             assert_eq!(t.control_border_stroke(Color32::WHITE).color, Color32::from_rgb(0x12, 0x34, 0x56));
             assert_eq!(resolve(&from_value(&export("New", file.base, &t)).unwrap()), t);

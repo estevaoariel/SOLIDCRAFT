@@ -162,7 +162,7 @@ impl CommandSearch {
         let galley = ui.painter().layout_no_wrap(label.to_owned(), FontId::monospace(t.font_small), t.form_dim);
         let size = galley.size() + vec2(padding, t.space_4);
         let r = Rect::from_min_size(pos2(right.x - size.x, right.y - size.y / 2.0), size);
-        ui.painter().rect(r, Self::inner_radius(), t.dialog_footer, t.secondary_border(t.dialog_rule), egui::StrokeKind::Inside);
+        t.secondary_rect(ui.painter(), r, Self::inner_radius(), t.dialog_footer, t.dialog_rule);
         ui.painter().galley(r.min + vec2(padding / 2.0, t.space_2), galley, t.form_dim);
         size.x
     }
@@ -235,7 +235,7 @@ impl CommandSearch {
         let r = Rect::from_min_max(start, pos2(start.x + width, ui.min_rect().bottom()));
         ui.painter()
             .set(background, egui::Shape::rect_filled(r, egui::CornerRadius { nw: 0, ne: 0, sw: t.radius_xl, se: t.radius_xl }, t.dialog_footer));
-        ui.painter().hline(r.x_range(), r.top(), t.secondary_border(t.dialog_rule));
+        t.secondary_hline(ui.painter(), r.x_range(), r.top(), t.dialog_rule);
         crate::scenario::publish_rect("ribbon:search_footer", r);
     }
 }

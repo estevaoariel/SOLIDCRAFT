@@ -51,7 +51,7 @@ pub(crate) fn assistant_header<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -
             ui.set_min_height(t.form_close_size);
             add(ui)
         });
-    ui.painter().hline(output.response.rect.x_range(), output.response.rect.bottom(), t.secondary_border(t.dialog_rule));
+    t.secondary_hline(ui.painter(), output.response.rect.x_range(), output.response.rect.bottom(), t.dialog_rule);
     output
 }
 
@@ -293,7 +293,7 @@ pub(crate) fn assistant_composer_footer<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui
         .corner_radius(egui::CornerRadius { nw: 0, ne: 0, sw: t.radius_xl.saturating_sub(1), se: t.radius_xl.saturating_sub(1) })
         .inner_margin(t.space_10)
         .show(ui, add);
-    ui.painter().hline(output.response.rect.x_range(), output.response.rect.top(), t.secondary_border(t.dialog_rule));
+    t.secondary_hline(ui.painter(), output.response.rect.x_range(), output.response.rect.top(), t.dialog_rule);
     output
 }
 

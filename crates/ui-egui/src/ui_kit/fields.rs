@@ -538,7 +538,7 @@ pub(crate) fn library_cell(ui: &mut Ui, id: egui::Id, value: &mut String, hint: 
         })
         .inner;
     let button = egui::Rect::from_min_max(egui::pos2(split, rect.top()), rect.max);
-    ui.painter().vline(split, rect.y_range(), t.secondary_border(t.dialog_rule));
+    t.secondary_vline(ui.painter(), split, rect.y_range(), t.dialog_rule);
     let library = super::icon_button_at(ui, button, "chevron", "Library");
     scenario::publish_handle("dialog:menu:Library", button.center());
     scenario::publish_rect("dialog:menu:Library", button);
