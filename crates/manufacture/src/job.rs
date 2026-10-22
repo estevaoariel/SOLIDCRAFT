@@ -127,7 +127,7 @@ pub struct CamJobInput {
     /// The setup name to process.
     pub setup: String,
     /// Validated manufacturing intent captured with the geometry. This contains the selected
-    /// setup and any machine/post profiles it references, so an external host never has to read
+    /// setup and any machine/post profiles it references, so the backend never has to read
     /// mutable document state after submission.
     pub settings: Arc<ManufactureSettings>,
     /// STEP export of the model at the moment of submission.
@@ -210,7 +210,7 @@ impl CamHandle {
     }
 
     /// Request cancellation. Transitions non-terminal jobs to [`CamPhase::Cancelling`] so that
-    /// the backend's [`CamBackend::pump`] can send the DELETE request and confirm cancellation
+    /// the backend's [`CamBackend::pump`] can finish teardown and confirm cancellation
     /// by calling [`Self::adapter_set_progress`] with [`CamPhase::Cancelled`].
     ///
     /// Callers that must archive the job immediately (e.g. `Jobs::submit` with replace) should
@@ -305,14 +305,13 @@ pub struct CamBackendDescriptor {
 // ── CamBackend trait ──────────────────────────────────────────────────────────
 
 /// A host that can execute CAM jobs. The engine calls this from a `&mut Session` but the
-/// trait is `Send + Sync + 'static` so implementations may own threads or HTTP clients.
+/// trait is `Send + Sync + 'static` so implementations may own worker threads.
 pub trait CamBackend: Send + Sync + 'static {
     fn submit(&self, id: CamJobId, input: CamJobInput) -> CamResult<CamHandle>;
     fn descriptor(&self) -> CamBackendDescriptor;
     fn is_available(&self) -> bool;
-    /// Drive any deferred async work (e.g. HTTP polling). Called from the UI tick at most
-    /// twice per second. The default implementation is a no-op; only network-backed
-    /// implementations need to override it.
+    /// Drive any deferred async work. Called from the UI tick at most twice per second.
+    /// The default is a no-op; in-process engines that compute on a worker should override it.
     fn pump(&self) {}
 }
 
