@@ -71,6 +71,7 @@ const USAGE: &str = "usage:
        --section: cut the model as inspect.section does, so the inside shows: z=27 (the plane through that world
          coordinate, keeping the smaller side), add ,flip to keep the other side, or XY, XZ, YZ, or its own JSON)
   solidcraft-cli render <script|design> --out image.png [--setup NAME] [--width W] [--height H] [--transparent] [--overwrite] [--timeout SECONDS]
+      [--progressive] [--samples N] [--max-depth N] [--seed N] [--exposure EV] [--lighting FILE.json] [--environment FILE.json] [--tone-map reinhard|aces_fitted]
   solidcraft-cli exec <command> [json-params]
   solidcraft-cli commands
   solidcraft-cli recipe <recipe.json>
