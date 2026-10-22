@@ -357,9 +357,9 @@ pub(crate) fn draw_row(ui: &mut egui::Ui, id: egui::Id, row: &Row) -> RowResp {
     let dragged_over = egui::DragAndDrop::has_any_payload(ui.ctx()) && ui.input(|i| i.pointer.hover_pos()).is_some_and(|p| r.contains(p));
     let mut out = RowResp { rect: Some(r), hovered: resp.hovered() || dragged_over, ..Default::default() };
     if row.selected {
-        ui.painter().rect_filled(r, 3.0, crate::theme::TabAccent::current(ui.ctx()).soft);
+        ui.painter().rect_filled(r, t.radius_sm.saturating_sub(1), crate::theme::TabAccent::current(ui.ctx()).soft);
     } else if resp.hovered() || row.mark == Mark::Here {
-        ui.painter().rect_filled(r, 3.0, t.hover);
+        ui.painter().rect_filled(r, t.radius_sm.saturating_sub(1), t.hover);
     }
     // A lit item (selected, or under the pointer in the 3D view): a bar down the left of its row,
     // and a fainter, thinner one on each row leading to it, so the bars trace its branch.
@@ -369,7 +369,7 @@ pub(crate) fn draw_row(ui: &mut egui::Ui, id: egui::Id, row: &Row) -> RowResp {
         Mark::Here => Some((3.0, t.accent)),
     };
     if let Some((w, colour)) = bar {
-        ui.painter().rect_filled(Rect::from_min_size(r.left_top() + vec2(0.0, 2.0), vec2(w, r.height() - 4.0)), 1.0, colour);
+        ui.painter().rect_filled(Rect::from_min_size(r.left_top() + vec2(0.0, 2.0), vec2(w, r.height() - 4.0)), t.radius_sm / 4, colour);
     }
     let mut x = r.left() + 2.0 + row.depth as f32 * INDENT;
     let cy = r.center().y;
@@ -809,7 +809,7 @@ fn browser_contents(app: &mut SolveApp, ui: &mut egui::Ui, acts: &mut Actions, c
     {
         return;
     }
-    ui.painter().hline(ui.max_rect().x_range(), ui.cursor().top() + 1.0, egui::Stroke::new(1.0, t.toolbar.lerp_to_gamma(t.border, 0.5)));
+    t.secondary_hline(ui.painter(), ui.max_rect().x_range(), ui.cursor().top() + 1.0, t.toolbar.lerp_to_gamma(t.border, 0.5));
     ui.add_space(t.space_3);
     if collapsible && !stacked {
         browser_rows_hugging(app, ui, acts);
@@ -2030,7 +2030,9 @@ fn drop_target(ui: &egui::Ui, resp: &egui::Response, accept: impl Fn(&Drag) -> b
         let r = resp.rect;
         match mark {
             DropMark::Above => ui.painter().hline(r.x_range(), r.top(), Stroke::new(2.0, t.accent)),
-            DropMark::Box => ui.painter().rect_stroke(r.shrink(0.5), 3.0, Stroke::new(1.5, t.accent), egui::StrokeKind::Inside),
+            DropMark::Box => {
+                ui.painter().rect_stroke(r.shrink(0.5), t.radius_sm.saturating_sub(1), Stroke::new(1.5, t.accent), egui::StrokeKind::Inside)
+            }
         };
     }
     // Taking a payload takes it whatever its type: leave other drags (appearance swatches) be.
@@ -2194,7 +2196,7 @@ pub fn dims_overlay(app: &SolveApp, ctx: &egui::Context) {
             }
             let Some(tc) = to(lay.text) else { continue };
             let r = Rect::from_center_size(tc, size);
-            painter.rect_filled(r, 2.0, tk.viewport_top.gamma_multiply(0.85));
+            painter.rect_filled(r, tk.radius_sm / 2, tk.viewport_top.gamma_multiply(0.85));
             painter.galley(r.min + vec2(3.0, 1.0), galley, col);
         }
     }

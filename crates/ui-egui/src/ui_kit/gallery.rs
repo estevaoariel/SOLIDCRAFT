@@ -1724,7 +1724,7 @@ fn confirm_radial_and_history_rows_keep_multitone_artwork() {
             assert!(colours.len() >= 2, "{surface}/{icon}/{kind}/{tab}, dark={dark}: opaque artwork is a silhouette");
             let resolved = crate::icon_svg::resolve(icon);
             assert!(!resolved.placeholder, "{icon} needs a master");
-            let look = crate::icon_svg::Look { dark, accent: ramp.and_then(crate::icon_svg::accent_index), vision: crate::theme::vision() };
+            let look = crate::icon_svg::Look::themed(dark, ramp.and_then(crate::icon_svg::accent_index), crate::theme::vision());
             let doc = crate::icon_svg::doc_for(resolved.master, side as u32).unwrap();
             let expected = if matches!(surface, "danger" | "danger_menu") {
                 crate::icon_svg::render_tinted(doc, look, side as u32)
