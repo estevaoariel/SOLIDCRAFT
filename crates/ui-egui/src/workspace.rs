@@ -261,8 +261,8 @@ pub const SECTIONS: &[Section] = &[
     Section { tab: "SHEET METAL", panel: "CONFIGURE", promoted: 2, ids: CONFIGURE },
     Section { tab: "RENDER", panel: "SCENE", promoted: 2, ids: &["render.scene"] },
     Section { tab: "RENDER", panel: "IMAGE", promoted: 1, ids: &["render.start"] },
-    // The Manufacture workspace: Setup fills in the stacked Setup PR; Measure + Section pinned.
-    Section { tab: "MANUFACTURE", panel: "SETUP", promoted: 1, ids: &[] },
+    // The Manufacture workspace: New Setup opens the WCS/stock dialog on this PR.
+    Section { tab: "MANUFACTURE", panel: "SETUP", promoted: 1, ids: &["manufacture.setup.new"] },
     Section {
         tab: "MANUFACTURE",
         panel: "INSPECT",
@@ -308,6 +308,7 @@ pub const RIBBON_LABELS: &[(&str, &str)] = &[
     ("inspect.zebra", "Zebra"),
     ("joint.as_built", "As-Built"),
     ("material.assign", "Material"),
+    ("manufacture.setup.new", "New Setup"),
     ("parameters.change", "Parameters"),
     ("parameters.graph", "Param. Graph"),
     ("parts.fastener", "Fastener"),

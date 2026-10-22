@@ -20,6 +20,12 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("settings")
         .doc_only()
         .params("name: setup name, set: object of fields to replace (stock, wcs, tools, operations, machine, post). Creates from defaults when absent, validates atomically, one undo step; identical edits are no-ops."),
+    CommandSpec::new("manufacture.setup.new", "New Setup", new_setup)
+        .icon("settings")
+        .noundo()
+        .doc_only()
+        .at("MANUFACTURE", "SETUP")
+        .params("Opens the New Setup dialog in the Manufacture workspace. Document writes go through manufacture.settings.set."),
 ];
 
 // ── Settings get ───────────────────────────────────────────────────────────────
@@ -92,6 +98,10 @@ fn set_settings(s: &mut Session, params: &Value) -> Result<Value> {
     Ok(reply)
 }
 
+fn new_setup(_s: &mut Session, _params: &Value) -> Result<Value> {
+    Ok(json!({"opened": true}))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,5 +147,13 @@ mod tests {
         let mut s = Session::default();
         let r = s.execute("manufacture.settings.set", &json!({"name": " bad", "set": {}}));
         assert!(r.is_err());
+    }
+
+    #[test]
+    fn setup_new_is_display_only() {
+        let mut s = Session::default();
+        let r = s.execute("manufacture.setup.new", &json!({})).unwrap();
+        assert_eq!(r["opened"], true);
+        assert!(s.doc.manufacture.setups.is_empty());
     }
 }

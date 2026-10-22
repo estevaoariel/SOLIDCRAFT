@@ -131,28 +131,19 @@ fn show_setup_dialog(app: &mut SolveApp, ui: &mut egui::Ui) {
         return;
     };
 
-    let machines: Vec<(String, String)> =
-        solidcraft_manufacture::machines::preset_machines().into_iter().map(|(id, m)| (id.to_string(), m.name.clone())).collect();
-    let posts: Vec<(String, String)> =
-        solidcraft_manufacture::post::preset_posts().into_iter().map(|(id, p)| (id.to_string(), p.name.clone())).collect();
+    let machines: Vec<(String, String)> = Vec::new();
+    let posts: Vec<(String, String)> = Vec::new();
 
     let title = if state.existing_name.is_some() { format!("SETUP : {}", state.name.to_uppercase()) } else { "SETUP".to_string() };
+    let title_owned = title.clone();
 
-    let mut open = true;
-    let mut commit = false;
-    let mut cancel = false;
     let mut draft = state.draft.clone();
     let mut name = state.name.clone();
     let mut tab = state.tab;
     let mut picking = state.picking;
 
-    crate::frame::window(ui.ctx(), title, crate::frame::Width::Normal)
-        .id(egui::Id::new("mfg_setup_dialog"))
-        .open(&mut open)
-        .collapsible(false)
-        .resizable(true)
-        .default_width(360.0)
-        .show(ui.ctx(), |ui| {
+    let (closed, action) =
+        crate::ui_kit::Window::new(egui::Id::new("mfg_setup_dialog"), "settings", &title_owned).fields().cards(1.2).show(ui.ctx(), true, |ui| {
             ui.horizontal(|ui| {
                 tab_btn(ui, &mut tab, SetupDialogTab::Setup, "Setup");
                 tab_btn(ui, &mut tab, SetupDialogTab::Stock, "Stock");
@@ -164,18 +155,9 @@ fn show_setup_dialog(app: &mut SolveApp, ui: &mut egui::Ui) {
                 SetupDialogTab::Stock => stock_tab(ui, &mut draft),
                 SetupDialogTab::PostProcess => post_tab(ui, &mut draft, &posts),
             });
-            ui.separator();
-            ui.horizontal(|ui| {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("OK").clicked() {
-                        commit = true;
-                    }
-                    if ui.button("Cancel").clicked() {
-                        cancel = true;
-                    }
-                });
-            });
         });
+    let commit = action == crate::ui_kit::Action::Ok;
+    let cancel = closed || action == crate::ui_kit::Action::Cancel;
 
     if picking {
         for body in selected_body_names(app) {
@@ -188,7 +170,7 @@ fn show_setup_dialog(app: &mut SolveApp, ui: &mut egui::Ui) {
     {
         apply_box_point_to_wcs(app, &mut draft);
     }
-    if !open || cancel {
+    if cancel {
         if state.picking {
             app.ui.pick_bodies = false;
         }
@@ -461,10 +443,16 @@ fn apply_box_point_to_wcs(app: &SolveApp, draft: &mut MfgSetup) {
 fn stock_box(draft: &MfgSetup, model: Option<([f64; 3], [f64; 3])>) -> ([f64; 3], [f64; 3]) {
     if let Some((min, max)) = model {
         return match &draft.stock {
-            Stock::RelativeBox { side_offset, top_offset, bottom_offset, .. } => (
-                [min[0] - side_offset, min[1] - side_offset, min[2] - bottom_offset],
-                [max[0] + side_offset, max[1] + side_offset, max[2] + top_offset],
-            ),
+            Stock::RelativeBox { side_offset, top_offset, bottom_offset, ground_at_model_origin, .. } => {
+                let mut lo = [min[0] - side_offset, min[1] - side_offset, min[2] - bottom_offset];
+                let mut hi = [max[0] + side_offset, max[1] + side_offset, max[2] + top_offset];
+                if *ground_at_model_origin {
+                    let height = hi[2] - lo[2];
+                    lo[2] = 0.0;
+                    hi[2] = height;
+                }
+                (lo, hi)
+            }
             Stock::RelativeCylinder { radial_offset, front_offset, back_offset, .. } => (
                 [min[0] - radial_offset, min[1] - radial_offset, min[2] - back_offset],
                 [max[0] + radial_offset, max[1] + radial_offset, max[2] + front_offset],
@@ -488,8 +476,14 @@ fn stock_tab(ui: &mut egui::Ui, draft: &mut MfgSetup) {
             draft.stock = Stock::Box { width: 100.0, depth: 100.0, height: 25.0 };
         }
         if ui.selectable_label(matches!(draft.stock, Stock::RelativeBox { .. }), "Relative size box").clicked() {
-            draft.stock =
-                Stock::RelativeBox { mode: StockOffsetMode::SidesAndTopBottom, side_offset: 2.0, top_offset: 1.0, bottom_offset: 0.0, round_up: 0.0 };
+            draft.stock = Stock::RelativeBox {
+                mode: StockOffsetMode::SidesAndTopBottom,
+                side_offset: 2.0,
+                top_offset: 1.0,
+                bottom_offset: 0.0,
+                round_up: 0.0,
+                ground_at_model_origin: false,
+            };
         }
         if ui.selectable_label(matches!(draft.stock, Stock::Cylinder { .. }), "Fixed size cylinder").clicked() {
             draft.stock = Stock::Cylinder { diameter: 50.0, height: 80.0 };
@@ -521,7 +515,7 @@ fn stock_tab(ui: &mut egui::Ui, draft: &mut MfgSetup) {
                 ui.add(egui::DragValue::new(height).speed(0.5).range(0.1..=10_000.0).suffix(" mm"));
             });
         }
-        Stock::RelativeBox { mode, side_offset, top_offset, bottom_offset, round_up } => {
+        Stock::RelativeBox { mode, side_offset, top_offset, bottom_offset, round_up, ground_at_model_origin } => {
             egui::ComboBox::from_id_salt("rel_box_mode").selected_text(mode.label()).show_ui(ui, |ui| {
                 for m in [StockOffsetMode::NoAdditional, StockOffsetMode::SidesAndTopBottom, StockOffsetMode::AllSides] {
                     if ui.selectable_label(*mode == m, m.label()).clicked() {
@@ -545,6 +539,7 @@ fn stock_tab(ui: &mut egui::Ui, draft: &mut MfgSetup) {
                 ui.label("Round up to nearest");
                 ui.add(egui::DragValue::new(round_up).speed(0.1).range(0.0..=50.0).suffix(" mm"));
             });
+            ui.checkbox(ground_at_model_origin, "Ground stock at model origin");
         }
         Stock::Cylinder { diameter, height } => {
             ui.horizontal(|ui| {
@@ -646,7 +641,7 @@ fn wcs_offset_hint(n: u32) -> &'static str {
     }
 }
 
-fn save_setup(app: &mut SolveApp, existing: Option<&str>, name: &str, draft: MfgSetup) -> bool {
+fn save_setup(app: &mut SolveApp, _existing: Option<&str>, name: &str, draft: MfgSetup) -> bool {
     let name = name.trim();
     if name.is_empty() {
         app.set_status("Setup name required", true);
@@ -655,18 +650,6 @@ fn save_setup(app: &mut SolveApp, existing: Option<&str>, name: &str, draft: Mfg
     if draft.model_bodies.is_empty() {
         app.set_status("Select the bodies for this setup. The setup has no work area until those bodies are chosen.", true);
         return false;
-    }
-
-    if existing.is_none() {
-        match app.run("manufacture.setup.new", json!({"name": name})) {
-            Ok(_) => {}
-            Err(e) => {
-                app.set_status(e, true);
-                return false;
-            }
-        }
-        let _ = app.run("manufacture.machines.ensure_presets", json!({}));
-        let _ = app.run("manufacture.posts.ensure_presets", json!({}));
     }
 
     let Ok(stock) = serde_json::to_value(&draft.stock) else {
@@ -744,21 +727,15 @@ fn show_menu_dialog(app: &mut SolveApp, ui: &mut egui::Ui) {
         SetupMenuDialog::MfgModel => "CREATE MANUFACTURING MODEL",
     };
 
-    let mut open = true;
-    let mut commit = false;
-    let mut cancel = false;
     let mut st = state.clone();
     let setup_names: Vec<String> = app.session.doc.manufacture.setups.keys().cloned().collect();
-    let posts: Vec<(String, String)> =
-        solidcraft_manufacture::post::preset_posts().into_iter().map(|(id, p)| (id.to_string(), p.name.clone())).collect();
+    let posts: Vec<(String, String)> = Vec::new();
+    let title_owned = title.to_string();
 
-    crate::frame::window(ui.ctx(), title, crate::frame::Width::Normal)
-        .id(egui::Id::new(("mfg_setup_menu", title)))
-        .open(&mut open)
-        .collapsible(false)
-        .resizable(true)
-        .default_width(340.0)
-        .show(ui.ctx(), |ui| {
+    let (closed, action) = crate::ui_kit::Window::new(egui::Id::new(("mfg_setup_menu", title)), "settings", &title_owned).fields().cards(1.1).show(
+        ui.ctx(),
+        true,
+        |ui| {
             egui::ScrollArea::vertical().max_height(400.0).show(ui, |ui| match st.kind {
                 SetupMenuDialog::NcProgram => {
                     ui.horizontal(|ui| {
@@ -864,12 +841,12 @@ fn show_menu_dialog(app: &mut SolveApp, ui: &mut egui::Ui) {
                         ui.label("WCS Offset");
                         ui.add(egui::DragValue::new(&mut st.probe_offset).speed(1).range(0..=99));
                     });
-                    ui.small("Uses the setup probe tool when present; generates Inspection Plus-style output via manufacture.probe.snippet.");
+                    ui.small("Uses the setup probe tool when present. Probe G-code snippets land in the probe PR.");
                 }
                 SetupMenuDialog::InsertData => {
                     ui.label("Import manufacturing data (tools, fixtures, templates) into this document.");
                     ui.text_edit_multiline(&mut st.insert_note);
-                    ui.small("Paste a note or reference path; full import pipelines land with companion sync.");
+                    ui.small("Paste a note or reference path; full import pipelines land in a follow-up PR.");
                 }
                 SetupMenuDialog::MfgModel => {
                     ui.horizontal(|ui| {
@@ -881,24 +858,14 @@ fn show_menu_dialog(app: &mut SolveApp, ui: &mut egui::Ui) {
                     ui.small("Manufacturing models isolate stock/fixture edits from the design model.");
                 }
             });
-            ui.separator();
-            ui.horizontal(|ui| {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("OK").clicked() {
-                        commit = true;
-                    }
-                    if ui.button("Cancel").clicked() {
-                        cancel = true;
-                    }
-                });
-            });
-        });
+        },
+    );
 
-    if !open || cancel {
+    if closed || action == crate::ui_kit::Action::Cancel {
         app.manufacture_workspace.menu_dialog = None;
         return;
     }
-    if commit && save_menu(app, &st) {
+    if action == crate::ui_kit::Action::Ok && save_menu(app, &st) {
         app.manufacture_workspace.menu_dialog = None;
         return;
     }
@@ -926,26 +893,8 @@ fn save_menu(app: &mut SolveApp, st: &MenuDialogState) -> bool {
         SetupMenuDialog::ManualNc => json!({"manual_nc": st.manual}),
         SetupMenuDialog::MfgModel => json!({"manufacturing_model": st.mfg_model}),
         SetupMenuDialog::ProbeWcs => {
-            match app.run(
-                "manufacture.probe.snippet",
-                json!({
-                    "cycle": "single_surface",
-                    "style": "haas",
-                    "work_offset_s": st.probe_offset,
-                    "z": 0.0,
-                    "overtravel_q": 0.25
-                }),
-            ) {
-                Ok(v) => {
-                    let gcode = v.get("gcode").and_then(|s| s.as_str()).unwrap_or("");
-                    app.set_status(format!("Probe WCS ready (offset {}): {}…", st.probe_offset, gcode.chars().take(48).collect::<String>()), false);
-                    return true;
-                }
-                Err(e) => {
-                    app.set_status(e, true);
-                    return false;
-                }
-            }
+            app.set_status("Probe WCS snippets land in the probe PR (#2626).".into(), true);
+            return false;
         }
         SetupMenuDialog::InsertData => {
             app.set_status(
@@ -959,24 +908,16 @@ fn save_menu(app: &mut SolveApp, st: &MenuDialogState) -> bool {
             return true;
         }
     };
-    match app.run("manufacture.containers.add", payload) {
-        Ok(_) => {
-            app.manufacture_workspace.revision = u64::MAX;
-            app.set_status(app.tr("manufacture.setup.container_added").to_string(), false);
-            true
-        }
-        Err(e) => {
-            app.set_status(e, true);
-            false
-        }
-    }
+    let _ = payload;
+    app.set_status("NC program, folder, pattern and manufacturing-model containers land in follow-up Manufacture PRs.".into(), true);
+    false
 }
 
 /// Draw WCS triad + stock box outline for the setup being edited, or for the setup selected in the browser.
 /// Origin pick points appear only while the setup dialog is open.
-pub fn paint_overlays(app: &SolveApp, ui: &egui::Ui) {
+pub fn paint_overlays(app: &SolveApp, painter: &egui::Painter, proj: &viewport::Proj) {
     if let Some(state) = &app.manufacture_workspace.setup_dialog {
-        paint_setup(app, ui, &state.draft, true);
+        paint_setup(app, painter, proj, &state.draft, true);
         return;
     }
     if !crate::manufacture_workspace::active(app) {
@@ -988,16 +929,10 @@ pub fn paint_overlays(app: &SolveApp, ui: &egui::Ui) {
     if setup.model_bodies.is_empty() {
         return;
     }
-    paint_setup(app, ui, setup, false);
+    paint_setup(app, painter, proj, setup, false);
 }
 
-fn paint_setup(app: &SolveApp, ui: &egui::Ui, setup: &MfgSetup, origin_picks: bool) {
-    let rect = match app.viewport.rect {
-        Some(r) if r.area() > 0.0 => r,
-        _ => return,
-    };
-    let proj = viewport::projection(app, rect);
-    let painter = ui.painter();
+fn paint_setup(app: &SolveApp, painter: &egui::Painter, proj: &viewport::Proj, setup: &MfgSetup, origin_picks: bool) {
     let wcs = &setup.wcs;
     let model = model_bounds(app, &setup.model_bodies);
     let (min, max) = stock_box(setup, model);
@@ -1048,7 +983,7 @@ fn paint_setup(app: &SolveApp, ui: &egui::Ui, setup: &MfgSetup, origin_picks: bo
     if !origin_picks {
         return;
     }
-    let hover = ui.input(|i| i.pointer.hover_pos());
+    let hover = painter.ctx().input(|i| i.pointer.hover_pos());
     let origin = setup.wcs.origin;
     for (_bp, world) in box_points(min, max) {
         let p = solidcraft_engine::geom::Vec3::new(world[0], world[1], world[2]);
