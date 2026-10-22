@@ -37,9 +37,9 @@ fn label(action: Action) -> &'static str {
 pub(super) fn context_menu(app: &mut SolveApp, ui: &egui::Ui, response: &egui::Response, entry: &Entry) {
     let keyboard = response.has_focus() && ui.input(|i| i.modifiers.shift && i.key_pressed(egui::Key::F10));
     if keyboard {
-        egui::Popup::open_id(ui.ctx(), egui::Popup::context_menu(response).get_id());
+        egui::Popup::open_id(ui.ctx(), crate::ui_kit::Container::new(ui.ctx(), crate::ui_kit::Surface::Popup).context_menu(response).get_id());
     }
-    response.context_menu(|ui| {
+    crate::ui_kit::Container::new(ui.ctx(), crate::ui_kit::Surface::Popup).context_menu(response).show(|ui| {
         for action in [Action::Open, Action::Insert, Action::Rename, Action::Move, Action::Copy, Action::Trash, Action::Reveal] {
             if entry.folder && action != Action::Open {
                 continue;
@@ -203,41 +203,44 @@ mod tests {
 
     #[test]
     fn thumbnail_context_menu_has_supported_actions_and_escape_closes_it() {
-        let mut h = Harness::new();
-        h.app.services.pick_folder = Some(Box::new(|| Box::pin(std::future::ready(None))));
-        let e = entry(&h);
-        h.app.library.set_root(h.dir.clone());
-        for _ in 0..200 {
-            h.app.library.poll(&h.ctx);
-            if !h.app.library.loading() {
-                break;
+        for mode in [crate::shell::LayoutMode::Floating, crate::shell::LayoutMode::Docked] {
+            let mut h = Harness::new();
+            h.call("ui.set", json!({"layout":mode}));
+            h.app.services.pick_folder = Some(Box::new(|| Box::pin(std::future::ready(None))));
+            let e = entry(&h);
+            h.app.library.set_root(h.dir.clone());
+            for _ in 0..200 {
+                h.app.library.poll(&h.ctx);
+                if !h.app.library.loading() {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
             }
-            std::thread::sleep(std::time::Duration::from_millis(5));
+            h.frames(3);
+            h.step(&json!({"click":{"handle":"library:entry:0"},"button":"right"})).unwrap();
+            h.frames(2);
+            for label in ["Open", "Insert into Current Design", "Rename", "Move", "Copy", "Move to Trash"] {
+                assert!(h.widget(label).is_some(), "{label}");
+            }
+            h.step(&json!({"key":"Escape"})).unwrap();
+            h.frames(2);
+            assert!(h.widget("Insert into Current Design").is_none());
+            assert!(e.path.exists());
+            h.app.home.open = true;
+            h.frames(2);
+            h.step(&json!({"click":{"handle":"library:entry:0"},"button":"right"})).unwrap();
+            h.frames(2);
+            h.step(&json!({"widget":"Rename"})).unwrap();
+            h.frames(2);
+            assert!(h.app.library.action_dialog.is_some());
+            assert!(h.app.home.open, "Rename must not also open the thumbnail underneath its menu");
+            assert!(!h.app.file_load.busy());
+            assert!(h.app.session.path.is_none());
+            h.step(&json!({"key":"Escape"})).unwrap();
+            h.frames(2);
+            assert!(h.app.library.action_dialog.is_none());
+            assert!(e.path.exists());
         }
-        h.frames(3);
-        h.step(&json!({"click":{"handle":"library:entry:0"},"button":"right"})).unwrap();
-        h.frames(2);
-        for label in ["Open", "Insert into Current Design", "Rename", "Move", "Copy", "Move to Trash"] {
-            assert!(h.widget(label).is_some(), "{label}");
-        }
-        h.step(&json!({"key":"Escape"})).unwrap();
-        h.frames(2);
-        assert!(h.widget("Insert into Current Design").is_none());
-        assert!(e.path.exists());
-        h.app.home.open = true;
-        h.frames(2);
-        h.step(&json!({"click":{"handle":"library:entry:0"},"button":"right"})).unwrap();
-        h.frames(2);
-        h.step(&json!({"widget":"Rename"})).unwrap();
-        h.frames(2);
-        assert!(h.app.library.action_dialog.is_some());
-        assert!(h.app.home.open, "Rename must not also open the thumbnail underneath its menu");
-        assert!(!h.app.file_load.busy());
-        assert!(h.app.session.path.is_none());
-        h.step(&json!({"key":"Escape"})).unwrap();
-        h.frames(2);
-        assert!(h.app.library.action_dialog.is_none());
-        assert!(e.path.exists());
     }
 
     #[test]

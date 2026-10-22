@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{Value, json};
 
 use crate::SolveApp;
+use crate::ui_kit::{Container, Edge, Surface};
 
 #[path = "library_actions.rs"]
 mod actions;
@@ -340,43 +341,48 @@ fn rows(app: &mut SolveApp, ui: &mut egui::Ui) -> Option<Entry> {
 /// Keep import shortcuts fixed below the scrolling cards, level with the timeline.
 fn insert_footer(app: &mut SolveApp, ui: &mut egui::Ui) {
     let t = crate::theme::Tokens::get();
-    let gap = crate::shell::SHELL_GAP;
-    egui::Panel::bottom("sc_library_insert").exact_size(40.0 + gap * 2.0).show_separator_line(false).frame(egui::Frame::NONE).show(ui, |ui| {
-        let card = crate::timeline::floating_rect(ui.max_rect()).shrink2(egui::vec2(t.space_4, 0.0));
-        ui.painter().add(crate::frame::shell_card(t.timeline).paint(card));
-        crate::scenario::publish_rect("library:import_card", card);
-        let mut controls = ui.new_child(egui::UiBuilder::new().id_salt("library_import_card").max_rect(card));
-        controls.set_clip_rect(card);
-        let ui = &mut controls;
-        let enabled = app.services.pick_open.is_some() && !app.file_picker_busy() && !app.file_load.busy();
-        let [step, iges, mesh] = ui
-            .add_enabled_ui(enabled, |ui| {
-                crate::ui_kit::button_row_in_card(
-                    ui,
-                    "library",
-                    [
-                        crate::ui_kit::PairButton { key: "insert_step", label: "STEP", icon: Some("insert_step") },
-                        crate::ui_kit::PairButton { key: "insert_iges", label: "IGES", icon: Some("insert_step") },
-                        crate::ui_kit::PairButton { key: "insert_mesh", label: "Mesh", icon: Some("insert_mesh") },
-                    ],
-                )
-            })
-            .inner;
-        for (clicked, command, extensions) in [
-            (step, "file.insert_step", &["step", "stp"][..]),
-            (iges, "file.insert_step", &["igs", "iges"][..]),
-            (mesh, "file.insert_mesh", &["3mf", "stl", "obj", "glb", "gltf"][..]),
-        ] {
-            if clicked && solidcraft_engine::find_command(command).is_some_and(|spec| spec.info(&app.session).enabled) {
-                app.home.open = false;
-                app.pick_open_for(extensions, |app, path| {
-                    if let Some(path) = path {
-                        app.insert_path_async(&path);
-                    }
-                });
+    let container = Container::new(ui.ctx(), Surface::Panel);
+    let gap = container.gap();
+    container.edge("sc_library_insert", Edge::Bottom).exact_size(40.0 + gap * 2.0).show_separator_line(false).frame(egui::Frame::NONE).show(
+        ui,
+        |ui| {
+            let card =
+                if container.floating() { crate::timeline::floating_rect(ui.max_rect()).shrink2(egui::vec2(t.space_4, 0.0)) } else { ui.max_rect() };
+            ui.painter().add(container.frame(ui.ctx(), t.timeline, crate::frame::Side::Left).paint(card));
+            crate::scenario::publish_rect("library:import_card", card);
+            let mut controls = ui.new_child(egui::UiBuilder::new().id_salt("library_import_card").max_rect(card));
+            controls.set_clip_rect(card);
+            let ui = &mut controls;
+            let enabled = app.services.pick_open.is_some() && !app.file_picker_busy() && !app.file_load.busy();
+            let [step, iges, mesh] = ui
+                .add_enabled_ui(enabled, |ui| {
+                    crate::ui_kit::button_row_in_card(
+                        ui,
+                        "library",
+                        [
+                            crate::ui_kit::PairButton { key: "insert_step", label: "STEP", icon: Some("insert_step") },
+                            crate::ui_kit::PairButton { key: "insert_iges", label: "IGES", icon: Some("insert_step") },
+                            crate::ui_kit::PairButton { key: "insert_mesh", label: "Mesh", icon: Some("insert_mesh") },
+                        ],
+                    )
+                })
+                .inner;
+            for (clicked, command, extensions) in [
+                (step, "file.insert_step", &["step", "stp"][..]),
+                (iges, "file.insert_step", &["igs", "iges"][..]),
+                (mesh, "file.insert_mesh", &["3mf", "stl", "obj", "glb", "gltf"][..]),
+            ] {
+                if clicked && solidcraft_engine::find_command(command).is_some_and(|spec| spec.info(&app.session).enabled) {
+                    app.home.open = false;
+                    app.pick_open_for(extensions, |app, path| {
+                        if let Some(path) = path {
+                            app.insert_path_async(&path);
+                        }
+                    });
+                }
             }
-        }
-    });
+        },
+    );
 }
 
 fn contents(app: &mut SolveApp, ui: &mut egui::Ui) -> Option<Entry> {
@@ -534,9 +540,12 @@ pub fn panel(app: &mut SolveApp, ui: &mut egui::Ui) {
     }
     let width = 300.0;
     let mut chosen = None;
-    egui::Panel::left("sc_document_library").exact_size(width).resizable(false).frame(egui::Frame::side_top_panel(ui.style()).inner_margin(0)).show(
-        ui,
-        |ui| {
+    Container::new(ui.ctx(), Surface::Panel)
+        .edge("sc_document_library", Edge::Left)
+        .exact_size(width)
+        .resizable(false)
+        .frame(Container::new(ui.ctx(), Surface::Panel).edge_frame(crate::theme::Tokens::get().panel))
+        .show(ui, |ui| {
             crate::scenario::publish_rect("library:panel", ui.max_rect());
             insert_footer(app, ui);
             // Keep content widget identities independent of the footer.
@@ -545,8 +554,7 @@ pub fn panel(app: &mut SolveApp, ui: &mut egui::Ui) {
                     chosen = contents(app, ui);
                 });
             });
-        },
-    );
+        });
     if let Some(entry) = chosen {
         open_entry(app, entry);
     }
@@ -751,35 +759,40 @@ mod tests {
 
     #[test]
     fn insert_footer_stays_at_bottom_with_many_cards_and_hides_when_collapsed() {
-        let mut h = Harness::new();
-        folder_picker(&mut h, None);
-        h.frames(3);
-        let before = crate::scenario::handle_at("library:insert_mesh").unwrap();
-        let step = crate::scenario::handle_at("library:insert_step").unwrap();
-        let iges = crate::scenario::handle_at("library:insert_iges").unwrap();
-        assert!(step.x < iges.x && iges.x < before.x);
-        assert!(before.x - step.x > 100.0, "import controls overlap: {before:?} {step:?}");
-        // The contained row has the same bottom inset and height as floating History.
-        let card = crate::scenario::rect_of("library:import_card").unwrap();
-        assert!((card.height() - 40.0).abs() < 0.5, "card={card:?}, controls={before:?}/{step:?}");
-        assert!((card.bottom() - (1000.0 - crate::shell::SHELL_GAP)).abs() < 0.5);
-        assert!(card.contains(before) && card.contains(step));
-        h.app.library.root = Some(h.dir.clone());
-        h.app.library.current = h.dir.clone();
-        h.app.library.listing.entries =
-            (0..1000).map(|i| Entry { path: h.dir.join(format!("Project {i}")), name: format!("Project {i}"), folder: true }).collect();
-        h.frames(3);
-        let search = crate::scenario::rect_of("library:search_card").unwrap();
-        let refresh = crate::scenario::rect_of("library:refresh").unwrap();
-        assert!(search.right() < refresh.left(), "search and refresh overlap");
-        assert!((search.center().y - refresh.center().y).abs() < 0.5, "search and refresh must share a row");
-        assert_eq!(crate::scenario::handle_at("library:insert_mesh"), Some(before));
-        assert!(h.widget("Mesh").is_some());
-        assert!(h.widget("STEP").is_some());
-        h.app.library.collapsed = true;
-        h.frames(3);
-        assert!(crate::scenario::handle_at("library:insert_mesh").is_none());
-        assert!(crate::scenario::handle_at("library:insert_step").is_none());
+        for mode in [crate::shell::LayoutMode::Floating, crate::shell::LayoutMode::Docked] {
+            let mut h = Harness::new();
+            h.call("ui.set", json!({"layout":mode}));
+            folder_picker(&mut h, None);
+            h.frames(3);
+            let before = crate::scenario::handle_at("library:insert_mesh").unwrap();
+            let step = crate::scenario::handle_at("library:insert_step").unwrap();
+            let iges = crate::scenario::handle_at("library:insert_iges").unwrap();
+            assert!(step.x < iges.x && iges.x < before.x);
+            assert!(before.x - step.x > 100.0, "import controls overlap: {before:?} {step:?}");
+            // Follow the shared History layout: floating inset or flush docked edge.
+            let card = crate::scenario::rect_of("library:import_card").unwrap();
+            assert!((card.height() - 40.0).abs() < 0.5, "card={card:?}, controls={before:?}/{step:?}");
+            let gap = if mode == crate::shell::LayoutMode::Floating { crate::shell::SHELL_GAP } else { 0.0 };
+            let panel = crate::scenario::rect_of("library:panel").unwrap();
+            assert!((card.bottom() - (panel.bottom() - gap)).abs() < 0.5, "{mode:?}: {card:?} {panel:?}");
+            assert!(card.contains(before) && card.contains(step) && card.contains(iges));
+            h.app.library.root = Some(h.dir.clone());
+            h.app.library.current = h.dir.clone();
+            h.app.library.listing.entries =
+                (0..1000).map(|i| Entry { path: h.dir.join(format!("Project {i}")), name: format!("Project {i}"), folder: true }).collect();
+            h.frames(3);
+            let search = crate::scenario::rect_of("library:search_card").unwrap();
+            let refresh = crate::scenario::rect_of("library:refresh").unwrap();
+            assert!(search.right() < refresh.left(), "search and refresh overlap");
+            assert!((search.center().y - refresh.center().y).abs() < 0.5, "search and refresh must share a row");
+            assert_eq!(crate::scenario::handle_at("library:insert_mesh"), Some(before));
+            assert!(h.widget("Mesh").is_some());
+            assert!(h.widget("STEP").is_some());
+            h.app.library.collapsed = true;
+            h.frames(3);
+            assert!(crate::scenario::handle_at("library:insert_mesh").is_none());
+            assert!(crate::scenario::handle_at("library:insert_step").is_none());
+        }
     }
 
     #[test]
@@ -807,7 +820,7 @@ mod tests {
         h.app.library.root = Some(h.dir.join("CAD Files"));
         h.app.library.current = h.app.library.root.clone().unwrap();
         h.app.home.open = false;
-        for theme in ["light", "dark", "gruvbox-dark", "gruvbox-light"] {
+        for theme in ["light", "dark", "gruvbox-dark", "gruvbox-light", "cupertino", "high-contrast"] {
             h.app.preferences.theme = theme.into();
             h.frames(3);
             let ctx = h.ctx.clone();

@@ -15,6 +15,7 @@
 //!
 //! Display only: commands, picking of what is drawn and exports read the session's world as ever.
 
+use crate::ui_kit::{Container, Surface};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -137,13 +138,14 @@ pub(crate) fn show(app: &SolveApp, ctx: &egui::Context) {
     let (Some((done, total)), Some(view)) = (progress(app), app.viewport.rect) else { return };
     let t = crate::theme::Tokens::get();
     let at = egui::pos2(view.left() + 12.0, view.bottom() - 12.0);
-    egui::Area::new(egui::Id::new("open_meshing"))
+    Container::new(ctx, Surface::Toast)
+        .area(egui::Id::new("open_meshing"))
         .order(egui::Order::Foreground)
         .pivot(egui::Align2::LEFT_BOTTOM)
         .fixed_pos(at)
         .interactable(false)
         .show(ctx, |ui| {
-            egui::Frame::popup(ui.style()).fill(t.panel).show(ui, |ui| {
+            Container::popup_frame(ui.style()).fill(t.panel).show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.spinner();
                     ui.label(egui::RichText::new(format!("Loading parts {done}/{total}")).color(t.text));

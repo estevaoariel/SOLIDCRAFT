@@ -521,20 +521,6 @@ pub fn glyph_positions() -> Vec<(String, Pos2)> {
     GLYPHS.with(|g| g.borrow().clone())
 }
 
-/// A click on a constraint glyph selects it (true: the click was used).
-pub fn click_glyph(app: &mut SolveApp, _proj: &Proj, pos: Pos2) -> bool {
-    if app.session.active_sketch.is_none() {
-        return false;
-    }
-    let hit = GLYPHS.with(|g| g.borrow().iter().find(|(_, c)| c.distance(pos) <= GLYPH * 0.6).map(|(id, _)| id.clone()));
-    let used = hit.is_some();
-    PICKED.with(|p| *p.borrow_mut() = hit.clone());
-    if let Some(id) = hit {
-        app.set_status(format!("Constraint {id} selected: Delete removes it"), false);
-    }
-    used
-}
-
 /// Delete the selected constraint glyph (true when one was selected).
 pub fn delete_glyph(app: &mut SolveApp) -> bool {
     let Some(id) = PICKED.with(|p| p.borrow_mut().take()) else { return false };
@@ -1328,7 +1314,7 @@ fn glyphs(app: &SolveApp, painter: &egui::Painter, proj: &Proj, hover: Option<Po
             }
         });
         match pattern_icon.or_else(|| glyph_icon(c.kind.name())) {
-            Some(icon) => crate::icons::paint(painter, r.shrink(2.0), icon, col, tk.glyph_bg, col),
+            Some(icon) => crate::icons::paint_icon(painter, r.shrink(2.0), icon, f32::from(col.a()) / 255.0),
             None => {
                 painter.text(
                     *sp,

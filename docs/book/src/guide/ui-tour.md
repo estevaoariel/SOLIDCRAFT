@@ -86,13 +86,28 @@
   JSON as you type and shows parser errors. Shift+Enter runs it and keeps the popup open.
   Right-click a command for its existing pin and toolbar actions.
 
-Preferences (File › Preferences) hold the theme, the units of new designs, the mouse preset, the
+Preferences (File › Preferences) hold the theme, workspace layout, the units of new designs, the mouse preset, the
 visual style and autosave. Graphics › Colour vision gives the colours that carry a meaning (sketch
 states, axes, bends, analyses, icons) values for a weak red, green or blue sense: Protan, Deutan or
 Tritan. In a mode, the faces Draft and Accessibility Analysis mark as failing are striped too.
 Command messages and errors show for a few seconds in the status chip at the bottom left of the view. Click the chip, or choose Help › **Messages…**, for every message of the session: newest first, errors in red, each line selectable, with **Copy all** for a bug report.
 Help › Keyboard Shortcuts lists every key, and File › Keyboard
 Shortcuts changes them.
+
+### Workspace layout
+
+General › **Workspace layout** switches between **Floating** cards and **Compact**
+panels. Compact joins the workspace selector and ribbon into one top bar, puts
+Browser flush underneath with a square join, and docks tool sheets below the
+compass. Tool sheets remain draggable: their four corners round away from the right
+edge, and their two right corners square when docked there. Browser keeps only the height its contents need. Assistant remains on the
+outside edge, and History keeps its chosen bottom, left or shared Browser column.
+The choice is saved between launches. Switching preserves the current tool,
+camera, selection and design; Cancel and Restore Defaults work like other preferences.
+
+General › **Show text under ribbon icons** is a separate, saved option for either
+layout. Turn it off for shorter icon-only command buttons; tooltips, section names
+and command menus remain available.
 
 ### Colour themes
 
@@ -138,6 +153,9 @@ pills when `on_accent` has less than 4.5:1 contrast with the fill. See the
 - **Export…** saves the theme on now as a complete file listing every colour. It is a good starting
   point for your own theme.
 - **Remove** deletes the selected imported theme.
+
+Retired window-band and procedural icon colours in older exports are discarded on import.
+Command icons use the shared SVG palette.
 
 Imported themes are kept with your preferences, so they work in the browser app too. Colour
 vision modes still apply on top of any theme.
