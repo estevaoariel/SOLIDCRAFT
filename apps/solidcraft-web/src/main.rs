@@ -576,14 +576,17 @@ mod web {
                         let (restorable, restorer) = (files.clone(), files.clone());
                         let services = Services {
                             // Open shows the browser's open dialog for a design where it has one
-                            // (the file keeps its handle, so Save writes back to it); otherwise,
-                            // and for inserting STEP or meshes, the browser's files window.
-                            pick_open: Some(Box::new(move |exts: &[&str]| {
-                                if disk::handles_open(exts) {
-                                    return Box::pin(disk::pick_open(&opener));
+                            // (the file keeps its handle, so Save writes back to it), else the
+                            // browser's files window. A command that reads another kind of file
+                            // (Insert DXF or SVG, an image, a mesh, settings) gets a file dialog
+                            // offering that kind, and runs on the picked file.
+                            pick_open: Some(Box::new(move |exts: &[&str]| match disk::open_route(disk::supported(), exts) {
+                                disk::OpenRoute::Disk => Box::pin(disk::pick_open(&opener)),
+                                disk::OpenRoute::Upload => Box::pin(files::pick_upload(&opener, exts)),
+                                disk::OpenRoute::Panel => {
+                                    panel.panel.set(true);
+                                    Box::pin(std::future::ready(None))
                                 }
-                                panel.panel.set(true);
-                                Box::pin(std::future::ready(None))
                             })),
                             // A design is saved to a file the user picks, or kept in the browser
                             // where the browser can't pick one; everything else is downloaded.
