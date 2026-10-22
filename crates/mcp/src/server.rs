@@ -64,8 +64,8 @@ impl Server {
         self.initialized
     }
 
-    /// Serve newline-delimited JSON-RPC until \`input\` closes. Only protocol messages go to
-    /// \`output\`; diagnostics belong on stderr. Consume oversized lines in bounded space so an
+    /// Serve newline-delimited JSON-RPC until `input` closes. Only protocol messages go to
+    /// `output`; diagnostics belong on stderr. Consume oversized lines in bounded space so an
     /// agent cannot exhaust memory by sending an arbitrarily long request without a newline.
     pub fn serve(&mut self, mut input: impl BufRead, mut output: impl Write) -> std::io::Result<()> {
         loop {
