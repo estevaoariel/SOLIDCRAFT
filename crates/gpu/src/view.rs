@@ -15,6 +15,7 @@ use wgpu::util::DeviceExt;
 use crate::pbr;
 
 mod ao;
+mod oit;
 
 /// Triangle vertex: position (3 × f32), normal (3 × f32), sRGB colour (4 × u8).
 pub const TRI_SIZE: usize = 28;
@@ -1105,6 +1106,15 @@ pub struct Renderer {
     max_texture: u32,
     /// Supersampling (#1288): the filter that draws the supersampled frame into the viewport.
     ss_blit: wgpu::RenderPipeline,
+    /// The frame drawn offscreen at the viewport's own size (for the see-through surfaces' order-
+    /// independent transparency), copied as it is.
+    copy_blit: wgpu::RenderPipeline,
+    /// The offscreen frame is not at the viewport's size: filtered ([`Renderer::ss_blit`]).
+    ss_scaled: bool,
+    /// Order-independent transparency for the model's see-through surfaces (`None` where the
+    /// device cannot blend into float targets: they are sorted instead), and its targets.
+    oit: Option<oit::Pipelines>,
+    oit_targets: Option<oit::Targets>,
     ss_bgl: wgpu::BindGroupLayout,
     /// The supersampled frame's textures, kept while its size stays.
     ss: Option<Supersampled>,
@@ -1178,6 +1188,11 @@ fn vs(@builtin(vertex_index) i: u32) -> O {
     o.pos = vec4<f32>(x * 2.0 - 1.0, 1.0 - y * 2.0, 0.0, 1.0);
     o.uv = vec2<f32>(x, y);
     return o;
+}
+/// The frame as it is (drawn at the viewport's own size).
+@fragment
+fn fs_copy(i: O) -> @location(0) vec4<f32> {
+    return textureSampleLevel(src, smp, i.uv, 0.0);
 }
 @fragment
 fn fs(i: O) -> @location(0) vec4<f32> {
@@ -1647,26 +1662,30 @@ impl Renderer {
         });
         // The frame is premultiplied (drawn over transparent black), so it goes over the
         // viewport's background premultiplied; the viewport's depth is left as it is.
-        let ss_blit = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("sc_ssaa"),
-            layout: Some(&ss_layout),
-            vertex: wgpu::VertexState { module: &ss_module, entry_point: Some("vs"), buffers: &[], compilation_options: Default::default() },
-            primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleList, ..Default::default() },
-            depth_stencil: depth(wgpu::CompareFunction::Always, false),
-            multisample: wgpu::MultisampleState { count: t.samples.max(1), mask: !0, alpha_to_coverage_enabled: false },
-            fragment: Some(wgpu::FragmentState {
-                module: &ss_module,
-                entry_point: Some("fs"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: t.format,
-                    blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
+        let blit = |entry: &str| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("sc_ssaa"),
+                layout: Some(&ss_layout),
+                vertex: wgpu::VertexState { module: &ss_module, entry_point: Some("vs"), buffers: &[], compilation_options: Default::default() },
+                primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleList, ..Default::default() },
+                depth_stencil: depth(wgpu::CompareFunction::Always, false),
+                multisample: wgpu::MultisampleState { count: t.samples.max(1), mask: !0, alpha_to_coverage_enabled: false },
+                fragment: Some(wgpu::FragmentState {
+                    module: &ss_module,
+                    entry_point: Some(entry),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: t.format,
+                        blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        let (ss_blit, copy_blit) = (blit("fs"), blit("fs_copy"));
+        let oit = oit::Pipelines::new(device, &module, &layout, t.format, t.depth, t.samples);
         let depth_reset = t.depth.filter(|_| reversed).map(|format| {
             let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("sc_depth_reset"),
@@ -1706,6 +1725,10 @@ impl Renderer {
             target: t,
             max_texture: device.limits().max_texture_dimension_2d,
             ss_blit,
+            copy_blit,
+            ss_scaled: false,
+            oit,
+            oit_targets: None,
             ss_bgl,
             ss: None,
             ss_ready: false,
@@ -1842,6 +1865,11 @@ pub fn sort_back_to_front(bytes: &[u8], back: [f32; 3]) -> Vec<u8> {
 }
 
 impl Batches {
+    /// Whether it has see-through surfaces (glass or faded, instanced or not).
+    fn see_through(&self) -> bool {
+        self.glass.is_some() || self.trans.is_some() || self.instanced.iter().any(|d| d.look != InstanceLook::Opaque)
+    }
+
     /// Re-sort the glass for a new view direction (when it turned more than about 2 degrees).
     fn sort_glass(&mut self, queue: &wgpu::Queue, back: [f32; 3]) {
         let (Some(g), false) = (&self.glass, self.glass_cpu.is_empty()) else { return };
@@ -1904,7 +1932,12 @@ impl Renderer {
         res.sketch.take(device, cb.sketch_key, &cb.sketch_slot, None);
         res.highlight.take(device, cb.hl_key, &cb.hl_slot, None);
         res.preview.take(device, cb.pv_key, &cb.pv_slot, None);
-        res.model.sort_glass(queue, cb.back);
+        // See-through surfaces are drawn without sorting where the device can (order-independent
+        // transparency, in an offscreen frame); else their triangles are sorted for the view.
+        let see_through = res.oit.is_some() && res.model.see_through();
+        if !see_through {
+            res.model.sort_glass(queue, cb.back);
+        }
         res.model.cull(queue, &cb.view_proj, cb.size_px);
         queue.write_buffer(&res.uniform, 0, &uniform_bytes(cb, cb.size_px[0], cb.size_px[1], res.linear_out, res.target.reversed_depth()));
         if let Some(a) = &cb.access
@@ -1963,7 +1996,7 @@ impl Renderer {
                 res.quads.push((img.id, b));
             }
         }
-        res.ss_ready = cb.ssaa != 1.0 && res.supersample(device, encoder, cb);
+        res.ss_ready = (cb.ssaa != 1.0 || see_through) && res.supersample(device, encoder, cb, see_through);
     }
 
     /// Draw the frame into `pass` within `viewport` (x, y, width, height in physical pixels):
@@ -1977,7 +2010,7 @@ impl Renderer {
         if self.ss_ready
             && let Some(ss) = &self.ss
         {
-            pass.set_pipeline(&self.ss_blit);
+            pass.set_pipeline(if self.ss_scaled { &self.ss_blit } else { &self.copy_blit });
             pass.set_bind_group(0, &ss.bind, &[]);
             pass.draw(0..3, 0..1);
             return;
@@ -1986,7 +2019,7 @@ impl Renderer {
             pass.set_pipeline(reset);
             pass.draw(0..3, 0..1);
         }
-        self.draw(frame, pass);
+        self.draw(frame, pass, Phase::All);
     }
 
     /// The target the pipelines draw into.
@@ -1997,7 +2030,7 @@ impl Renderer {
 
 impl Renderer {
     /// Draw the frame's scenes into `pass` (its viewport already set).
-    fn draw(&self, cb: &Frame, pass: &mut wgpu::RenderPass<'static>) {
+    fn draw(&self, cb: &Frame, pass: &mut wgpu::RenderPass<'static>, phase: Phase) {
         let res = self;
         pass.set_bind_group(0, &res.bind, &[]);
         let tris = |pass: &mut wgpu::RenderPass<'static>, p: &wgpu::RenderPipeline, b: &Option<Batch>| {
@@ -2025,6 +2058,12 @@ impl Renderer {
         } else {
             (&res.model, &res.sketch, &res.highlight, &res.preview)
         };
+        if phase == Phase::AfterSeeThrough {
+            pass.set_bind_group(1, &res.access_bind, &[]);
+            pass.set_bind_group(2, &res.ao.bind, &[]);
+            Self::draw_over(res, pass, sk, h, pv, m, &tris, &lines);
+            return;
+        }
         lines(pass, &res.overlay, &m.under);
         lines(pass, &res.overlay, &sk.under);
         pass.set_bind_group(1, &res.access_bind, &[]);
@@ -2089,6 +2128,9 @@ impl Renderer {
             }
         }
         tris(pass, &res.ghost, &pv.ghost);
+        if phase == Phase::BeforeSeeThrough {
+            return;
+        }
         // See-through instanced meshes (placements back to front) with the rest of their kind.
         let see_through =
             |pass: &mut wgpu::RenderPass<'static>, look: InstanceLook, (smooth, flat): &(wgpu::RenderPipeline, wgpu::RenderPipeline)| {
@@ -2102,6 +2144,21 @@ impl Renderer {
         see_through(pass, InstanceLook::Glass, &res.glass_near_instanced);
         tris(pass, &res.trans, &m.trans);
         see_through(pass, InstanceLook::Faded, &res.trans_instanced);
+        Self::draw_over(res, pass, sk, h, pv, m, &tris, &lines);
+    }
+
+    /// What is drawn over the model's see-through surfaces.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_over(
+        res: &Renderer,
+        pass: &mut wgpu::RenderPass<'static>,
+        sk: &Batches,
+        h: &Batches,
+        pv: &Batches,
+        m: &Batches,
+        tris: &dyn Fn(&mut wgpu::RenderPass<'static>, &wgpu::RenderPipeline, &Option<Batch>),
+        lines: &dyn Fn(&mut wgpu::RenderPass<'static>, &wgpu::RenderPipeline, &Option<Batch>),
+    ) {
         tris(pass, &res.trans, &sk.trans);
         tris(pass, &res.trans, &h.trans);
         tris(pass, &res.guide_trans, &h.guide_trans);
@@ -2111,48 +2168,94 @@ impl Renderer {
         lines(pass, &res.overlay, &sk.overlays);
         lines(pass, &res.overlay, &h.overlays);
     }
+
+    /// The model's see-through surfaces into the order-independent transparency's targets.
+    fn draw_see_through(&self, pass: &mut wgpu::RenderPass<'static>, p: &oit::Pipelines) {
+        let m = &self.model;
+        pass.set_bind_group(0, &self.bind, &[]);
+        pass.set_pipeline(&p.built);
+        for batch in [&m.glass, &m.trans].into_iter().flatten() {
+            for (buffer, count) in &batch.parts {
+                pass.set_vertex_buffer(0, buffer.slice(..));
+                pass.draw(0..*count, 0..1);
+            }
+        }
+        for d in m.instanced.iter().filter(|d| d.look != InstanceLook::Opaque) {
+            d.draw(pass, &p.instanced, &p.instanced_flat);
+        }
+    }
 }
 
 impl Renderer {
     /// Draw the frame supersampled (`cb.ssaa` times the viewport's pixels each way, within the
     /// device's texture limit and the memory budget) into textures of the viewport's kind.
     /// `false` when it cannot be (too small a gain, a zero-sized viewport): drawn as usual.
-    fn supersample(&mut self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder, cb: &Frame) -> bool {
-        let Some(size) = supersampled_size(cb.size_px, cb.ssaa, self.max_texture, self.target.samples) else {
+    fn supersample(&mut self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder, cb: &Frame, see_through: bool) -> bool {
+        // Supersampled when asked (and worth it); else, for order-independent transparency, at
+        // the viewport's own size.
+        let own = || {
+            let [w, h] = cb.size_px;
+            (w >= 1.0 && h >= 1.0)
+                .then(|| [(w.round() as u32).clamp(1, self.max_texture.max(1)), (h.round() as u32).clamp(1, self.max_texture.max(1))])
+        };
+        let scaled = if cb.ssaa != 1.0 { supersampled_size(cb.size_px, cb.ssaa, self.max_texture, self.target.samples) } else { None };
+        let Some(size) = scaled.or_else(|| if see_through { own() } else { None }) else {
             self.ss = None;
             return false;
         };
+        self.ss_scaled = scaled.is_some();
         if self.ss.as_ref().is_none_or(|ss| ss.size != size) {
             self.ss = Some(self.supersampled(device, size));
         }
+        if see_through
+            && let Some(p) = &self.oit
+            && self.oit_targets.as_ref().is_none_or(|t| t.size != size)
+        {
+            self.oit_targets = Some(p.targets(device, size, self.target.samples));
+        }
         let Some(ss) = &self.ss else { return false };
         let depth_format = self.target.depth;
-        let mut pass = encoder
-            .begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("sc_ssaa"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &ss.color,
-                    depth_slice: None,
-                    resolve_target: ss.resolve.as_ref(),
-                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store },
-                })],
-                depth_stencil_attachment: ss.depth.as_ref().map(|view| wgpu::RenderPassDepthStencilAttachment {
-                    view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(far_depth(self.target.reversed_depth())),
-                        store: wgpu::StoreOp::Discard,
+        let stencil = depth_format.is_some_and(|f| f.has_stencil_aspect());
+        // The depth is kept for the passes after the first when there are see-through surfaces.
+        let keep = if see_through { wgpu::StoreOp::Store } else { wgpu::StoreOp::Discard };
+        let pass = |encoder: &mut wgpu::CommandEncoder, first: bool| {
+            let load = |clear| if first { wgpu::LoadOp::Clear(clear) } else { wgpu::LoadOp::Load };
+            encoder
+                .begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("sc_ssaa"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &ss.color,
+                        depth_slice: None,
+                        resolve_target: ss.resolve.as_ref(),
+                        ops: wgpu::Operations { load: load(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store },
+                    })],
+                    depth_stencil_attachment: ss.depth.as_ref().map(|view| wgpu::RenderPassDepthStencilAttachment {
+                        view,
+                        depth_ops: Some(wgpu::Operations { load: load_depth(first, far_depth(self.target.reversed_depth())), store: keep }),
+                        stencil_ops: stencil.then_some(wgpu::Operations { load: load_depth(first, 0), store: keep }),
                     }),
-                    stencil_ops: depth_format
-                        .filter(|f| f.has_stencil_aspect())
-                        .map(|_| wgpu::Operations { load: wgpu::LoadOp::Clear(0), store: wgpu::StoreOp::Discard }),
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            })
-            .forget_lifetime();
-        pass.set_viewport(0.0, 0.0, size[0] as f32, size[1] as f32, 0.0, 1.0);
-        self.draw(cb, &mut pass);
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                })
+                .forget_lifetime()
+        };
+        let (Some(p), Some(t), true) = (&self.oit, &self.oit_targets, see_through) else {
+            let mut first = pass(encoder, true);
+            first.set_viewport(0.0, 0.0, size[0] as f32, size[1] as f32, 0.0, 1.0);
+            self.draw(cb, &mut first, Phase::All);
+            return true;
+        };
+        {
+            let mut first = pass(encoder, true);
+            first.set_viewport(0.0, 0.0, size[0] as f32, size[1] as f32, 0.0, 1.0);
+            self.draw(cb, &mut first, Phase::BeforeSeeThrough);
+        }
+        p.accumulate(encoder, t, ss.depth.as_ref(), stencil, |pass| self.draw_see_through(pass, p));
+        p.composite(encoder, t, &ss.color, ss.resolve.as_ref());
+        let mut over = pass(encoder, false);
+        over.set_viewport(0.0, 0.0, size[0] as f32, size[1] as f32, 0.0, 1.0);
+        self.draw(cb, &mut over, Phase::AfterSeeThrough);
         true
     }
 
@@ -2191,6 +2294,22 @@ impl Renderer {
         });
         Supersampled { size, color, resolve, depth, bind }
     }
+}
+
+/// Which part of a frame [`Renderer::draw`] draws.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Phase {
+    /// All of it, the model's see-through surfaces sorted.
+    All,
+    /// Up to the model's see-through surfaces, which order-independent transparency draws.
+    BeforeSeeThrough,
+    /// What is drawn over them (sketch fills, highlights, X-ray, overlays).
+    AfterSeeThrough,
+}
+
+/// A depth (or stencil) attachment's load: cleared to `clear` for the first pass, else kept.
+fn load_depth<T>(first: bool, clear: T) -> wgpu::LoadOp<T> {
+    if first { wgpu::LoadOp::Clear(clear) } else { wgpu::LoadOp::Load }
 }
 
 /// Uniform bytes for a frame.
@@ -2446,6 +2565,149 @@ mod glass_tests {
         let scene = 524_434_680usize;
         assert_eq!(scene.div_ceil(buffer_chunk(TRI_SIZE, limit)), 2);
         assert!(buffer_chunk(TRI_SIZE, 1) >= TRI_SIZE * 6, "a tiny limit still holds one unit");
+    }
+
+    /// The middle pixel of `scene` drawn looking down -Z (x, y in -10..10) into a 64 × 64 frame,
+    /// with order-independent transparency (`oit`) or with the see-through triangles sorted.
+    /// `None` without a GPU adapter.
+    fn middle_pixel(scene: GpuScene, oit: bool) -> Option<[u8; 4]> {
+        const SIZE: u32 = 64;
+        let (_, device, queue) = crate::open_headless().ok()?;
+        let depth = crate::depth_format(&device, true);
+        let format = wgpu::TextureFormat::Rgba8Unorm;
+        let mut r = Renderer::new(&device, GpuTarget { format, depth: Some(depth), samples: 1, tess: false }, None);
+        assert!(r.oit.is_some(), "this device does order-independent transparency");
+        if !oit {
+            r.oit = None;
+        }
+        let none = || Arc::new(Mutex::new(None));
+        let frame = Frame {
+            product: false,
+            key: 1,
+            slot: Arc::new(Mutex::new(Some(scene))),
+            sketch_key: 0,
+            sketch_slot: none(),
+            hl_key: 0,
+            hl_slot: none(),
+            pv_key: 0,
+            pv_slot: none(),
+            pv_hide: false,
+            view_proj: [[0.1, 0.0, 0.0, 0.0], [0.0, 0.1, 0.0, 0.0], [0.0, 0.0, -0.01, 0.0], [0.0, 0.0, 0.5, 1.0]],
+            back: [0.0, 0.0, 1.0],
+            size_px: [SIZE as f32; 2],
+            clip: [0.0; 4],
+            cap: [0.0; 4],
+            images: Vec::new(),
+            analysis: [0.0; 8],
+            analysis_colors: [0.0; 36],
+            access: None,
+            outline: false,
+            eye: [0.0, 0.0, 100.0, 0.0],
+            ao_radius: 0.0,
+            ssaa: 1.0,
+        };
+        let texture = |format, usage| {
+            device.create_texture(&wgpu::TextureDescriptor {
+                label: None,
+                size: wgpu::Extent3d { width: SIZE, height: SIZE, depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage,
+                view_formats: &[],
+            })
+        };
+        let color = texture(format, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC);
+        let depth_tex = texture(depth, wgpu::TextureUsages::RENDER_ATTACHMENT);
+        let (color_view, depth_view) = (color.create_view(&Default::default()), depth_tex.create_view(&Default::default()));
+        let mut encoder = device.create_command_encoder(&Default::default());
+        r.prepare(&device, &queue, &mut encoder, &frame);
+        {
+            let mut pass = encoder
+                .begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: None,
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &color_view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::WHITE), store: wgpu::StoreOp::Store },
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &depth_view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(far_depth(reversed_depth(Some(depth)))),
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: depth
+                            .has_stencil_aspect()
+                            .then_some(wgpu::Operations { load: wgpu::LoadOp::Clear(0), store: wgpu::StoreOp::Store }),
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                })
+                .forget_lifetime();
+            r.paint(&frame, &mut pass, [0.0, 0.0, SIZE as f32, SIZE as f32]);
+        }
+        let read = device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: u64::from(SIZE * SIZE * 4),
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        encoder.copy_texture_to_buffer(
+            color.as_image_copy(),
+            wgpu::TexelCopyBufferInfo {
+                buffer: &read,
+                layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(SIZE * 4), rows_per_image: Some(SIZE) },
+            },
+            wgpu::Extent3d { width: SIZE, height: SIZE, depth_or_array_layers: 1 },
+        );
+        queue.submit([encoder.finish()]);
+        read.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+        device.poll(wgpu::PollType::wait_indefinitely()).ok()?;
+        let bytes = read.slice(..).get_mapped_range().ok()?.to_vec();
+        let at = ((SIZE / 2 * SIZE + SIZE / 2) * 4) as usize;
+        bytes.get(at..at + 4).and_then(|p| p.try_into().ok())
+    }
+
+    /// Two see-through squares, one at z = 5 (near) and one at z = -5, in `near` and `far`
+    /// colours, given near first or far first.
+    fn two_layers(near: [u8; 4], far: [u8; 4], near_first: bool) -> GpuScene {
+        let mut sc = GpuScene::default();
+        let mut layers = [(5.0f32, near), (-5.0, far)];
+        if !near_first {
+            layers.reverse();
+        }
+        for (z, c) in layers {
+            for p in [[-5.0, -5.0], [5.0, -5.0], [5.0, 5.0], [-5.0, -5.0], [5.0, 5.0], [-5.0, 5.0]] {
+                sc.glass_tri([p[0], p[1], z], [0.0, 0.0, 1.0], c);
+            }
+        }
+        sc
+    }
+
+    /// Order-independent transparency: the same see-through layers give the same picture in
+    /// whichever order they come, the same as sorting them where they share a colour, and close to
+    /// it where they do not (the weighted average of their colours, by how much they cover).
+    /// Skipped without a GPU adapter.
+    #[test]
+    fn see_through_layers_blend_in_any_order() {
+        let (blue, red) = ([40, 80, 220, 128], [220, 40, 40, 128]);
+        let Some(either) = middle_pixel(two_layers(blue, red, true), true) else {
+            eprintln!("skipping: no GPU adapter");
+            return;
+        };
+        let other = middle_pixel(two_layers(blue, red, false), true).unwrap();
+        assert!(either.iter().zip(other).all(|(a, b)| a.abs_diff(b) <= 1), "{either:?} vs {other:?}");
+        let near = |a: [u8; 4], b: [u8; 4], by: u8| a.iter().zip(b).all(|(x, y)| x.abs_diff(y) <= by);
+        let same = middle_pixel(two_layers(blue, blue, false), true).unwrap();
+        let sorted = middle_pixel(two_layers(blue, blue, false), false).unwrap();
+        assert!(near(same, sorted, 3), "one colour: {same:?} vs sorted {sorted:?}");
+        let sorted = middle_pixel(two_layers(blue, red, false), false).unwrap();
+        assert!(near(either, sorted, 48), "two colours: {either:?} vs sorted {sorted:?}");
+        assert!(either[0] > 100 && either[2] > 100, "both colours show: {either:?}");
     }
 
     #[test]
