@@ -241,7 +241,7 @@ fn the_example_macros_run() {
     let r = play_example(
         &mut gear,
         "gear_generator.rhai",
-        json!({"params": {"kind": "gear", "teeth": 12, "size": 2, "bore": 8, "thickness": 8, "pa": "20"}}),
+        json!({"params": {"kind": "gear", "teeth": 12, "gear_module": 2, "bore": 8, "thickness": 8, "pa": "20"}}),
     );
     assert_eq!(r["ran"], true, "{r}");
     let m = run(&mut gear, "inspect.measure", json!({}));
@@ -256,7 +256,7 @@ fn the_example_macros_run() {
     let r = play_example(
         &mut dp,
         "gear_generator.rhai",
-        json!({"params": {"kind": "gear", "sizing": "DP", "teeth": 16, "size": 16, "bore": 8, "thickness": 6, "pa": "20"}}),
+        json!({"params": {"kind": "gear", "sizing": "DP", "teeth": 16, "dp": 16, "bore": 8, "thickness": 6, "pa": "20"}}),
     );
     assert_eq!(r["ran"], true, "imperial DP: {r}");
     assert_eq!(run(&mut dp, "inspect.measure", json!({}))["body_count"], 1);
@@ -275,7 +275,7 @@ fn the_example_macros_run() {
     let r = play_example(
         &mut boss,
         "gear_generator.rhai",
-        json!({"params": {"kind": "gear", "teeth": 12, "size": 2, "bore": 8, "thickness": 8, "hub": "one", "hub_od": 20, "hub_length": 8, "pa": "20"}}),
+        json!({"params": {"kind": "gear", "teeth": 12, "gear_module": 2, "bore": 8, "thickness": 8, "hub": "one", "hub_od": 20, "hub_length": 8, "pa": "20"}}),
     );
     assert_eq!(r["ran"], true, "hub: {r}");
     let hv = volume(&mut boss);
@@ -285,12 +285,13 @@ fn the_example_macros_run() {
     let r = play_example(
         &mut ring,
         "gear_generator.rhai",
-        json!({"params": {"kind": "gear", "hand": "internal", "teeth": 24, "size": 2, "thickness": 8, "rim": 80, "pa": "20", "bore": 0}}),
+        json!({"params": {"kind": "gear", "hand": "internal", "teeth": 24, "gear_module": 2, "thickness": 8, "rim": 80, "pa": "20"}}),
     );
     assert_eq!(r["ran"], true, "internal: {r}");
     let iv = volume(&mut ring);
     let rim_disk = std::f64::consts::PI * 40.0 * 40.0 * 8.0;
-    assert!(iv < rim_disk, "internal teeth cut the rim: {iv} vs {rim_disk}");
+    assert!(iv < rim_disk * 0.92, "internal teeth cut the rim: {iv} vs {rim_disk}");
+    assert!(iv > rim_disk * 0.25, "the rim is still there: {iv}");
 
     let dir = temp_dir("stl");
     let step = dir.join("cube.step");
@@ -311,15 +312,16 @@ fn the_example_macros_run() {
 }
 
 #[test]
-fn a_helical_gear_sweeps_one_body() {
+fn a_helical_gear_is_refused_without_panic() {
     let mut helix = Session::default();
-    let r = play_example(
+    helix.macros.loaded = Some(example("gear_generator.rhai"));
+    let e = error(
         &mut helix,
-        "gear_generator.rhai",
-        json!({"params": {"kind": "gear", "teeth": 12, "size": 2, "bore": 8, "thickness": 8, "helix": 15, "pa": "20"}}),
+        "macro.play",
+        json!({"params": {"kind": "gear", "teeth": 12, "gear_module": 2, "bore": 8, "thickness": 8, "helix": 15, "pa": "20"}}),
     );
-    assert_eq!(r["ran"], true, "helical: {r}");
-    assert_eq!(run(&mut helix, "inspect.measure", json!({}))["body_count"], 1);
+    assert!(e.to_ascii_lowercase().contains("helical"), "{e}");
+    assert!(helix.doc.features.is_empty(), "a refused helical play rolls back");
 }
 
 fn examples_dir() -> String {

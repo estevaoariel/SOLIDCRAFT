@@ -4,7 +4,8 @@
 // @param sizing Size {module, DP} | module @if kind=gear
 // @param pa Pressure angle {14.5, 20, 25} | 20 @if kind=gear
 // @param depth Depth {full, stub} | full @if kind=gear
-// @param size Module or DP | 2 @if kind=gear
+// @param gear_module Module | 2 @if sizing=module
+// @param dp Diametral pitch | 16 @if sizing=DP
 // @param helix Helix angle (deg) | 0 @if kind=gear
 // @param rim Internal rim OD | 80 @if hand=internal
 // @param chain Chain {25, 35, 40, 50, 60, 80, 06B, 08B, 10B, 12B, 16B} | 40 @if kind=sprocket
@@ -143,9 +144,11 @@ fn sprocket_pts(z, P, Dr) {
     let r_p = P / (2.0 * sin(pi / z));
     let r_s = 0.5025 * Dr + 0.05;
     let r_a = P * (0.5 + 1.0 / tan(pi / z)) / 2.0;
-    let n_s = 12;
-    let n_f = 8;
-    let beta = 0.85;
+    let n_s = 14;
+    let n_f = 6;
+    let n_t = 10;
+    let beta = 0.7;
+    let gamma = 0.32 * pi / z;
     let pts = [];
     let tooth = 0;
     while tooth < z {
@@ -162,14 +165,24 @@ fn sprocket_pts(z, P, Dr) {
         let x1 = cx + r_s * cos(a1);
         let y1 = cy + r_s * sin(a1);
         let tip = th + pi / z;
-        let xt = r_a * cos(tip);
-        let yt = r_a * sin(tip);
+        let t0 = tip - gamma;
+        let xt0 = r_a * cos(t0);
+        let yt0 = r_a * sin(t0);
         let j = 1;
         while j <= n_f {
             let u = (j * 1.0) / (n_f * 1.0);
-            pts.push([x1 + (xt - x1) * u, y1 + (yt - y1) * u]);
+            pts.push([x1 + (xt0 - x1) * u, y1 + (yt0 - y1) * u]);
             j = j + 1;
         }
+        let k = 1;
+        while k < n_t {
+            let a = t0 + 2.0 * gamma * (k * 1.0) / (n_t * 1.0);
+            pts.push([r_a * cos(a), r_a * sin(a)]);
+            k = k + 1;
+        }
+        let t1 = tip + gamma;
+        let xt1 = r_a * cos(t1);
+        let yt1 = r_a * sin(t1);
         let thn = 2.0 * pi * (tooth + 1.0) / z;
         let cxn = r_p * cos(thn);
         let cyn = r_p * sin(thn);
@@ -179,7 +192,7 @@ fn sprocket_pts(z, P, Dr) {
         let j = 1;
         while j < n_f {
             let u = (j * 1.0) / (n_f * 1.0);
-            pts.push([xt + (x0 - xt) * u, yt + (y0 - yt) * u]);
+            pts.push([xt1 + (x0 - xt1) * u, yt1 + (y0 - yt1) * u]);
             j = j + 1;
         }
         tooth = tooth + 1;
@@ -194,7 +207,6 @@ let depth_s = as_s(depth);
 let hub_s = as_s(hub);
 let chain_s = as_s(chain);
 let z = as_n(teeth);
-let size_n = as_n(size);
 let bore_d = as_n(bore);
 let t = as_n(thickness);
 let helix_n = as_n(helix);
@@ -209,6 +221,9 @@ if z < 6 {
 if t <= 0.0 {
     throw "thickness must be positive";
 }
+if kind_s == "gear" && helix_n != 0.0 {
+    throw "helical gears are not supported yet; set helix to 0";
+}
 
 let pts = [];
 let r_pitch = 0.0;
@@ -219,7 +234,7 @@ if kind_s == "sprocket" {
     r_pitch = P / (2.0 * sin(pi / z));
     pts = sprocket_pts(z, P, Dr);
 } else {
-    let m = if sizing_s == "DP" { 25.4 / size_n } else { size_n };
+    let m = if sizing_s == "DP" { 25.4 / as_n(dp) } else { as_n(gear_module) };
     if m <= 0.0 {
         throw "module / DP must be positive";
     }
@@ -244,21 +259,19 @@ if kind_s == "sprocket" {
     }
 }
 
-run("sketch.create", #{ plane: "XY", name: "Gear" });
 if internal {
+    run("sketch.create", #{ plane: "XY", name: "Rim" });
     run("sketch.circle.center", #{ center: [0.0, 0.0], radius: rim_n / 2.0 });
-}
-run("sketch.line", #{ points: pts, closed: true, infer: false });
-run("sketch.finish");
-
-if kind_s == "gear" && helix_n != 0.0 && !internal {
-    let twist = t * tan(helix_n * pi / 180.0) / r_pitch * 180.0 / pi;
-    run("sketch.create", #{ plane: "XY", name: "SweepPath" });
-    run("sketch.options", #{ sketch_3d: true });
-    let path_r = run("sketch.line3d", #{ points: [[0.0, 0.0, 0.0], [0.0, 0.0, t]] });
     run("sketch.finish");
-    run("solid.sweep", #{ sketch: "Gear", path_sketch: "SweepPath", path: [path_r.curves[0]], twist: twist, name: "Gear" });
+    run("solid.extrude", #{ sketch: "Rim", distance: t, name: "Gear" });
+    run("sketch.create", #{ plane: "XY", name: "ToothCut" });
+    run("sketch.line", #{ points: pts, closed: true, infer: false });
+    run("sketch.finish");
+    run("solid.extrude", #{ sketch: "ToothCut", distance: t, operation: "cut", name: "ToothCut" });
 } else {
+    run("sketch.create", #{ plane: "XY", name: "Gear" });
+    run("sketch.line", #{ points: pts, closed: true, infer: false });
+    run("sketch.finish");
     run("solid.extrude", #{ sketch: "Gear", distance: t, name: "Gear" });
 }
 
