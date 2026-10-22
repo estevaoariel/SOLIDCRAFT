@@ -14,7 +14,7 @@ recording.
 
 Save writes a `.rhai` file. Open loads one. Play runs it. A macro can ask for values first
 (`// @param name Label | default`); Play shows one row each. `{a, b}` after the label is a
-dropdown. `@if other=a,b` hides the row unless that field is one of those values.
+dropdown. `@if other=a,b` hides the row unless that field is one of those values (and that field's own row is shown).
 
 ```rhai
 // @param min_dia Minimum diameter | 5 mm

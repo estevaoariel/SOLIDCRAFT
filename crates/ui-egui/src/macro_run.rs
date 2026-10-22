@@ -28,9 +28,19 @@ pub struct MacroRun {
 }
 
 fn visible(fields: &[Field], f: &Field) -> bool {
+    visible_from(fields, f, 0)
+}
+
+fn visible_from(fields: &[Field], f: &Field, depth: usize) -> bool {
+    if depth > 16 {
+        return false;
+    }
     let Some((name, values)) = &f.when else { return true };
-    let cur = fields.iter().find(|o| o.name == *name).map(|o| o.value.as_str()).unwrap_or("");
-    values.iter().any(|v| v == cur)
+    let Some(other) = fields.iter().find(|o| o.name == *name) else { return false };
+    if !visible_from(fields, other, depth + 1) {
+        return false;
+    }
+    values.iter().any(|v| v == other.value.as_str())
 }
 
 /// Open the prompt for the loaded macro (no-op when none is loaded).
@@ -137,5 +147,43 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         }
     } else if open && !cancel {
         app.macro_run = Some(d);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Field, visible};
+
+    fn field(name: &str, value: &str, when: Option<(&str, &[&str])>) -> Field {
+        Field {
+            name: name.into(),
+            label: name.into(),
+            value: value.into(),
+            choices: Vec::new(),
+            when: when.map(|(n, vs)| (n.into(), vs.iter().map(|s| (*s).into()).collect())),
+        }
+    }
+
+    #[test]
+    fn module_hides_when_kind_is_sprocket() {
+        let fields = [
+            field("kind", "sprocket", None),
+            field("sizing", "module", Some(("kind", &["gear"]))),
+            field("gear_module", "2", Some(("sizing", &["module"]))),
+        ];
+        assert!(visible(&fields, &fields[0]));
+        assert!(!visible(&fields, &fields[1]));
+        assert!(!visible(&fields, &fields[2]), "Module follows Size, which is hidden for a sprocket");
+    }
+
+    #[test]
+    fn module_shows_for_a_module_gear() {
+        let fields = [
+            field("kind", "gear", None),
+            field("sizing", "module", Some(("kind", &["gear"]))),
+            field("gear_module", "2", Some(("sizing", &["module"]))),
+        ];
+        assert!(visible(&fields, &fields[1]));
+        assert!(visible(&fields, &fields[2]));
     }
 }
