@@ -292,3 +292,19 @@ SolidCraft changes:
   and the frame is skipped with a repaint asked for when it is due. The streak and the deadline
   survive a recreate; a configure the device takes ends the streak, a recreate it asked for
   included. A recreate for a lost surface goes ahead as before.
+
+## eframe 0.36.2 (MIT OR Apache-2.0, Emil Ernerfeldt and contributors)
+
+Original package sources from https://github.com/emilk/egui/tree/0.36.2/crates/eframe, with both
+original licence texts retained. egui's logo (`data/icon.png`) and the README are not copied.
+
+SolidCraft changes:
+- `src/native/file_storage.rs`: the settings file (`app.ron`) is written to a temporary file
+  beside it (named for the process and the save), synced, and renamed over it. Each save
+  truncated and rewrote the file in place, so two windows saving at once could leave a shorter
+  save with the tail of a longer one behind it: a file that did not read, which the app then
+  moved aside and started with default settings (#4164). A save that fails leaves the old file and
+  removes its temporary file. `save_settings_file` (hidden, re-exported from `src/lib.rs`) lets
+  the app's tests run this save.
+- `src/native/epi_integration.rs`: the default window icon is empty instead of egui's logo,
+  which is not vendored (SolidCraft always sets its own icon).
