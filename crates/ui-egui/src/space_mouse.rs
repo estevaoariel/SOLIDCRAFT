@@ -100,7 +100,8 @@ pub struct DriversPresent {
 
 /// What the reader saw of the buttons, taken in one look: the device they came from, those down
 /// now (bit N for button N + 1) and those that went down since the last look, even when they
-/// came up again before it.
+/// came up again before it. The taps are a set of buttons, not a queue of presses: two taps of one
+/// button between two looks reach the app as one, and run its job once.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Buttons {
     pub device: Option<String>,

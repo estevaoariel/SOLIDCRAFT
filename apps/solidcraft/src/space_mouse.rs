@@ -249,7 +249,8 @@ struct Reading {
     /// The buttons that are down: bit N for button N + 1, as the device (or spacenavd) numbers them.
     buttons: u32,
     /// The buttons that went down since the UI last looked, even if they came up again before it
-    /// did: a quick tap between two frames is still a press.
+    /// did: a quick tap between two frames is still a press. It is a set, not a queue: two taps of one
+    /// button between two looks are one press, and run its job once.
     taps: u32,
 }
 
