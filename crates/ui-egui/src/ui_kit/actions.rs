@@ -114,14 +114,26 @@ pub(super) fn footer_with_left(
         egui::CornerRadius { nw: 0, ne: 0, sw: corners.sw.saturating_sub(1), se: corners.se.saturating_sub(1) },
         t.dialog_footer,
     );
-    ui.painter().hline(band.x_range(), band.top(), egui::Stroke::new(1.0, t.dialog_rule));
+    t.secondary_hline(ui.painter(), band.x_range(), band.top(), t.dialog_rule);
     scenario::publish_rect("dialog:footer", band);
     scenario::publish_count("dialog:ok:enabled", f64::from(ok_enabled && ui.is_enabled()));
     let inner = band.shrink2(vec2(t.space_12, t.space_10));
     scenario::publish_rect("dialog:footer:actions", inner);
     let mut action = if ui.is_enabled() { keyboard(ui.ctx(), ok_enabled) } else { Action::None };
-    let primary_fill = if danger { t.form_error } else { t.form_primary };
-    let primary_ink = if danger && crate::theme::contrast_ratio(t.on_accent, primary_fill) < 4.5 { t.tab_on_fill_dark } else { t.on_accent };
+    let primary_fill = if t.borders.bevel.is_some() && !danger {
+        t.control_fill
+    } else if danger {
+        t.form_error
+    } else {
+        t.form_primary
+    };
+    let primary_ink = if t.borders.bevel.is_some() && !danger {
+        t.form_ink
+    } else if danger && crate::theme::contrast_ratio(t.on_accent, primary_fill) < 4.5 {
+        t.tab_on_fill_dark
+    } else {
+        t.on_accent
+    };
     let mut actions_left = inner.right();
     let row = ui.scope_builder(egui::UiBuilder::new().max_rect(inner).layout(egui::Layout::left_to_right(egui::Align::Center)), |ui| {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -152,14 +164,18 @@ pub(super) fn footer_with_left(
                         } else {
                             t.control_fill
                         })
-                        .stroke(egui::Stroke::new(
-                            if primary && ok_enabled { 0.0 } else { 1.0 },
-                            if marked && !primary { t.form_primary } else { t.control_border },
-                        ))
+                        .stroke(if primary && ok_enabled {
+                            egui::Stroke::NONE
+                        } else if marked && !primary {
+                            egui::Stroke::new(1.0, t.form_primary)
+                        } else {
+                            t.control_border_stroke(t.control_border)
+                        })
                         .wrap_mode(egui::TextWrapMode::Extend)
                         .corner_radius(t.control_radius)
                         .min_size(vec2(if primary { t.space_24 * 3.0 } else { 0.0 }, t.form_button_height)),
                 );
+                t.button_bevel(ui, &response, false);
                 pointer_on_hover(ui, &response);
                 actions_left = actions_left.min(response.rect.left());
                 let key = match kind {
@@ -213,7 +229,7 @@ pub(crate) struct PairButton<'a> {
 /// Equal-width secondary actions with optional icons and selected state. Tokens: `form_button_height, control_*, selected_bg, hover, font_label, text, icon/fill, accent, sketch_footer_icon_size, space_4/6/10`.
 pub(crate) fn button_pair(ui: &mut egui::Ui, key: &str, states: [bool; 2], buttons: [PairButton<'_>; 2]) -> (bool, bool) {
     let t = Tokens::get();
-    ui.painter().hline(ui.max_rect().x_range(), ui.cursor().top(), egui::Stroke::new(1.0, t.dialog_rule));
+    t.secondary_hline(ui.painter(), ui.max_rect().x_range(), ui.cursor().top(), t.dialog_rule);
     let mut clicked = [false; 2];
     egui::Frame::NONE.inner_margin(egui::Margin::symmetric(t.space_10 as i8, t.space_6 as i8)).show(ui, |ui| {
         ui.horizontal(|ui| {
@@ -232,7 +248,7 @@ pub(crate) fn button_pair(ui: &mut egui::Ui, key: &str, states: [bool; 2], butto
                     } else {
                         t.control_fill
                     },
-                    egui::Stroke::new(1.0, t.control_border),
+                    t.control_border_stroke(t.control_border),
                     egui::StrokeKind::Inside,
                 );
                 let label = crate::i18n::tr_label(button.label);
@@ -253,6 +269,7 @@ pub(crate) fn button_pair(ui: &mut egui::Ui, key: &str, states: [bool; 2], butto
                 }
                 painter.galley(egui::pos2(left + icon_width, rect.center().y - galley.size().y / 2.0), galley, t.form_ink);
                 response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, ui.is_enabled(), on, label));
+                t.button_bevel(ui, &response, on);
                 pointer_on_hover(ui, &response);
                 crate::scenario::publish_target(&format!("{key}:{}", button.key), rect);
                 if let Some(value) = clicked.get_mut(index) {
@@ -277,6 +294,10 @@ pub enum Button {
 
 fn button_widget(label: egui::WidgetText, options: Button) -> egui::Button<'static> {
     let t = Tokens::get();
+    if t.borders.bevel.is_some() && !matches!(options, Button::Ghost) {
+        let button = egui::Button::new(label.color(t.form_ink)).fill(t.control_fill).stroke(t.control_border_stroke(t.control_border));
+        return if matches!(options, Button::Small | Button::SmallSelected) { button.small() } else { button };
+    }
     match options {
         Button::Small => egui::Button::new(label).small(),
         Button::Primary => {
@@ -298,6 +319,9 @@ pub fn button(ui: &mut Ui, label: impl Into<egui::WidgetText>, options: Button) 
         Button::Enabled(enabled) => ui.add_enabled_ui(enabled, |ui| ui.add(button_widget(crate::i18n::tr_label(&key).into(), options))).inner,
         _ => ui.add(button_widget(label, options)),
     };
+    if !matches!(options, Button::Ghost) {
+        Tokens::get().button_bevel(ui, &response, matches!(options, Button::SmallSelected));
+    }
     pointer_on_hover(ui, &response);
     let key = if matches!(options, Button::Enabled(_)) { crate::i18n::tr_label(&key) } else { &key };
     publish_button(ui, &response, key);
@@ -323,6 +347,9 @@ pub(crate) fn button_at(ui: &mut Ui, id: &str, rect: egui::Rect, label: impl Int
             },
         )
         .inner;
+    if !matches!(options, Button::Ghost) {
+        Tokens::get().button_bevel(ui, &response, matches!(options, Button::SmallSelected));
+    }
     pointer_on_hover(ui, &response);
     publish_button(ui, &response, &key);
     response
@@ -340,9 +367,14 @@ pub(crate) fn primary_button(ui: &mut Ui, label: &str) -> Response {
 /// `form_primary, on_accent, form_button_height, font_label`.
 pub(crate) fn wide_primary_button(ui: &mut Ui, label: &str) -> Response {
     let t = Tokens::get();
-    let text = RichText::new(crate::i18n::tr_label(label)).size(t.font_label).color(t.on_accent);
+    let text = RichText::new(crate::i18n::tr_label(label)).size(t.font_label).color(if t.borders.bevel.is_some() { t.form_ink } else { t.on_accent });
     let size = vec2(ui.available_width(), t.form_button_height);
-    let response = ui.add(egui::Button::new(crate::fonts::RichTextExt::bold_face(text)).fill(t.form_primary).min_size(size));
+    let response = ui.add(
+        egui::Button::new(crate::fonts::RichTextExt::bold_face(text))
+            .fill(if t.borders.bevel.is_some() { t.control_fill } else { t.form_primary })
+            .min_size(size),
+    );
+    t.button_bevel(ui, &response, false);
     pointer_on_hover(ui, &response);
     response
 }
@@ -417,7 +449,7 @@ pub(crate) fn icon_label_button(ui: &mut Ui, label: &str, icon: &str, enabled: b
                 rect,
                 t.control_radius,
                 if response.hovered() { t.hover } else { t.control_fill },
-                egui::Stroke::new(1.0, t.control_border),
+                t.control_border_stroke(t.control_border),
                 egui::StrokeKind::Inside,
             );
             let icon_rect =

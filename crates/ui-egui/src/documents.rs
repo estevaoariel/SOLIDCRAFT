@@ -487,7 +487,7 @@ pub fn tabs(app: &mut SolveApp, ui: &mut egui::Ui, r: Rect, x0: f32, x1: f32) {
         let xresp = ui.interact(xr, ui.id().with(("doc_close", i)), if show_close { Sense::click() } else { Sense::hover() });
         crate::scenario::publish_target(&format!("tab:close:{i}"), xr);
         if show_close && (xresp.hovered() || xresp.has_focus()) {
-            ui.painter().rect_filled(xr, 3.0, t.app_bar_hover_strong);
+            ui.painter().rect_filled(xr, t.radius_sm.saturating_sub(1), t.app_bar_hover_strong);
         }
         if show_close {
             crate::icons::paint_app_bar(
@@ -513,7 +513,7 @@ pub fn tabs(app: &mut SolveApp, ui: &mut egui::Ui, r: Rect, x0: f32, x1: f32) {
         let mresp = ui.interact(mr, ui.id().with("doc_more"), Sense::click());
         crate::scenario::publish_handle("tab:overflow", mr.center());
         if mresp.hovered() {
-            ui.painter().rect_filled(mr, 4.0, t.app_bar_hover_button);
+            ui.painter().rect_filled(mr, t.radius_sm, t.app_bar_hover_button);
         }
         ui.painter().text(
             mr.center(),
@@ -591,7 +591,7 @@ pub fn tabs(app: &mut SolveApp, ui: &mut egui::Ui, r: Rect, x0: f32, x1: f32) {
     let pr = Rect::from_center_size(pos2(x + 14.0, r.center().y), vec2(22.0, 22.0));
     let presp = ui.interact(pr, ui.id().with("doc_new"), Sense::click());
     if presp.hovered() {
-        ui.painter().rect_filled(pr, 4.0, t.app_bar_hover_button);
+        ui.painter().rect_filled(pr, t.radius_sm, t.app_bar_hover_button);
     }
     crate::icons::paint_app_bar(
         ui.painter(),

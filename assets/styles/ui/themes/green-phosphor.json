@@ -199,5 +199,13 @@
     "warning": "#d1ffad"
   },
   "format": "solidcraft-theme/1",
-  "name": "Green Phosphor"
+  "name": "Green Phosphor",
+  "radii": {
+    "radius_sm": 0,
+    "radius_md": 0,
+    "radius_lg": 0,
+    "radius_xl": 0,
+    "control_radius": 0,
+    "sketch_mode_radius": 0
+  }
 }

@@ -55,7 +55,7 @@
     "error": "#ff0000",
     "field": "#ffffff",
     "form_accent": "#800080",
-    "form_dim": "#808080",
+    "form_dim": "#404040",
     "form_error": "#800000",
     "form_error_fill": "#ffffc0",
     "form_fill": "#800080",
@@ -75,8 +75,8 @@
     "glyph_text": "#800000",
     "grid": "#40a0a0",
     "grid_major": "#808080",
-    "heading_bg": "#a0a0a0",
-    "hover": "#c0c0c0",
+    "heading_bg": "#c0c0c0",
+    "hover": "#dfdfdf",
     "hover_edge": "#000000",
     "hover_edge_halo": "#ffffff",
     "hover_profile": "#00008030",
@@ -176,7 +176,7 @@
     "sketch_point_free": "#000080",
     "sketch_projected": "#800080",
     "sketch_soft": "#c0dcc0",
-    "subheading_bg": "#b0b0b0",
+    "subheading_bg": "#c0c0c0",
     "surface_accent": "#000080",
     "surface_fill": "#808000",
     "surface_ink": "#808000",
@@ -199,5 +199,42 @@
     "warning": "#ffff00"
   },
   "format": "solidcraft-theme/1",
-  "name": "SolidCraft 95"
+  "name": "SolidCraft 95",
+  "borders": {
+    "primary": {
+      "width": 1,
+      "color": "#404040"
+    },
+    "secondary": {
+      "width": 1,
+      "color": "#808080"
+    },
+    "tertiary": {
+      "width": 1,
+      "color": "#a0a0a0"
+    },
+    "container": {
+      "width": 1,
+      "color": "#808080"
+    },
+    "control": {
+      "width": 1,
+      "color": "#808080"
+    },
+    "bevel": {
+      "width": 0.5,
+      "highlight": "#ffffff",
+      "light": "#dfdfdf",
+      "shadow": "#808080",
+      "dark_shadow": "#000000"
+    }
+  },
+  "radii": {
+    "radius_sm": 3,
+    "radius_md": 3,
+    "radius_lg": 4,
+    "radius_xl": 4,
+    "control_radius": 3,
+    "sketch_mode_radius": 3
+  }
 }
