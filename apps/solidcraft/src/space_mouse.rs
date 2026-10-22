@@ -623,9 +623,9 @@ impl System for Machine {
     }
 }
 
-/// A change of driver is only looked at when a read goes idle (every 250 ms of quiet), so a device
-/// that streams without a pause takes the new choice when it next pauses; a held cap goes quiet at
-/// once, a moving one at its next pause, so the wait is bounded by the motion.
+/// A change of driver, or the device being back, is looked at when a read goes idle (250 ms of quiet)
+/// and, for the daemon's stream, at least every 250 ms while records keep arriving, so the wait is
+/// bounded whatever the cap is doing.
 /// Reads the 3D mouse through spacenavd or `/dev/hidrawN`, as `Drivers::choice` says (Automatic
 /// is the device itself when it opens, else spacenavd, whose `spnavcfg` settings, swapped and
 /// inverted axes, sensitivity, dead zones, apply then as in other programs). Both reads wake up when idle to see whether the choice changed, which then
@@ -705,6 +705,7 @@ fn reader<S: System>(ctx: Context, shared: Arc<Mutex<Reading>>, drivers: Arc<Dri
                     |axes| publish_held(&ctx, &shared, axes),
                     |button, down| publish_button(&ctx, &shared, button, down),
                     &mut stop,
+                    times.wake,
                 );
                 reset(&ctx, &shared);
             }
@@ -1702,6 +1703,31 @@ mod tests {
         std::thread::sleep(Duration::from_millis(200));
         assert_eq!(reader.key().as_deref(), Some("spacenavd"));
         assert_eq!(fake.world().opens, 0, "the device was never opened");
+    }
+
+    /// A daemon that sends a record every couple of milliseconds, never going quiet, is still left for
+    /// the device when it returns (Automatic prefers the device).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_busy_daemon_is_left_for_the_device_that_returns() {
+        use machine::{Fake, IDS, Running};
+        let fake = Fake::default();
+        *fake.world() = machine::World { device: false, daemon: true, openable: true, ..Default::default() };
+        let reader = Running::start(SpaceMouseDriver::Automatic, fake.clone());
+        let until = Instant::now() + Duration::from_secs(3);
+        // The daemon streams without a pause from the start.
+        while reader.key().as_deref() != Some("spacenavd") {
+            assert!(Instant::now() < until, "the daemon is never read");
+            fake.daemon_sends_a_record();
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        fake.world().device = true;
+        let key = Source::Hid(Some(IDS)).key();
+        while reader.key().as_deref() != Some(key.as_str()) {
+            assert!(Instant::now() < until, "still reading {:?} with the device back", reader.key());
+            fake.daemon_sends_a_record();
+            std::thread::sleep(Duration::from_millis(2));
+        }
     }
 
     /// With the device and the daemon both there and Automatic, the device is read from the start, with no

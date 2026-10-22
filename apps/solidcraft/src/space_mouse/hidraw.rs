@@ -116,7 +116,7 @@ mod tests {
         std::io::Write::write_all(&mut daemon, &record).unwrap();
         drop(daemon);
         let mut seen = 0;
-        super::super::spacenavd::read(client, |_| seen += 1, |_, _| {}, || false);
+        super::super::spacenavd::read(client, |_| seen += 1, |_, _| {}, || false, Duration::from_secs(3600));
         assert_eq!(seen, 1);
     }
 

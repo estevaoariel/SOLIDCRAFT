@@ -12,6 +12,7 @@
 use std::io::Read;
 use std::os::unix::net::UnixStream;
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 use solidcraft_ui_egui::space_mouse::{Axes, FULL_SCALE};
 
@@ -81,12 +82,27 @@ fn unit(value: impl Into<i64>) -> i16 {
 /// Hands every motion record to `publish` and every button record to `pressed` until the daemon
 /// closes the connection or fails, or `stop` says so. A stream with a read timeout
 /// (`set_read_timeout`) times out when the daemon is quiet, which is no record and no disconnect:
-/// `stop` is asked, and the read goes on, with what of a record had arrived kept. A partial record
-/// at the end is dropped.
-pub fn read(mut stream: impl Read, mut publish: impl FnMut(Axes), mut pressed: impl FnMut(u32, bool), mut stop: impl FnMut() -> bool) {
+/// `stop` is asked, and the read goes on, with what of a record had arrived kept. `stop` is also asked
+/// at least every `check_every` while records keep arriving, so a daemon that never pauses for that
+/// long (a moving cap sends every few milliseconds) does not keep the reader from noticing that the
+/// device it prefers is back. A partial record at the end is dropped.
+pub fn read(
+    mut stream: impl Read,
+    mut publish: impl FnMut(Axes),
+    mut pressed: impl FnMut(u32, bool),
+    mut stop: impl FnMut() -> bool,
+    check_every: Duration,
+) {
     let mut record = [0_u8; RECORD_BYTES];
     let mut filled = 0;
+    let mut asked = Instant::now();
     loop {
+        if asked.elapsed() >= check_every {
+            asked = Instant::now();
+            if stop() {
+                return;
+            }
+        }
         match stream.read(record.get_mut(filled..).unwrap_or_default()) {
             Ok(0) => {
                 log::info!("3D mouse: spacenavd connection ended");
@@ -105,6 +121,7 @@ pub fn read(mut stream: impl Read, mut publish: impl FnMut(Axes), mut pressed: i
             }
             Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
             Err(error) if matches!(error.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {
+                asked = Instant::now();
                 if stop() {
                     return;
                 }
@@ -179,7 +196,7 @@ mod tests {
         daemon.write_all(&bytes).expect("written");
         drop(daemon);
         let (mut seen, mut buttons) = (Vec::new(), Vec::new());
-        read(client, |axes| seen.push(axes.translation), |number, down| buttons.push((number, down)), || false);
+        read(client, |axes| seen.push(axes.translation), |number, down| buttons.push((number, down)), || false, Duration::from_secs(3600));
         assert_eq!(seen, [[70, 0, 0], [0, 0, 0]]);
         assert_eq!(buttons, [(4, true), (4, false)]);
     }
@@ -200,6 +217,7 @@ mod tests {
                 asked += 1;
                 false
             },
+            Duration::from_secs(3600),
         );
         assert_eq!(seen, [[70, 0, 0]]);
         assert_eq!(asked, 4, "each timeout asks whether to stop");
@@ -212,8 +230,38 @@ mod tests {
         let mut script = Script::new();
         script.data(&bytes).timeout(std::io::ErrorKind::WouldBlock).data(&bytes);
         let mut seen = 0;
-        read(script, |_| seen += 1, |_, _| {}, || true);
+        read(script, |_| seen += 1, |_, _| {}, || true, Duration::from_secs(3600));
         assert_eq!(seen, 1, "the record before the timeout arrived; the one after never was read");
+    }
+
+    /// A daemon that never goes quiet (a moving cap sends every few milliseconds) is still asked whether to
+    /// stop, at the interval given, so the reader can go back to a device that returned.
+    #[test]
+    fn a_busy_daemon_is_asked_whether_to_stop_on_a_timer() {
+        struct Busy(u32);
+        impl Read for Busy {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                std::thread::sleep(Duration::from_millis(2));
+                self.0 += 1;
+                let bytes = record([0, 100, 0, 0, 0, 0, 0, 8]);
+                let size = bytes.len().min(buf.len());
+                buf[..size].copy_from_slice(&bytes[..size]);
+                Ok(size)
+            }
+        }
+        let (mut seen, mut asked) = (0, 0);
+        read(
+            Busy(0),
+            |_| seen += 1,
+            |_, _| {},
+            || {
+                asked += 1;
+                asked == 3
+            },
+            Duration::from_millis(10),
+        );
+        assert_eq!(asked, 3, "asked on the timer although no read ever timed out");
+        assert!(seen > 3, "records kept coming meanwhile: {seen}");
     }
 
     #[test]
