@@ -475,6 +475,7 @@ fn save_prompt_frames_dont_save_and_clicking_it_discards_for_close_and_quit() {
                 },
             );
             super::super::checks::tests::textures_update(&mut textures, &output.textures_delta);
+            output.textures_delta.clear();
         }
         h.output = output.platform_output.clone();
         let discard = scenario::rect_of("dialog:apply").unwrap();
