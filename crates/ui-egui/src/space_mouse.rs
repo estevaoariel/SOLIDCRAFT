@@ -200,11 +200,12 @@ fn buttons_active(app: &SolveApp, ctx: &egui::Context, focused: bool) -> bool {
 /// a button in Preferences finds it in the list instead, and a press made then isn't run later.
 pub fn buttons_hook(app: &mut SolveApp, ctx: &egui::Context, seen: Buttons, raw: &mut egui::RawInput) {
     // The device the buttons came from, not the one the last frame ended with: a switch of device
-    // (or a first one) starts the button history afresh, so a press on the new device runs its
-    // own mapping, and a button still down from the old one is not a press.
+    // (or a first one) starts the button history afresh at what is down now, so a button already down
+    // when the device changes (held through a switch of reader) is not a press on the new device. A
+    // press made on it is in `taps`, so it still runs the new device's own mapping.
     if app.space_mouse.buttons_device != seen.device {
         app.space_mouse.buttons_device = seen.device.clone();
-        app.space_mouse.buttons = 0;
+        app.space_mouse.buttons = seen.down;
     }
     let buttons = seen.down;
     let pressed = (buttons & !app.space_mouse.buttons) | seen.taps;
@@ -679,7 +680,10 @@ mod tests {
     fn press(app: &mut SolveApp, ctx: &egui::Context, buttons: u32, events: Vec<egui::Event>) -> egui::RawInput {
         let mut raw = egui::RawInput { focused: true, events, ..Default::default() };
         let device = app.space_mouse.device.clone();
-        buttons_hook(app, ctx, Buttons { device, down: buttons, taps: 0 }, &mut raw);
+        // As the reader reports them: a button newly down since its own last look is a tap, and a reader
+        // that has just connected to this device starts from nothing down.
+        let before = if app.space_mouse.buttons_device == device { app.space_mouse.buttons } else { 0 };
+        buttons_hook(app, ctx, Buttons { device, down: buttons, taps: buttons & !before }, &mut raw);
         ctx.run_ui(raw.clone(), |_| {}).textures_delta.clear();
         raw
     }
@@ -806,20 +810,27 @@ mod tests {
             app.preferences.space_mouse_buttons.insert(b.into(), [(1, ButtonJob::Key(ButtonKey::Esc))].into());
             (app, window(true))
         };
-        // A -> B with button 1 down in both: A's Shift lets go and the press on B runs B's Esc once,
-        // though the app's own idea of the device (set by the tick, later) is still A.
+        // A -> B with button 1 still down from before: A's Shift lets go, and the held button is not a
+        // press on B. A fresh press on B (it arrives as a tap) runs B's Esc once.
         let (mut app, ctx) = setup();
         app.space_mouse.device = Some(a.into());
         press_seen(&mut app, &ctx, device(Some(a), 1));
         assert!(app.space_mouse.held.shift);
-        assert_eq!(escapes(&press_seen(&mut app, &ctx, device(Some(b), 1))), 1);
+        assert_eq!(escapes(&press_seen(&mut app, &ctx, device(Some(b), 1))), 0, "held through the switch is not a press");
         assert!(!app.space_mouse.held.shift, "A's hold does not carry over");
-        assert_eq!(escapes(&press_seen(&mut app, &ctx, device(Some(b), 1))), 0, "and holding is not pressing again");
-        // None -> B: the first press is not swallowed by there having been no device.
+        assert_eq!(escapes(&press_seen(&mut app, &ctx, device(Some(b), 1))), 0, "and holding is not pressing");
+        press_seen(&mut app, &ctx, device(Some(b), 0));
+        let tap = Buttons { device: Some(b.into()), down: 1, taps: 1 };
+        assert_eq!(escapes(&press_seen(&mut app, &ctx, tap.clone())), 1, "a press on B runs B's job");
+        // None -> B: the first press is not swallowed by there having been no device (it is a tap).
         let (mut app, ctx) = setup();
         app.space_mouse.device = None;
         press_seen(&mut app, &ctx, device(None, 0));
-        assert_eq!(escapes(&press_seen(&mut app, &ctx, device(Some(b), 1))), 1);
+        assert_eq!(escapes(&press_seen(&mut app, &ctx, tap)), 1);
+        // And a button already down when the first device appears is not a press.
+        let (mut app, ctx) = setup();
+        press_seen(&mut app, &ctx, device(None, 0));
+        assert_eq!(escapes(&press_seen(&mut app, &ctx, device(Some(b), 1))), 0);
     }
 
     #[test]
