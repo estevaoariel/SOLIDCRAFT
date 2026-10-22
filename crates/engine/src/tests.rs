@@ -3981,3 +3981,24 @@ fn cheap_commands_on_thousands_of_bodies_evaluate_nothing() {
     }
     assert_eq!(meshes(&s), shown, "every body keeps its mesh");
 }
+
+/// #3397: a new, empty component changes nothing a feature reads, so creating one recomputes
+/// nothing, the first component of a design included: not a targeted cut, a Combine or a To
+/// Object extrude, which read placements.
+#[test]
+fn creating_a_component_recomputes_nothing() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 30, "width": 30, "height": 10, "operation": "new", "body_name": "Block"}));
+    run(&mut s, "solid.cylinder", json!({"diameter": 8, "height": 12, "base": [15, 15, -1], "operation": "cut", "targets": ["Block"]}));
+    run(&mut s, "solid.box", json!({"length": 10, "width": 30, "height": 20, "corner": [0, 0, 10], "operation": "new", "body_name": "Tab"}));
+    run(&mut s, "solid.combine", json!({"target": "Block", "tools": ["Tab"], "operation": "join"}));
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "Post sketch"}));
+    run(&mut s, "sketch.circle.center", json!({"center": [25, 25], "radius": 2}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"sketch": "Post sketch", "to": [25, 25, 10], "operation": "new", "body_name": "Post"}));
+    for name in ["First", "Second"] {
+        run(&mut s, "component.create", json!({"name": name}));
+        assert_eq!(s.model.last_recomputed, 0, "creating {name} recomputed a feature");
+        run(&mut s, "component.activate", json!({"component": "root"}));
+    }
+}

@@ -1383,9 +1383,8 @@ fn mirror_placements_digest(doc: &Document, f: &Feature, placements: &[Vec<u64>]
 }
 
 fn placement_digest(doc: &Document, f: &Feature, st: Option<&ModelState>) -> u64 {
-    if doc.occurrences.is_empty() && doc.body_offsets.is_empty() {
-        return 0;
-    }
+    // No shortcut for a design without placements: its first component (placed where the
+    // design is) must not change what its features read, or creating it evaluates them all.
     let mut reads = PlacementReads::default();
     let mut frame = None;
     let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -1483,7 +1482,17 @@ fn placement_digest(doc: &Document, f: &Feature, st: Option<&ModelState>) -> u64
     let Some(inverse) = crate::mat_inverse(&frame) else { return placements_hash(doc) };
     if reads.all {
         reads.components.insert(0);
-        reads.components.extend(doc.components.iter().map(|c| c.id));
+        match st {
+            // The components holding what the feature can reach: a component made later, or one
+            // that holds nothing yet (just created), changes nothing it reads.
+            Some(st) => {
+                reads.components.extend(doc.body_owners(st));
+                let owner = |id: u64| doc.feature(id).map(|g| g.component);
+                reads.components.extend(st.sketches.iter().filter_map(|s| owner(s.feature)));
+                reads.components.extend(st.construct.iter().filter_map(|c| owner(c.feature)));
+            }
+            None => reads.components.extend(doc.components.iter().map(|c| c.id)),
+        }
     }
     for c in &reads.components {
         c.hash(&mut h);
