@@ -191,25 +191,28 @@ pub(crate) struct PairButton<'a> {
 
 /// Equal-width secondary actions with optional icons and selected state. Tokens: `form_button_height, control_*, selected_bg, hover, font_label, text, icon/fill, accent, sketch_footer_icon_size, space_4/6/10`.
 pub(crate) fn button_pair(ui: &mut egui::Ui, key: &str, states: [bool; 2], buttons: [PairButton<'_>; 2]) -> (bool, bool) {
-    button_pair_surface(ui, key, states, buttons, true)
+    {
+        let clicked = button_row_surface(ui, key, states, buttons, true);
+        (clicked[0], clicked[1])
+    }
 }
 
-/// Equal-width actions inside an already bordered shell card; retain the shared action styling.
-pub(crate) fn button_pair_in_card(ui: &mut Ui, key: &str, states: [bool; 2], buttons: [PairButton<'_>; 2]) -> (bool, bool) {
-    button_pair_surface(ui, key, states, buttons, false)
+/// Equal-width actions sharing the existing contained-card styling.
+pub(crate) fn button_row_in_card<const N: usize>(ui: &mut Ui, key: &str, buttons: [PairButton<'_>; N]) -> [bool; N] {
+    button_row_surface(ui, key, [false; N], buttons, false)
 }
 
-fn button_pair_surface(ui: &mut Ui, key: &str, states: [bool; 2], buttons: [PairButton<'_>; 2], rule: bool) -> (bool, bool) {
+fn button_row_surface<const N: usize>(ui: &mut Ui, key: &str, states: [bool; N], buttons: [PairButton<'_>; N], rule: bool) -> [bool; N] {
     let t = Tokens::get();
     let ink = if rule { t.form_ink } else { t.text };
     if rule {
         ui.painter().hline(ui.max_rect().x_range(), ui.cursor().top(), egui::Stroke::new(1.0, t.dialog_rule));
     }
-    let mut clicked = [false; 2];
+    let mut clicked = [false; N];
     egui::Frame::NONE.inner_margin(egui::Margin::symmetric(t.space_10 as i8, t.space_6 as i8)).show(ui, |ui| {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = t.space_6;
-            let width = (ui.available_width() - t.space_6) / 2.0;
+            let width = ((ui.available_width() - t.space_6 * N.saturating_sub(1) as f32) / N.max(1) as f32).max(0.0);
             for (index, button) in buttons.iter().enumerate() {
                 let (rect, response) = ui.allocate_exact_size(vec2(width, t.form_button_height), egui::Sense::click());
                 let on = states.get(index).copied().unwrap_or(false);
@@ -253,7 +256,7 @@ fn button_pair_surface(ui: &mut Ui, key: &str, states: [bool; 2], buttons: [Pair
             }
         });
     });
-    (clicked.first().copied().unwrap_or(false), clicked.get(1).copied().unwrap_or(false))
+    clicked
 }
 
 /// Secondary button variants preserve native sizing and enabled-button translation.

@@ -349,22 +349,31 @@ fn insert_footer(app: &mut SolveApp, ui: &mut egui::Ui) {
         controls.set_clip_rect(card);
         let ui = &mut controls;
         let enabled = app.services.pick_open.is_some() && !app.file_picker_busy() && !app.file_load.busy();
-        let (mesh, step) = ui
+        let [step, iges, mesh] = ui
             .add_enabled_ui(enabled, |ui| {
-                crate::ui_kit::button_pair_in_card(
+                crate::ui_kit::button_row_in_card(
                     ui,
                     "library",
-                    [false; 2],
                     [
-                        crate::ui_kit::PairButton { key: "insert_mesh", label: "Insert Mesh", icon: Some("insert_mesh") },
-                        crate::ui_kit::PairButton { key: "insert_step", label: "Insert STEP", icon: Some("insert_step") },
+                        crate::ui_kit::PairButton { key: "insert_step", label: "STEP", icon: Some("insert_step") },
+                        crate::ui_kit::PairButton { key: "insert_iges", label: "IGES", icon: Some("insert_step") },
+                        crate::ui_kit::PairButton { key: "insert_mesh", label: "Mesh", icon: Some("insert_mesh") },
                     ],
                 )
             })
             .inner;
-        for (clicked, command) in [(mesh, "file.insert_mesh"), (step, "file.insert_step")] {
+        for (clicked, command, extensions) in [
+            (step, "file.insert_step", &["step", "stp"][..]),
+            (iges, "file.insert_step", &["igs", "iges"][..]),
+            (mesh, "file.insert_mesh", &["3mf", "stl", "obj", "glb", "gltf"][..]),
+        ] {
             if clicked && solidcraft_engine::find_command(command).is_some_and(|spec| spec.info(&app.session).enabled) {
-                app.start(command);
+                app.home.open = false;
+                app.pick_open_for(extensions, |app, path| {
+                    if let Some(path) = path {
+                        app.insert_path_async(&path);
+                    }
+                });
             }
         }
     });
@@ -709,13 +718,16 @@ mod tests {
         let count = asked.clone();
         let cancel = Rc::new(Cell::new(false));
         let answer = cancel.clone();
-        h.app.services.pick_open = Some(Box::new(move |_| {
+        let filters = Rc::new(std::cell::RefCell::new(Vec::new()));
+        let captured = filters.clone();
+        h.app.services.pick_open = Some(Box::new(move |extensions| {
+            captured.borrow_mut().push(extensions.iter().map(|s| (*s).to_string()).collect::<Vec<_>>());
             count.set(count.get() + 1);
             let answer = answer.clone();
             Box::pin(std::future::poll_fn(move |_| if answer.get() { std::task::Poll::Ready(None) } else { std::task::Poll::Pending }))
         }));
         // No library root is required for inserting into the active design.
-        for handle in ["library:insert_mesh", "library:insert_step"] {
+        for handle in ["library:insert_step", "library:insert_iges", "library:insert_mesh"] {
             cancel.set(false);
             h.app.home.open = true;
             h.frames(3);
@@ -733,7 +745,8 @@ mod tests {
             assert_eq!(h.app.session.doc.to_json(), original);
             assert!(h.app.library.root.is_none());
         }
-        assert_eq!(asked.get(), 2);
+        assert_eq!(asked.get(), 3);
+        assert_eq!(*filters.borrow(), vec![vec!["step", "stp"], vec!["igs", "iges"], vec!["3mf", "stl", "obj", "glb", "gltf"]]);
     }
 
     #[test]
@@ -743,7 +756,9 @@ mod tests {
         h.frames(3);
         let before = crate::scenario::handle_at("library:insert_mesh").unwrap();
         let step = crate::scenario::handle_at("library:insert_step").unwrap();
-        assert!(step.x - before.x > 100.0, "import controls overlap: {before:?} {step:?}");
+        let iges = crate::scenario::handle_at("library:insert_iges").unwrap();
+        assert!(step.x < iges.x && iges.x < before.x);
+        assert!(before.x - step.x > 100.0, "import controls overlap: {before:?} {step:?}");
         // The contained row has the same bottom inset and height as floating History.
         let card = crate::scenario::rect_of("library:import_card").unwrap();
         assert!((card.height() - 40.0).abs() < 0.5, "card={card:?}, controls={before:?}/{step:?}");
@@ -759,8 +774,8 @@ mod tests {
         assert!(search.right() < refresh.left(), "search and refresh overlap");
         assert!((search.center().y - refresh.center().y).abs() < 0.5, "search and refresh must share a row");
         assert_eq!(crate::scenario::handle_at("library:insert_mesh"), Some(before));
-        assert!(h.widget("Insert Mesh").is_some());
-        assert!(h.widget("Insert STEP").is_some());
+        assert!(h.widget("Mesh").is_some());
+        assert!(h.widget("STEP").is_some());
         h.app.library.collapsed = true;
         h.frames(3);
         assert!(crate::scenario::handle_at("library:insert_mesh").is_none());
@@ -805,7 +820,7 @@ mod tests {
                 },
             );
             let t = crate::theme::Tokens::get();
-            for label in ["CAD Files", "Insert Mesh", "Insert STEP"] {
+            for label in ["CAD Files", "STEP", "IGES", "Mesh"] {
                 let text = output
                     .shapes
                     .iter()
@@ -816,7 +831,7 @@ mod tests {
                     .unwrap_or_else(|| panic!("missing {label} in {theme}"));
                 assert!(text.galley.job.sections.iter().all(|s| s.format.color == t.text), "{label} in {theme}");
             }
-            for key in ["library:insert_mesh", "library:insert_step", "library:search_card", "library:refresh"] {
+            for key in ["library:insert_mesh", "library:insert_step", "library:insert_iges", "library:search_card", "library:refresh"] {
                 let rect = crate::scenario::rect_of(key).unwrap();
                 assert!(
                     output.shapes.iter().any(|s| matches!(&s.shape, egui::Shape::Rect(r) if r.rect == rect && r.stroke.color == t.border)),

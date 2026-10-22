@@ -684,14 +684,14 @@ const ELEMENTS: &[Element] = &[
             [PairButton { key: "look_at", label: "ui.look_at", icon: Some("lookat") }, PairButton { key: "slice", label: "Slice", icon: None }],
         );
     }),
-    element!("button_pair_in_card", "library:insert_mesh", Some("library:insert_mesh"), |ui, _| {
-        button_pair_in_card(
+    element!("button_row_in_card", "library:insert_mesh", Some("library:insert_mesh"), |ui, _| {
+        button_row_in_card(
             ui,
             "library",
-            [false; 2],
             [
-                PairButton { key: "insert_mesh", label: "Insert Mesh", icon: Some("insert_mesh") },
-                PairButton { key: "insert_step", label: "Insert STEP", icon: Some("insert_step") },
+                PairButton { key: "insert_step", label: "STEP", icon: Some("insert_step") },
+                PairButton { key: "insert_iges", label: "IGES", icon: Some("insert_step") },
+                PairButton { key: "insert_mesh", label: "Mesh", icon: Some("insert_mesh") },
             ],
         );
     }),
