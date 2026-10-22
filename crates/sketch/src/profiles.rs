@@ -1357,7 +1357,8 @@ mod tests {
     fn grid_cells_refuse_infinite_and_huge_boxes() {
         let small = Aabb2 { min: Vec2::new(0.0, 0.0), max: Vec2::new(10.0, 10.0) };
         let grid = Grid::new(&[small]);
-        assert_eq!(grid.cells(&small).map(|c| c.len()), Some(1));
+        // A box spanning the whole grid touches the 2 x 2 cells at its corners.
+        assert_eq!(grid.cells(&small).map(|c| c.len()), Some(4));
         let inf = Aabb2 { min: Vec2::new(-f64::INFINITY, -f64::INFINITY), max: Vec2::new(f64::INFINITY, f64::INFINITY) };
         assert!(grid.cells(&inf).is_none());
         let nan = Aabb2 { min: Vec2::new(f64::NAN, 0.0), max: Vec2::new(1.0, 1.0) };

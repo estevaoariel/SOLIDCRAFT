@@ -183,6 +183,11 @@ impl Out {
     }
     fn line(&mut self, t: Tf, a: Vec2, b: Vec2) -> Result<()> {
         let (a, b) = (t.apply(a), t.apply(b));
+        if !(a.is_finite() && b.is_finite()) {
+            // Checked before the length: the distance between infinite ends is NaN, which would
+            // drop the line silently.
+            return Err(IoError::Invalid(OUT_OF_RANGE.into()));
+        }
         if a.dist(b) > 1e-12 { self.push(Geom2::Line(a, b)) } else { Ok(()) }
     }
     fn cubic(&mut self, t: Tf, p: [Vec2; 4]) -> Result<()> {
