@@ -146,11 +146,11 @@ pub(super) fn dialog(app: &mut SolveApp, ctx: &egui::Context) {
                     ui,
                     ui.id().with("library_filename"),
                     &mut dialog.name,
-                    "New filename",
+                    "library.new_filename",
                     dialog.error.is_some(),
                     255,
                 );
-                input.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, "New filename"));
+                input.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, crate::i18n::tr("library.new_filename")));
                 if dialog.focus {
                     input.request_focus();
                     dialog.focus = false;
