@@ -183,6 +183,18 @@ impl SharedTris {
     }
 }
 
+/// How an [`InstancedMesh`]'s placements are drawn: opaque, or see-through (their colour's alpha)
+/// as faded context (another component active) or as glass (an appearance's opacity).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum InstanceLook {
+    #[default]
+    Opaque,
+    /// With the translucent triangles ([`GpuScene::trans`]): no depth written.
+    Faded,
+    /// With the see-through bodies ([`GpuScene::glass`]): far sides, then near sides.
+    Glass,
+}
+
 /// Triangles drawn at several places: a part placed by many occurrences keeps one copy of its
 /// triangles on the GPU, drawn once per placement, however often it is placed.
 #[derive(Clone)]
@@ -194,6 +206,8 @@ pub struct InstancedMesh {
     pub tris: Arc<SharedTris>,
     /// The placements, [`INSTANCE_SIZE`] bytes each ([`InstancedMesh::place`]).
     pub instances: Vec<u8>,
+    /// How its placements are drawn (see-through ones are drawn back to front).
+    pub look: InstanceLook,
     /// Coarser copies of the triangles, finest first, each with how far it strays from them (mm,
     /// in the part's frame): a placement small on screen is drawn from the coarsest whose error
     /// stays under [`LOD_PX`] there ([`Batches::cull`]).
@@ -289,7 +303,11 @@ impl GpuScene {
             out.hidden.extend_from_slice(&block.bytes.hidden);
         }
         for m in std::mem::take(&mut self.instanced) {
-            m.expand_into(&mut out.tris);
+            match m.look {
+                InstanceLook::Opaque => m.expand_into(&mut out.tris),
+                InstanceLook::Faded => m.expand_into(&mut out.trans),
+                InstanceLook::Glass => m.expand_into(&mut out.glass),
+            }
         }
         out.tris.append(&mut self.tris);
         out.trans.append(&mut self.trans);
@@ -708,6 +726,7 @@ struct LevelDraw {
 /// An [`InstancedMesh`] on the GPU: its triangles and coarser levels (shared with the next scene
 /// while they come back), and the placements in view, each drawn from its level.
 struct InstancedDraw {
+    look: InstanceLook,
     /// The full triangles first, then coarser ones.
     levels: Vec<LevelDraw>,
     bounds: [[f32; 3]; 2],
@@ -888,7 +907,7 @@ impl Batches {
                 self.instanced_tris.insert(key, gpu);
             }
             if !levels.is_empty() {
-                out.push(InstancedDraw { levels, bounds: m.tris.bounds, placements, shown: None });
+                out.push(InstancedDraw { look: m.look, levels, bounds: m.tris.bounds, placements, shown: None });
             }
         }
         out
@@ -904,7 +923,7 @@ impl Batches {
         let f = |b: &[u8], i: usize| b.get(i..i + 4).and_then(|x| x.try_into().ok()).map_or(0.0, f32::from_le_bytes);
         for d in &mut self.instanced {
             let errors: Vec<f32> = d.levels.iter().map(|l| l.error).collect();
-            let shown: Vec<(u32, u8)> = d
+            let mut shown: Vec<(u32, u8)> = d
                 .placements
                 .as_chunks::<INSTANCE_SIZE>()
                 .0
@@ -918,6 +937,20 @@ impl Batches {
                     })
                 })
                 .collect();
+            // See-through placements back to front (by their box's centre), so each blends over
+            // what lies behind it.
+            if d.look != InstanceLook::Opaque {
+                let depth = |i: u32| {
+                    let p = d.placements.get(i as usize * INSTANCE_SIZE..(i as usize + 1) * INSTANCE_SIZE).unwrap_or_default();
+                    let rows = [0, 1, 2].map(|r| [f(p, 16 * r), f(p, 16 * r + 4), f(p, 16 * r + 8), f(p, 16 * r + 12)]);
+                    let [lo, hi] = d.bounds;
+                    let c = [0, 1, 2].map(|k| (lo[k] + hi[k]) * 0.5);
+                    let w = rows.map(|r| r[0] * c[0] + r[1] * c[1] + r[2] * c[2] + r[3]);
+                    let clip: [f32; 4] = std::array::from_fn(|k| vp[0][k] * w[0] + vp[1][k] * w[1] + vp[2][k] * w[2] + vp[3][k]);
+                    if clip[3].abs() > 1e-12 { clip[2] / clip[3] } else { f32::INFINITY }
+                };
+                shown.sort_by(|a, b| depth(b.0).total_cmp(&depth(a.0)).then(a.0.cmp(&b.0)));
+            }
             if d.shown.as_ref() == Some(&shown) {
                 continue;
             }
@@ -1019,6 +1052,10 @@ pub struct Renderer {
     tri_cut_instanced: Option<(wgpu::RenderPipeline, wgpu::RenderPipeline)>,
     /// `tri_instanced` and `tri_cut_instanced` for flat triangles.
     tri_instanced_flat: wgpu::RenderPipeline,
+    /// `glass_far`, `glass_near` and `trans` for instanced meshes, smooth and flat.
+    glass_far_instanced: (wgpu::RenderPipeline, wgpu::RenderPipeline),
+    glass_near_instanced: (wgpu::RenderPipeline, wgpu::RenderPipeline),
+    trans_instanced: (wgpu::RenderPipeline, wgpu::RenderPipeline),
     tri_cut_instanced_flat: Option<(wgpu::RenderPipeline, wgpu::RenderPipeline)>,
     /// The tessellation compute pipeline, where the device runs compute shaders.
     tess: Option<crate::TessGpu>,
@@ -1412,6 +1449,37 @@ impl Renderer {
                 cache: None,
             })
         };
+        // See-through instanced meshes: blended, depth tested, not written; `cull` for glass.
+        let placed_see_through = [Some(shared_layout()), Some(instance_layout())];
+        let see_through = |label: &str, source: TriSource, cull: Option<wgpu::Face>| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(label),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &module,
+                    entry_point: Some(source.entry()),
+                    buffers: &placed_see_through,
+                    compilation_options: Default::default(),
+                },
+                primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleList, cull_mode: cull, ..Default::default() },
+                depth_stencil: depth(wgpu::CompareFunction::LessEqual, false),
+                multisample: wgpu::MultisampleState { count: t.samples.max(1), mask: !0, alpha_to_coverage_enabled: false },
+                fragment: Some(wgpu::FragmentState {
+                    module: &module,
+                    entry_point: Some(&source.fragment("fs_tri")),
+                    targets: &[Some(wgpu::ColorTargetState { format: t.format, blend: alpha, write_mask: wgpu::ColorWrites::ALL })],
+                    compilation_options: Default::default(),
+                }),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        let both = |label: &str, cull: Option<wgpu::Face>| {
+            (see_through(label, TriSource::Instanced, cull), see_through(&format!("{label}_flat"), TriSource::InstancedFlat, cull))
+        };
+        let glass_far_instanced = both("sc_glass_far_instanced", Some(wgpu::Face::Front));
+        let glass_near_instanced = both("sc_glass_near_instanced", Some(wgpu::Face::Back));
+        let trans_instanced = both("sc_trans_instanced", None);
         let image_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("sc_image"),
             entries: &[
@@ -1660,6 +1728,9 @@ impl Renderer {
                 TriSource::InstancedFlat,
             ),
             tri_cut_instanced_flat: cut(TriSource::InstancedFlat),
+            glass_far_instanced,
+            glass_near_instanced,
+            trans_instanced,
             tess,
             access_bgl,
             access_bind,
@@ -1969,7 +2040,7 @@ impl Renderer {
         };
         // Instanced meshes, with the pipeline for smooth and for flat triangles.
         let instanced = |pass: &mut wgpu::RenderPass<'static>, smooth: &wgpu::RenderPipeline, flat: &wgpu::RenderPipeline| {
-            for d in &m.instanced {
+            for d in m.instanced.iter().filter(|d| d.look == InstanceLook::Opaque) {
                 d.draw(pass, smooth, flat);
             }
         };
@@ -2018,9 +2089,19 @@ impl Renderer {
             }
         }
         tris(pass, &res.ghost, &pv.ghost);
+        // See-through instanced meshes (placements back to front) with the rest of their kind.
+        let see_through =
+            |pass: &mut wgpu::RenderPass<'static>, look: InstanceLook, (smooth, flat): &(wgpu::RenderPipeline, wgpu::RenderPipeline)| {
+                for d in m.instanced.iter().filter(|d| d.look == look) {
+                    d.draw(pass, smooth, flat);
+                }
+            };
         tris(pass, &res.glass_far, &m.glass);
+        see_through(pass, InstanceLook::Glass, &res.glass_far_instanced);
         tris(pass, &res.glass_near, &m.glass);
+        see_through(pass, InstanceLook::Glass, &res.glass_near_instanced);
         tris(pass, &res.trans, &m.trans);
+        see_through(pass, InstanceLook::Faded, &res.trans_instanced);
         tris(pass, &res.trans, &sk.trans);
         tris(pass, &res.trans, &h.trans);
         tris(pass, &res.guide_trans, &h.guide_trans);

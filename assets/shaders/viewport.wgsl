@@ -147,6 +147,15 @@ fn fs_solid_cut_flat(i: FOut, @builtin(front_facing) front: bool) -> CutOut {
     return o;
 }
 
+/// A see-through flat-shaded placement (faded or glass), shaded like `fs_tri`.
+@fragment
+fn fs_tri_flat(i: FOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    let t = flat_fragment(i, front);
+    let c = shade(t);
+    if (clipped(t.wp)) { discard; }
+    return c;
+}
+
 @fragment
 fn fs_ao_depth_flat(i: FOut, @builtin(front_facing) front: bool) -> AoDepth {
     let t = flat_fragment(i, front);

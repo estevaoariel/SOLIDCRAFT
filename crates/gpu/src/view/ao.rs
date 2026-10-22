@@ -168,7 +168,7 @@ impl Resources {
                 pass.set_index_buffer(draw.mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..draw.mesh.index_count, 0, 0..1);
             }
-            for draw in &batch.instanced {
+            for draw in batch.instanced.iter().filter(|d| d.look == super::InstanceLook::Opaque) {
                 draw.draw(&mut pass, &self.instanced_pipeline, &self.instanced_flat_pipeline);
             }
         }

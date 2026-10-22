@@ -740,30 +740,39 @@ impl Instances {
         Instances { candidates, meshes: Vec::new(), kept, lods: app.viewport.mesh_lods.clone() }
     }
 
-    /// Draw `b` (in colour `col`) as an instance when it is one: its shared mesh and placement.
+    /// Draw `b` as an instance when it is one, in colour `col` (its alpha for a see-through
+    /// `look`): its shared mesh and placement.
     fn place(
         &mut self,
         b: &solidcraft_engine::doc::ModelBody,
         col: [u8; 4],
+        look: crate::gpu::InstanceLook,
     ) -> Option<(std::sync::Arc<solidcraft_engine::geom::Mesh>, solidcraft_engine::doc::Mat)> {
         let (mesh, m) = self.candidates.get(&b.name)?.clone();
         let rows = [0, 1, 2].map(|r| [m[0][r] as f32, m[1][r] as f32, m[2][r] as f32, m[3][r] as f32]);
         let key = std::sync::Arc::as_ptr(&mesh) as usize;
-        let at = match self.meshes.iter().position(|(k, _)| std::sync::Arc::ptr_eq(k, &mesh)) {
+        let at = match self.meshes.iter().position(|(k, i)| std::sync::Arc::ptr_eq(k, &mesh) && i.look == look) {
             Some(at) => at,
             None => {
-                let tris = match self.kept.get(&key).filter(|(k, _)| std::sync::Arc::ptr_eq(k, &mesh)) {
-                    Some((_, t)) => t.clone(),
-                    None => taken_shared_tris(&mesh).unwrap_or_else(|| std::sync::Arc::new(crate::gpu::SharedTris::new(&mesh))),
+                // The same triangles (and levels) for each look of a mesh.
+                let made = self.meshes.iter().find(|(k, _)| std::sync::Arc::ptr_eq(k, &mesh)).map(|(_, i)| (i.tris.clone(), i.levels.clone()));
+                let (tris, levels) = match made {
+                    Some(made) => made,
+                    None => (
+                        match self.kept.get(&key).filter(|(k, _)| std::sync::Arc::ptr_eq(k, &mesh)) {
+                            Some((_, t)) => t.clone(),
+                            None => taken_shared_tris(&mesh).unwrap_or_else(|| std::sync::Arc::new(crate::gpu::SharedTris::new(&mesh))),
+                        },
+                        // A large mesh's levels of detail, once made (until then, drawn in full).
+                        self.lods.levels(&mesh).map(|l| l.as_ref().clone()).unwrap_or_default(),
+                    ),
                 };
-                // A large mesh's levels of detail, once made (until then, drawn in full).
-                let levels = self.lods.levels(&mesh).map(|l| l.as_ref().clone()).unwrap_or_default();
-                self.meshes.push((mesh.clone(), crate::gpu::InstancedMesh { key: key as u64, tris, instances: Vec::new(), levels }));
+                self.meshes.push((mesh.clone(), crate::gpu::InstancedMesh { key: key as u64, tris, instances: Vec::new(), look, levels }));
                 self.meshes.len() - 1
             }
         };
         let (_, inst) = self.meshes.get_mut(at)?;
-        inst.place(rows, [col[0], col[1], col[2], 255]);
+        inst.place(rows, col);
         Some((mesh, m))
     }
 
@@ -840,7 +849,21 @@ pub(crate) fn build_scene(app: &SolveApp) -> GpuScene {
                 .collect();
             sc.planned.push(crate::gpu::PlannedBody { plan, face_colors });
         }
-        let instanced = (!on_gpu && !faded && face_looks.is_empty() && opacity >= 0.999).then(|| instances.place(b, col)).flatten();
+        // Opaque, faded and see-through bodies alike, in one colour (faces of their own colour
+        // are built as before).
+        let look = if faded {
+            crate::gpu::InstanceLook::Faded
+        } else if opacity < 0.999 {
+            crate::gpu::InstanceLook::Glass
+        } else {
+            crate::gpu::InstanceLook::Opaque
+        };
+        let alpha = match look {
+            crate::gpu::InstanceLook::Faded => col[3],
+            crate::gpu::InstanceLook::Glass => (opacity.clamp(0.05, 1.0) * 255.0).round() as u8,
+            crate::gpu::InstanceLook::Opaque => 255,
+        };
+        let instanced = (!on_gpu && face_looks.is_empty()).then(|| instances.place(b, [col[0], col[1], col[2], alpha], look)).flatten();
         let body = match instanced {
             Some((mesh, place)) => BodyDraw { mesh, place: Some(place), col, faded, opacity, face_looks, on_gpu: true },
             None => BodyDraw { mesh: drawn_mesh(app, b), place: None, col, faded, opacity, face_looks, on_gpu },
@@ -4894,6 +4917,10 @@ mod tests {
         for k in 1..25 {
             app.run("occurrence.copy", json!({"component":component,"translate":[f64::from(k % 5) * step, f64::from(k / 5) * step, 0.0]})).unwrap();
         }
+        // `SOLIDCRAFT_BENCH_OPACITY=0.5`: every placement see-through.
+        if let Some(opacity) = std::env::var("SOLIDCRAFT_BENCH_OPACITY").ok().and_then(|v| v.parse::<f64>().ok()) {
+            app.run("appearance.assign", json!({"components": [component.to_string()], "color": "#b4b8bc", "opacity": opacity})).unwrap();
+        }
         let Some((_, device, queue)) = crate::gpu::offscreen_device() else {
             eprintln!("skipping: no GPU adapter");
             return;
@@ -4950,14 +4977,15 @@ mod tests {
             t.elapsed().as_secs_f64(),
             lod.instanced.iter().map(|m| m.levels.iter().map(|(t, e)| (t.indices.len() / 3, *e)).collect::<Vec<_>>()).collect::<Vec<_>>()
         );
-        // `SOLIDCRAFT_BENCH_PNG=dir`: the view drawn in full and from the levels, side by side.
+        // `SOLIDCRAFT_BENCH_PNG=dir`: the view drawn from each placement's own triangles, in full
+        // as instances, and from the levels (`SOLIDCRAFT_BENCH_PNG_ONLY=1`: then stop).
         if let Some(dir) = std::env::var_os("SOLIDCRAFT_BENCH_PNG") {
             const SIDE: u32 = 1024;
             let rect = Rect::from_min_size(Pos2::ZERO, vec2(SIDE as f32, SIDE as f32));
             let proj = projection(&app, rect);
             let e = proj.cam.eye().to_f32();
             let eye = [e[0], e[1], e[2], if proj.cam.fov > 0.0 { 1.0 } else { 0.0 }];
-            for (name, scene) in [("full", scene.clone()), ("lod", lod.clone())] {
+            for (name, scene) in [("own", scene.clone().merged()), ("full", scene.clone()), ("lod", lod.clone())] {
                 if let Some(rgba) = crate::gpu::render_offscreen(
                     scene,
                     None,
@@ -4974,11 +5002,14 @@ mod tests {
                 }
             }
         }
+        if std::env::var_os("SOLIDCRAFT_BENCH_PNG_ONLY").is_some() {
+            return;
+        }
         for (label, scene) in [("own triangles", scene.clone().merged()), ("instanced", scene), ("instanced, levels of detail", lod)] {
             let mut renderer = crate::gpu::Renderer::new(&device, GpuTarget { format, depth: Some(depth), samples, tess: false }, None);
             let slot: SceneSlot = std::sync::Arc::new(std::sync::Mutex::new(Some(scene)));
             let none = || std::sync::Arc::new(std::sync::Mutex::new(None));
-            let mut times = Vec::new();
+            let (mut times, mut prepared) = (Vec::new(), Vec::new());
             for k in 0..40 {
                 app.cam.yaw = yaw + f64::from(k) * 0.05;
                 let proj = projection(&app, rect);
@@ -5011,6 +5042,9 @@ mod tests {
                 let t0 = std::time::Instant::now();
                 let mut encoder = device.create_command_encoder(&Default::default());
                 renderer.prepare(&device, &queue, &mut encoder, &frame);
+                if k >= 5 {
+                    prepared.push(t0.elapsed().as_secs_f64() * 1e3);
+                }
                 {
                     let mut pass = encoder
                         .begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -5043,7 +5077,14 @@ mod tests {
                 }
             }
             times.sort_by(f64::total_cmp);
-            eprintln!("{label}: median {:.1} ms a frame (min {:.1}, max {:.1})", times[times.len() / 2], times[0], times[times.len() - 1]);
+            prepared.sort_by(f64::total_cmp);
+            eprintln!(
+                "{label}: median {:.1} ms a frame (min {:.1}, max {:.1}), of which {:.1} ms preparing on the CPU",
+                times[times.len() / 2],
+                times[0],
+                times[times.len() - 1],
+                prepared[prepared.len() / 2]
+            );
         }
     }
 
@@ -5162,6 +5203,67 @@ mod tests {
         assert!(drawn > 300, "the sphere is drawn: {drawn} pixels");
         let differ = lod.chunks(4).zip(full.chunks(4)).filter(|(a, b)| a.iter().zip(b.iter()).any(|(x, y)| x.abs_diff(*y) > 24)).count();
         assert!(differ * 20 < drawn, "{differ} of {drawn} pixels differ");
+    }
+
+    /// See-through and faded placements of a part are drawn as instances too, with their alpha:
+    /// glass with an appearance's opacity, faded context with another component active. None
+    /// of their triangles go to the glass sorted triangle by triangle, and they look as their
+    /// own triangles did. GPU pictures skipped without an adapter.
+    #[test]
+    fn see_through_and_faded_placements_are_drawn_as_instances() {
+        use crate::gpu::InstanceLook;
+        let mut app = three_placed_parts(PARTS[0]);
+        app.run("appearance.assign", json!({"components": ["Part"], "color": "#3366cc", "opacity": 0.4})).unwrap();
+        let glass = build_scene(&app);
+        assert_eq!(glass.instanced.len(), 1);
+        assert_eq!((glass.instanced[0].look, glass.instanced[0].count()), (InstanceLook::Glass, 3));
+        assert!(glass.instanced[0].instances.as_chunks::<{ crate::gpu::INSTANCE_SIZE }>().0.iter().all(|p| p[51] == 102), "alpha 0.4");
+        assert!(glass.glass.is_empty(), "no triangle sorted one by one");
+        assert!(!glass.clone().merged().glass.is_empty());
+        // One placement active (as right after the part is made): the others faded.
+        let mut context = SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
+        context.viewport.gpu = app.viewport.gpu;
+        context.ui.ground_shadow = false;
+        context.ui.show_origin = false;
+        context.run("component.create", json!({"name":"Part"})).unwrap();
+        context.run(PARTS[0].0, serde_json::from_str(PARTS[0].1).unwrap()).unwrap();
+        context.run("occurrence.copy", json!({"component":"Part","translate":[40,0,0]})).unwrap();
+        context.run("occurrence.copy", json!({"component":"Part","translate":[0,40,0]})).unwrap();
+        let faded = build_scene(&context);
+        let looks: Vec<_> = faded.instanced.iter().map(|m| (m.look, m.count())).collect();
+        assert!(looks.contains(&(InstanceLook::Faded, 2)), "the other placements faded: {looks:?}");
+        assert!(faded.trans.is_empty());
+        for (name, scene) in [("glass", glass), ("faded", faded)] {
+            app.fit_view();
+            const SIZE: u32 = 256;
+            let rect = Rect::from_min_size(Pos2::ZERO, vec2(SIZE as f32, SIZE as f32));
+            let proj = projection(&app, rect);
+            let e = proj.cam.eye().to_f32();
+            let eye = [e[0], e[1], e[2], if proj.cam.fov > 0.0 { 1.0 } else { 0.0 }];
+            let render = |scene: GpuScene| {
+                crate::gpu::render_offscreen(
+                    scene,
+                    None,
+                    proj.vp.to_f32(),
+                    proj.cam.back().to_f32(),
+                    eye,
+                    SIZE,
+                    None,
+                    [0.0; 8],
+                    crate::gpu::analysis_colors(&Tokens::get().analysis),
+                )
+            };
+            let (Some(instanced), Some(own)) = (render(scene.clone()), render(scene.merged())) else {
+                eprintln!("skipping: no GPU adapter");
+                return;
+            };
+            let drawn = own.chunks(4).filter(|p| p[..3] != [255, 255, 255]).count();
+            assert!(drawn > 1000, "{name}: drawn {drawn}");
+            let differ = instanced.chunks(4).zip(own.chunks(4)).filter(|(a, b)| a.iter().zip(b.iter()).any(|(x, y)| x.abs_diff(*y) > 24)).count();
+            // A pixel here and there along the boxes' edges, where moving the corners on the GPU
+            // rounds them differently.
+            assert!(differ * 50 < drawn, "{name}: {differ} of {drawn} pixels differ");
+        }
     }
 
     /// Each placement of a part is picked where it stands, the turned one too, from the part's
