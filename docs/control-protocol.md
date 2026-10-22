@@ -51,13 +51,20 @@ answered within 60 seconds (3600 seconds for `engine.batch`) is replied to with
 `{"ok": false, "running": true, "error": "timeout: … is still running …"}`. The same 16 MiB line
 limit applies to the MCP server.
 
-A timed-out request has not failed: it is still running in the app and will still apply (a long
-fillet, say), so don't simply send it again. The connection keeps its reply (#1618). Ask for it
+A timed-out request has not failed: it is still running in the app, and a change still applies
+when it finishes (a long fillet, say), so don't simply send it again. The timeout's text says
+what it still does: a request that only reads (`ui.inspect`, `document.inspect`, an inspection
+command) "only reads: nothing changes"; one that only writes a file (`file.export`,
+`file.save`, `file.save_as`, `file.save_mesh`, another export given a `path`, `ui.render`, or
+`ui.screenshot` with a `path`) "will still write the file when it finishes" and leaves the design
+as it is; any other request "will still apply when it finishes". The connection keeps its reply (#1618). Ask for it
 with `control.pending`: `{"pending": <id>, "method": …, "done": false}` while it runs, then
 `{"pending": <id>, "method": …, "done": true, "reply": {…}}` (its own reply, once), and
 `{"pending": null}` when nothing is outstanding. Until it lands, any other request on that
 connection is refused at once with `{"ok": false, "busy": true, "error": "busy: …"}` and not
-run, so nothing is queued to apply unseen behind it.
+run, so nothing is queued to apply unseen behind it. `control.pending` belongs to the
+connection: a new connection has nothing pending. The bridged MCP server does this itself
+([mcp.md](mcp.md#long-running-requests)).
 
 `control.pending` answers only for its own connection. `control.running` answers for the whole
 app, the same on every connection, at once (it never waits behind a running request, and a
@@ -86,6 +93,35 @@ The app adds its own recovery folder and, when it lies safely inside the home fo
 a hidden folder, the open design's folder (whose hidden files stay out of reach). The bridged
 MCP server sends its folders this way on every request ([mcp.md](mcp.md)). Without
 `allow_paths` file paths are not limited: a client holding the token can do what the user can.
+
+### Cancelling a request
+
+`control.cancel {id?}` cancels the request the connection still waits for: the timed-out one
+`control.pending` reports (`id`, when given, must name it). A connection can only cancel its own
+requests; another id is refused with `nothing to cancel: request … is not running on this
+connection`. What happens depends on where the request is:
+
+- **Waiting its turn** (behind a design change that computes, a file opening, the agent cursor):
+  it is removed and never runs. `{"cancelled": <id>, "method": …, "outcome": "removed", "note":
+  "cancelled: …"}`; its own reply, if anyone still reads it, is `{"ok": false, "cancelled": true,
+  "error": "cancelled: …; nothing was applied"}`.
+- **Computing off the window thread** (a design change or an export, see below, or one the
+  agent cursor is acting out): it is stopped as **Stop** stops it, and nothing of it is applied:
+  `"outcome": "stopped"`. Its worker is told to stop as well: the evaluation skips the features it
+  has not reached, the kernel's booleans give up at their next try, and nothing it computed after
+  that is kept. A boolean or tessellation already under way still runs to its end in the
+  background. An export's worker may still write its file; the design is unchanged.
+- **Running on the window thread** (with the preference off, while it applies after computing, or
+  a file being opened or imported, which the app's own Cancel stops): it can't be cancelled.
+  `{"ok": false, "cancellable": false, "error": "cannot be cancelled: …"}`; it will still finish,
+  and `control.pending` gets its result.
+- **Finished**: its reply comes back as `control.pending` gives it (`done: true, reply`), with
+  `cancelled: null`.
+
+With nothing outstanding the reply is `{"cancelled": null, "note": "nothing to cancel: …"}`.
+After a request is cancelled or stopped the connection is free at once (`control.pending` says
+`{"pending": null}`). Since a connection sends one request at a time, only a request that
+outlasted its wait (60 s) can be cancelled from the connection that sent it.
 
 ## Engine
 
@@ -121,7 +157,8 @@ drawing and answering while it runs:
   replaced … nothing was applied`.
 - A chip in the view names the command, with **Stop**. Stop answers
   `{"ok": false, "stopped": true, "error": "stopped: …; nothing was applied"}` and the requests
-  waiting behind it go on. The computation finishes unseen in the background.
+  waiting behind it go on. The computation stops at its next feature or boolean try, in the
+  background. The agent can do the same for its own request with `control.cancel` (above).
 - `file.export` and `file.save_mesh` change nothing in the design. They run on a copy of the
   design as it was when they were asked for, and nothing waits behind them.
 - Batches with `timings` or `profile` still run on the window thread, so the times they report
@@ -191,7 +228,7 @@ labels; `prefs:measure_axis_distances` identifies the checkbox.
 | `ui.sketchToScreen` | `points`: `[[x, y]…]` in active-sketch coordinates | their screen points (null when behind the camera) |
 | `ui.dialogInput` | `index` | what clicking an input's Select chip does: picks go to that input |
 | `ui.at` | `world: [x,y,z]` \| `sketch: [x,y]` \| `plane: "XY"` \| `axis: "Z"` \| `dimension: "d1"` (its value text) \| `handle: "arrow"` (a manipulator handle, see `scenario::publish_handle`) | the screen point (a scenario step's target; see `crates/ui-egui/src/scenario.rs`) |
-| `ui.handles` | `prefix?` | the handles drawn last frame, `[{name, x, y}]`: toolbar buttons and drop-down items `toolbar:<command id>` (the button alone: `button:<command id>`; a drop-down row: `dropdown:<command id>`, highlighted `dropdown_hot:<command id>`, its pin `dropdown_pin:<command id>`; Customize Toolbar's check boxes `customize:<command id>`), ribbon tabs `tab:<name>` (MODEL, SURFACE, ASSEMBLE, INSERT, INSPECT, MANAGE, VIEW, SHEET METAL; contextual SKETCH; workspace RENDER), panel labels `panel:<tab>:<panel>` (also `ribbon:section:<TAB>:<SECTION>`), document overflow list `tab:overflow`, workspace column `ribbon:workspace`, command-search launcher `ribbon:search`, browser rows `row:<label>` and fold arrows `fold:<label>`, manipulator handles; signed-axis tips `axis_view:z`, `axis_view:-y`; optional cube facets `navigation_cube:top`, `navigation_cube:top_front_right`, controls `navigation_cube:control:home` (and other actions), plus signed-axis aliases for visible cube faces; Preferences navigator picker `prefs:navigator`, options `prefs:navigator:Signed axes` and `prefs:navigator:Cube`; in the Motion Study dialog, where the chart puts its first and last step `motion:chart_start` and `motion:chart_end`, the Check collisions button `motion:check` and each collision found `motion:collision:<n>` |
+| `ui.handles` | `prefix?` | the handles drawn last frame, `[{name, x, y}]`: toolbar buttons and drop-down items `toolbar:<command id>` (the button alone: `button:<command id>`; a drop-down row: `dropdown:<command id>`, highlighted `dropdown_hot:<command id>`, its pin `dropdown_pin:<command id>`; Customize Toolbar's check boxes `customize:<command id>`), ribbon tabs `tab:<name>` (MODEL, SURFACE, ASSEMBLE, INSERT, INSPECT, MANAGE, VIEW; contextual SKETCH and SHEET METAL; workspace RENDER), panel labels `panel:<tab>:<panel>` (also `ribbon:section:<TAB>:<SECTION>`), document overflow list `tab:overflow`, workspace column `ribbon:workspace`, command-search launcher `ribbon:search`, browser rows `row:<label>` and fold arrows `fold:<label>`, manipulator handles; signed-axis tips `axis_view:z`, `axis_view:-y`; optional cube facets `navigation_cube:top`, `navigation_cube:top_front_right`, controls `navigation_cube:control:home` (and other actions), plus signed-axis aliases for visible cube faces; Preferences navigator picker `prefs:navigator`, options `prefs:navigator:Signed axes` and `prefs:navigator:Cube`; in the Motion Study dialog, where the chart puts its first and last step `motion:chart_start` and `motion:chart_end`, the Check collisions button `motion:check` and each collision found `motion:collision:<n>` |
 | `ui.editFeature` | `feature` (id or name) | what double-clicking a timeline item does: rolls back to it and opens its dialog filled in (sketches open in sketch mode) |
 | `ui.scroll` | `x`, `y`, `delta?` | wheel zoom at the cursor |
 | `ui.key` | `key` (egui key name, `Enter`, `Escape`…), `cmd?`, `shift?` | |

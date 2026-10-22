@@ -10,6 +10,7 @@
 pub mod capture;
 pub mod cmd;
 pub mod control_auth;
+pub mod control_pending;
 pub mod crash;
 pub mod frames;
 pub mod fuzz;
@@ -181,7 +182,10 @@ impl Ahead {
     /// here finds share them, so the window draws, fits and picks without tessellating anything.
     pub fn evaluate(self, commands: &[(String, Value)]) -> Result<()> {
         let (s, _) = self.0.preview_in_place(commands)?;
-        s.world_state().warm_display();
+        // Stopped by its watcher: nothing it ends with will be shown.
+        if !solidcraft_doc::progress::cancelled() {
+            s.world_state().warm_display();
+        }
         Ok(())
     }
 
