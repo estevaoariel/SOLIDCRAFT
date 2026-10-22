@@ -327,7 +327,7 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
             i.pointer.delta(),
         )
     });
-    let hover = hover.filter(|p| !crate::shell::covered(app, *p));
+    let hover = hover.filter(|p| !crate::frame::dock_dragging(ui.ctx()) && !crate::shell::covered(app, *p));
     // The right button belongs to the marking menu while it is open.
     let secondary_down = secondary_down && app.viewport.context_menu.is_none();
     // The axis view handles its own clicks; the model underneath must not see them.
