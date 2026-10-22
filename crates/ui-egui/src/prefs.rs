@@ -452,8 +452,10 @@ preference_settings! {
     space_mouse_buttons: std::collections::BTreeMap<String, std::collections::BTreeMap<u8, crate::space_mouse::ButtonJob>> = Default::default();
     /// The 3D mice (`space_mouse::Input::device`) whose calibration has been offered and dismissed, so
     /// the offer (`space_mouse_offer`) is made once per device. A saved entry that is not text is dropped.
+    /// Kept when settings are reset, like the calibrations and button mappings it goes with: resetting
+    /// the page would otherwise bring the offer back for every device.
     #[serde(deserialize_with = "devices_that_read")]
-    space_mouse_offered: std::collections::BTreeSet<String> = Default::default(), 1;
+    space_mouse_offered: std::collections::BTreeSet<String> = Default::default();
     /// Anti-aliasing samples (applies on restart).
     msaa: u32 = 4, PAGE_GRAPHICS;
     /// Soft contact shading in the GPU viewport; optional and applied immediately.
@@ -3020,6 +3022,27 @@ mod tests {
         }
         let source = include_str!("prefs.rs");
         assert!(source.contains("status_line.on_hover_text(app.tr(\"ui.space_mouse_wiggle\"))"));
+    }
+
+    /// The dialog's Restore Defaults on the page that holds the 3D mouse section resets the page, and the
+    /// 3D mice already offered a calibration stay offered (like their calibrations and button mappings):
+    /// the offer does not come back for every device.
+    #[test]
+    fn the_dialogs_restore_defaults_keeps_the_offered_set_with_the_calibrations() {
+        let mut h = changed_3d_mouse_settings(Some("hid 046d:c62b"));
+        h.app.preferences.space_mouse_offered.insert("hid 046d:c62b".into());
+        h.app.preferences.space_mouse_buttons.insert("hid 046d:c62b".into(), [(1, crate::space_mouse::ButtonJob::Settings)].into());
+        let (offered, calibrations, buttons) = (
+            h.app.preferences.space_mouse_offered.clone(),
+            h.app.preferences.space_mouse_calibrations.clone(),
+            h.app.preferences.space_mouse_buttons.clone(),
+        );
+        h.call("ui.prefs", serde_json::json!({"button": "defaults"}));
+        h.frames(3);
+        assert!(h.app.preferences.space_mouse_speed == Prefs::default().space_mouse_speed, "the page was reset");
+        assert_eq!(h.app.preferences.space_mouse_offered, offered);
+        assert_eq!(h.app.preferences.space_mouse_calibrations, calibrations);
+        assert_eq!(h.app.preferences.space_mouse_buttons, buttons);
     }
 
     /// The first screen of the calibration (which kind of device) fits at the window's widths:
