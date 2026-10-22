@@ -564,6 +564,12 @@ fn rename_body(s: &mut Session, p: &Value) -> Result<Value> {
     let derived = format!("{old} (");
     let at = s.doc.features.iter().position(|f| f.id == fid);
     let counts = at.and_then(|at| s.doc.features.get(at)).is_some_and(|f| counted(f, k));
+    // A body numbered by the counter keeps its number when it is renamed: the design's counter
+    // starts over at every evaluation, so without this the name the rename freed is handed to
+    // the next body, and a script that names a body finds another one (#4957).
+    if counts && old.strip_prefix("Body").and_then(|n| n.parse::<usize>().ok()).is_some() {
+        s.doc_mut().reserved_body_names.insert(old.clone());
+    }
     let later: Vec<(u64, Vec<String>)> = match at {
         Some(at) => s
             .doc

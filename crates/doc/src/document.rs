@@ -2308,8 +2308,7 @@ pub struct Feature {
     pub body_names: Vec<String>,
     /// Parameter names of the feature's inputs (see `FeatureKind::inputs`), e.g. `d3`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub param_names: Vec<String>,
-    /// The component the feature (and what it makes) belongs to; 0 = the root.
+    pub param_names: Vec<String>,    /// The component the feature (and what it makes) belongs to; 0 = the root.
     #[serde(default, skip_serializing_if = "is_root")]
     pub component: u64,
     /// For each picked edge (fillets, chamfers): where it sat in its body when picked, so it
@@ -2413,6 +2412,12 @@ pub struct Document {
     pub marker: Option<usize>,
     #[serde(default)]
     pub next_id: u64,
+    /// Body names the design used and must not use again: a name a `body.rename` freed (#4957).
+    /// The design's own counter starts over at every evaluation, so without these a design that
+    /// is evaluated again after a rename hands the freed name to the next body, and a script
+    /// that names a body finds another one.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    pub reserved_body_names: std::collections::BTreeSet<String>,
     /// Components below the root, as a tree (by parent).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub components: Vec<Component>,
@@ -2632,6 +2637,7 @@ impl Document {
             features: Vec::new(),
             marker: None,
             next_id: 1,
+            reserved_body_names: Default::default(),
             components: Vec::new(),
             occurrences: Vec::new(),
             assembly: Default::default(),
