@@ -728,7 +728,9 @@ pub(super) fn sheet_eval(
                     None => p.0,
                 });
             }
-            let (mut sh, notes) = sheet::convert_body(&mb, &r.name, &rv, face.0, &picks)?;
+            let placement = doc.component_transform(doc.model_body_component(&mb));
+            let body_to_world = doc.model_body_offset(&mb).map(|offset| crate::mat_mul(&placement, offset)).unwrap_or(placement);
+            let (mut sh, notes) = sheet::convert_body(&mb, &r.name, &rv, face.0, &picks, &body_to_world)?;
             for note in notes {
                 append_warning(warning, note);
             }
