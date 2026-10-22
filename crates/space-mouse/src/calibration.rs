@@ -520,6 +520,11 @@ pub const HOLD_SECONDS: f64 = 0.4;
 /// [`STEADY_SHARE`] of the furthest that axis has gone in any step: an axis that read flat at rest
 /// may still dither once it's off-centre.
 pub const SETTLE_SECONDS: f64 = 0.5;
+
+/// How long without a fresh report before a steady reading may be the place a trackball stopped: reports
+/// that stop coming mean the value is a kept one. Shorter than [`SETTLE_SECONDS`], longer than the gap
+/// between a device's reports.
+const REPORT_GAP_SECONDS: f64 = 0.25;
 /// How far from rest, as a share of its peak this step, an axis that moved has to be to count as let go.
 pub const SETTLED_SHARE: f64 = 0.25;
 /// How far from rest, as a share of its peak, the axis that went furthest may still be when the
@@ -593,10 +598,8 @@ pub struct Wizard {
     /// The last reading, and how long it has been exactly that.
     last: Option<[i16; 6]>,
     same: f64,
-    /// Whether the reading being fed is a report the device just sent (a steady one is then the
-    /// device still sending, so a ball still rolling), not the last value a daemon keeps until the
-    /// next report.
-    fresh: bool,
+    /// Seconds since a fresh report was last fed (see [`Self::feed_reading`]).
+    since_fresh: f64,
 }
 
 impl Default for Wizard {
@@ -617,7 +620,7 @@ impl Default for Wizard {
             held: false,
             last: None,
             same: 0.0,
-            fresh: false,
+            since_fresh: f64::INFINITY,
         }
     }
 }
@@ -708,13 +711,15 @@ impl Wizard {
         self.feed_reading(raw, seconds, false);
     }
 
-    /// One reading, `seconds` after the previous one. `fresh` says it is a report the device itself is
-    /// still sending (a HID device's, not stale yet), not the last value a daemon keeps. A trackball
-    /// whose fresh reports repeat one speed is still rolling: it never counts as having come to rest
-    /// there, whatever fraction of its peak that speed is. Without that (a kept value), a plateau below
-    /// half the peak for the settle time is taken as where the ball stopped.
+    /// One reading, `seconds` after the previous one. `fresh` says a report or record arrived since the
+    /// previous reading, even if its value is the same (a ball at one speed sends it over and over, and a
+    /// daemon's scaling can make two records read alike); a last value kept with nothing arriving is not
+    /// fresh. A trackball whose reports keep arriving (the latest less than a short gap ago) is still
+    /// rolling, so a steady reading is never taken for where it came to rest, whatever fraction of its
+    /// peak it is. Once nothing has arrived for the gap, a plateau below half the peak for the settle
+    /// time is taken as where the ball stopped.
     pub fn feed_reading(&mut self, raw: [i16; 6], seconds: f64, fresh: bool) {
-        self.fresh = fresh;
+        self.since_fresh = if fresh { 0.0 } else { self.since_fresh + seconds.clamp(0.0, 0.1) };
         // A stalled frame shouldn't finish a stage on its own.
         let seconds = if seconds.is_finite() { seconds.clamp(0.0, 0.1) } else { 0.0 };
         // Steady while every axis's readings since the run began stay within its noise.
@@ -899,7 +904,7 @@ impl Wizard {
         self.held |= high && self.same >= HELD_SECONDS;
         // A still-high reading is never a place the ball came to rest: a quantized ball can send the
         // same speed while it rolls. Held steady far out only makes `mismatch` suggest a cap.
-        let stopped = away <= 0.5 || (stuck && !high && !self.fresh);
+        let stopped = away <= 0.5 || (stuck && !high && self.since_fresh >= REPORT_GAP_SECONDS);
         if away >= 1.0 && !stuck {
             self.recording.step(index, raw);
             self.seconds += seconds;
@@ -1810,6 +1815,23 @@ mod tests {
         assert!(calibration.axes[0].rest == 0 && calibration.axes[0].dead_zone < 5, "{:?}", calibration.axes[0]);
         // The same readings as a kept value (no freshness) keep the old reading of a plateau.
         assert_eq!(run(false).stage(), Stage::Step(1), "a kept value that stops changing is where it stopped");
+    }
+
+    /// Reports that arrive only on some frames (a device slower than the display) still count as arriving,
+    /// and silence for longer than the gap does not.
+    #[test]
+    fn reports_on_some_frames_keep_a_plateau_rolling_and_silence_ends_it() {
+        let mut wizard = Wizard::new(Kind::Trackball);
+        hold_fresh(&mut wizard, [0; 6], REST_SECONDS + TOUCH_SECONDS + 0.1, true);
+        hold_fresh(&mut wizard, [40, 3, 0, 0, 0, 0], 0.6, true);
+        // A report every third frame (60 ms), the same speed.
+        for frame in 0..40 {
+            wizard.feed_reading([10, 0, 0, 0, 0, 0], 0.02, frame % 3 == 0);
+        }
+        assert_eq!(wizard.stage(), Stage::Step(0), "reports still arriving");
+        // Nothing arrives any more: the last value is kept, and the plateau is where it stopped.
+        hold_fresh(&mut wizard, [10, 0, 0, 0, 0, 0], 0.8, false);
+        assert_eq!(wizard.stage(), Stage::Step(1));
     }
 
     #[test]

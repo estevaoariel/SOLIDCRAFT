@@ -238,11 +238,15 @@ mod tests {
     /// stop, at the interval given, so the reader can go back to a device that returned.
     #[test]
     fn a_busy_daemon_is_asked_whether_to_stop_on_a_timer() {
-        struct Busy(u32);
+        // Ends by itself after half a second, so a read that never asks fails the assertion below
+        // instead of hanging the test.
+        struct Busy(Instant);
         impl Read for Busy {
             fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                if self.0.elapsed() > Duration::from_millis(500) {
+                    return Ok(0);
+                }
                 std::thread::sleep(Duration::from_millis(2));
-                self.0 += 1;
                 let bytes = record([0, 100, 0, 0, 0, 0, 0, 8]);
                 let size = bytes.len().min(buf.len());
                 buf[..size].copy_from_slice(&bytes[..size]);
@@ -251,7 +255,7 @@ mod tests {
         }
         let (mut seen, mut asked) = (0, 0);
         read(
-            Busy(0),
+            Busy(Instant::now()),
             |_| seen += 1,
             |_, _| {},
             || {

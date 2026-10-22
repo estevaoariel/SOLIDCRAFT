@@ -252,6 +252,11 @@ struct Reading {
     /// did: a quick tap between two frames is still a press. It is a set, not a queue: two taps of one
     /// button between two looks are one press, and run its job once.
     taps: u32,
+    /// A motion report or record arrived since the UI last looked. Not whether the value changed: a
+    /// ball rolling at one speed sends the same reading again and again, and a daemon that truncates
+    /// it can send two different records that decode alike. The calibration window needs the
+    /// difference between that and a last value kept with nothing arriving.
+    arrived: bool,
 }
 
 impl Reading {
@@ -259,14 +264,6 @@ impl Reading {
     fn set_buttons(&mut self, buttons: u32) {
         self.taps |= buttons & !self.buttons;
         self.buttons = buttons;
-    }
-
-    /// Whether the axes are a value kept since the last report, not reports the device is still sending:
-    /// a daemon's held reading, or every axis gone stale (the reading then stands for rest, which no
-    /// device sent). The calibration window treats a steady fresh reading as motion, a kept one as maybe
-    /// the place the ball stopped.
-    fn retained(&self, now: Instant) -> bool {
-        self.held || self.at.iter().all(|at| now.duration_since(*at) >= STALE_AFTER)
     }
 
     /// A record arrived from the source being waited on: there is a device.
@@ -277,7 +274,7 @@ impl Reading {
     }
 
     fn new(now: Instant) -> Self {
-        Self { device: None, awaiting: None, axes: Axes::default(), at: [now; 6], held: false, buttons: 0, taps: 0 }
+        Self { device: None, awaiting: None, axes: Axes::default(), at: [now; 6], held: false, buttons: 0, taps: 0, arrived: false }
     }
 
     /// The axes at `now`. One with nothing fresh reads as `rest`: the device's own rest when it
@@ -367,6 +364,7 @@ fn publish(ctx: &Context, shared: &Mutex<Reading>, layout: Layout, report: &[u8]
     if let Ok(mut reading) = shared.lock()
         && decode_report(report, layout, &mut reading, Instant::now())
     {
+        reading.arrived = true;
         ctx.request_repaint_after(REPAINT_EVERY);
     }
 }
@@ -376,7 +374,15 @@ fn publish(ctx: &Context, shared: &Mutex<Reading>, layout: Layout, report: &[u8]
 fn publish_held(ctx: &Context, shared: &Mutex<Reading>, axes: Axes) {
     if let Ok(mut reading) = shared.lock() {
         reading.heard();
-        *reading = Reading { device: reading.device, axes, held: true, buttons: reading.buttons, taps: reading.taps, ..Reading::new(Instant::now()) };
+        *reading = Reading {
+            device: reading.device,
+            axes,
+            held: true,
+            buttons: reading.buttons,
+            taps: reading.taps,
+            arrived: true,
+            ..Reading::new(Instant::now())
+        };
         ctx.request_repaint_after(REPAINT_EVERY);
     }
 }
@@ -807,6 +813,7 @@ fn start_driver_client(ctx: &Context, shared: &Arc<Mutex<Reading>>) {
                     let now = Instant::now();
                     reading.axes = Axes { translation, rotation };
                     reading.at = [now; 6];
+                    reading.arrived = true;
                     ctx.request_repaint_after(REPAINT_EVERY);
                 }
             }
@@ -928,7 +935,14 @@ impl SpaceMouse {
             self.drivers.choice.store(app.preferences.space_mouse_driver.to_u8(), Ordering::Relaxed);
             app.space_mouse.drivers = Some(self.drivers.present());
         }
-        let Ok(reading) = self.shared.lock().map(|reading| *reading) else { return };
+        // What the reader has published, and whether anything arrived since the last frame (taken, so
+        // the next frame sees only what comes after).
+        let reading = {
+            let Ok(mut shared) = self.shared.lock() else { return };
+            let seen = *shared;
+            shared.arrived = false;
+            seen
+        };
         app.space_mouse.device = reading.device.map(Source::key);
         // One line per connect or reconnect: which device, which read path, and what is saved for it.
         if app.space_mouse.logged_device != app.space_mouse.device {
@@ -952,7 +966,7 @@ impl SpaceMouse {
         // calibration of another device doesn't count; it ends in `navigate_frame`.
         let calibrating = app.space_mouse.calibrating.as_ref().is_some_and(|(device, _)| app.space_mouse.device.as_ref() == Some(device));
         let rest = if calibrating { Axes::default() } else { at_rest(calibration) };
-        app.space_mouse.retained = reading.retained(now);
+        app.space_mouse.retained = !reading.arrived;
         navigate_frame(app, ctx, self.driver_mapping, reading.current_with(now, rest, settle_band(calibration)), seconds);
     }
 }
@@ -1891,19 +1905,72 @@ mod tests {
         assert_eq!((on_device.device.as_deref(), on_device.down, on_device.taps), (Some(key.as_str()), 0, 0), "nothing held, nothing pressed");
     }
 
-    /// Axes are a kept value when a daemon holds them or when every axis has gone stale, and reports the
-    /// device is still sending otherwise.
+    /// The same ball on the daemon's path, through the reader and the tick: newly arriving records are
+    /// fresh even when they decode to the same value (spacenavd truncates 16 and 17 alike), and a last value
+    /// kept with nothing arriving is not.
+    #[cfg(target_os = "linux")]
     #[test]
-    fn a_reading_is_retained_when_held_or_wholly_stale() {
-        let now = Instant::now();
-        let mut reading = Reading::new(now);
-        assert!(!reading.retained(now), "just reported");
-        assert!(!reading.retained(now + STALE_AFTER - Duration::from_millis(1)));
-        assert!(reading.retained(now + STALE_AFTER), "every axis stale");
-        reading.at[3] = now + STALE_AFTER;
-        assert!(!reading.retained(now + STALE_AFTER), "one axis still reporting");
-        reading.held = true;
-        assert!(reading.retained(now), "a daemon's held value");
+    fn a_decelerating_ball_on_the_daemon_is_rolling_while_records_arrive_and_stopped_when_they_do_not() {
+        use machine::{Fake, Running};
+        use solidcraft_space_mouse::{Kind, Stage, Wizard};
+        for (records_keep_arriving, step_done) in [(true, false), (false, true)] {
+            let fake = Fake::default();
+            *fake.world() = machine::World { device: false, daemon: true, openable: true, ..Default::default() };
+            let reader = Running::start(SpaceMouseDriver::Automatic, fake.clone());
+            reader.reads("spacenavd");
+            let mut app = SolveApp::new(solidcraft_engine::Session::default(), solidcraft_ui_egui::Services::default());
+            app.home.open = false;
+            let start = Instant::now();
+            let mut mouse = SpaceMouse {
+                shared: Arc::clone(&reader.shared),
+                drivers: Arc::clone(&reader.drivers),
+                last_frame: start,
+                driver_mapping: DriverMapping::default(),
+                mapping_checked_at: start,
+                wheel: WheelGuard::default(),
+                started: start,
+                calibration: None,
+            };
+            let ctx = Context::default();
+            ctx.run_ui(egui::RawInput::default(), |_| {}).textures_delta.clear();
+            // One frame of 20 ms of real time (readings are stamped with the real clock): the daemon sends
+            // `record` (or nothing), the reader publishes it, the tick feeds the wizard.
+            let mut next = start;
+            let mut tick = |app: &mut SolveApp, record: Option<i32>| {
+                if let Some(x) = record {
+                    reader.shared.lock().unwrap().arrived = false;
+                    fake.daemon_sends([0, x, 0, 0, 0, 0, 0, 8]);
+                    let until = Instant::now() + Duration::from_secs(3);
+                    while !reader.shared.lock().unwrap().arrived {
+                        assert!(Instant::now() < until, "the record never arrived");
+                        std::thread::sleep(Duration::from_millis(1));
+                    }
+                }
+                next += Duration::from_millis(20);
+                std::thread::sleep(next.saturating_duration_since(Instant::now()));
+                mouse.tick_at(app, &ctx, Instant::now());
+            };
+            // The first record shows the daemon's device; calibrate it as a trackball.
+            tick(&mut app, Some(0));
+            app.space_mouse.calibrating = Some((app.space_mouse.device.clone().expect("the daemon is a device now"), Wizard::new(Kind::Trackball)));
+            let stage = |app: &SolveApp| app.space_mouse.calibrating.as_ref().map(|(_, wizard)| wizard.stage());
+            for _ in 0..400 {
+                if stage(&app) == Some(Stage::Step(0)) {
+                    break;
+                }
+                tick(&mut app, Some(0));
+            }
+            assert_eq!(stage(&app), Some(Stage::Step(0)), "the rest stage is over");
+            // The ball at X = 58 on the wire (40 after the daemon's scaling) for 0.6 s.
+            for _ in 0..30 {
+                tick(&mut app, Some(58));
+            }
+            // Then 16 and 17, which both decode to 11, for 0.7 s: arriving, or one last record and silence.
+            for i in 0..35 {
+                tick(&mut app, if records_keep_arriving || i == 0 { Some(if i % 2 == 0 { 16 } else { 17 }) } else { None });
+            }
+            assert_eq!(stage(&app) == Some(Stage::Step(1)), step_done, "records arriving: {records_keep_arriving}, {:?}", stage(&app));
+        }
     }
 
     /// A daemon that sends a record every couple of milliseconds, never going quiet, is still left for

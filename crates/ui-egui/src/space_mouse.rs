@@ -76,8 +76,9 @@ pub struct Input {
     pub logged_device: Option<String>,
     /// "Restore 3D Mouse Defaults" was clicked and waits for its answer.
     pub restore_pending: bool,
-    /// The reading is the last value a daemon keeps until its next report (spacenavd sends only on
-    /// change), not a report the device is still sending. The calibration window needs the difference.
+    /// Nothing arrived since the last frame: the reading is the last value kept (spacenavd sends only on
+    /// change, a HID device goes quiet), not a report or record just received, whatever its value. The
+    /// calibration window needs the difference.
     pub retained: bool,
     /// The motion `navigate_frame` handed the view this frame (calibrated, reassigned, inverted and
     /// scaled), for the test model on the Preferences page to move with; none when the view got none.
