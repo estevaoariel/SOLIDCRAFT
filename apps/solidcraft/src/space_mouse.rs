@@ -10,7 +10,7 @@ mod spacenavd;
 
 #[cfg(target_os = "linux")]
 use std::sync::atomic::AtomicU8;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -262,6 +262,9 @@ struct Reading {
     /// it, or the device was plugged in with it down), not pressed. Sources that send each press and
     /// release as an event (spacenavd, the macOS driver) start from nothing down.
     buttons_known: bool,
+    /// Which connection of the reader this reading belongs to; it changes at every connect, so a look
+    /// that missed a whole disconnect and reconnect of the same device can tell it was one.
+    generation: u32,
 }
 
 impl Reading {
@@ -295,6 +298,7 @@ impl Reading {
             taps: 0,
             arrived: false,
             buttons_known: true,
+            generation: 0,
         }
     }
 
@@ -402,6 +406,7 @@ fn publish_held(ctx: &Context, shared: &Mutex<Reading>, axes: Axes) {
             buttons: reading.buttons,
             taps: reading.taps,
             arrived: true,
+            generation: reading.generation,
             ..Reading::new(Instant::now())
         };
         ctx.request_repaint_after(REPAINT_EVERY);
@@ -432,6 +437,9 @@ fn needs_evidence(source: Source) -> bool {
     }
 }
 
+/// How many times a reader has connected to a source, for `Reading::generation`.
+static CONNECTIONS: AtomicU32 = AtomicU32::new(0);
+
 /// A device is open: say which, so its calibration applies.
 fn connected(ctx: &Context, shared: &Mutex<Reading>, source: Source) {
     if let Ok(mut reading) = shared.lock() {
@@ -443,7 +451,8 @@ fn connected(ctx: &Context, shared: &Mutex<Reading>, source: Source) {
         // A HID device reports the state of its buttons, so the first state seen is a baseline; the daemon
         // and the driver send presses and releases, which start from nothing down.
         let buttons_known = !matches!(source, Source::Hid(_));
-        *reading = Reading { device, awaiting, at: [stale; 6], buttons_known, ..Reading::new(now) };
+        let generation = CONNECTIONS.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
+        *reading = Reading { device, awaiting, at: [stale; 6], buttons_known, generation, ..Reading::new(now) };
     }
     ctx.request_repaint();
 }
@@ -940,6 +949,7 @@ impl SpaceMouse {
             down: reading.buttons,
             taps,
             pending: !reading.buttons_known,
+            generation: reading.generation,
         }
     }
 
@@ -2044,8 +2054,16 @@ mod tests {
     /// A button held while the reader moves from the daemon to the device: the device's first report still
     /// shows it down, and that is a baseline, not a press. Mapped to Esc, nothing is sent at the switch;
     /// let go and pressed again, exactly one Esc; and a quick tap between two looks is still a press.
+    /// In each order the UI can meet it in: a frame between connecting and the first report, the first
+    /// report before any frame, and a whole disconnect and reconnect that no frame saw.
     #[test]
     fn a_button_held_across_a_switch_to_the_device_does_not_fire_until_pressed_again() {
+        for order in ["a frame first", "the report first", "a reconnect no frame saw"] {
+            held_across_a_switch(order);
+        }
+    }
+
+    fn held_across_a_switch(order: &str) {
         use solidcraft_space_mouse::{Field, Layout};
         let ids = Some((0x046d, 0xc62b));
         let device = Source::Hid(ids).key();
@@ -2080,24 +2098,36 @@ mod tests {
         let report = |down: bool| publish(&ctx, &shared, layout, &[3, u8::from(down)]);
         // The reader has just connected to the device, with the button still held.
         connected(&ctx, &shared, Source::Hid(ids));
-        // A frame is drawn before the device has reported anything (the repaint connecting asks for)...
-        assert_eq!(escapes(&mut app, &mouse), 0);
+        match order {
+            // A frame is drawn before the device has reported anything (the repaint connecting asks for)...
+            "a frame first" => assert_eq!(escapes(&mut app, &mouse), 0),
+            // ...or the first report comes first...
+            "the report first" => {}
+            // ...or the UI has seen this device with nothing down, then the reader disconnects and connects
+            // again and the first report shows the button held, all between two frames.
+            _ => {
+                report(false);
+                assert_eq!(escapes(&mut app, &mouse), 0, "a look with nothing down");
+                reset(&ctx, &shared);
+                connected(&ctx, &shared, Source::Hid(ids));
+            }
+        }
         // ...and then the first report shows the button still down.
         report(true);
-        assert_eq!(escapes(&mut app, &mouse), 0, "the switch sends no Esc");
+        assert_eq!(escapes(&mut app, &mouse), 0, "{order}: the switch sends no Esc");
         report(true);
-        assert_eq!(escapes(&mut app, &mouse), 0, "and holding is not pressing");
+        assert_eq!(escapes(&mut app, &mouse), 0, "{order}: and holding is not pressing");
         report(false);
-        assert_eq!(escapes(&mut app, &mouse), 0, "letting go is not a press");
+        assert_eq!(escapes(&mut app, &mouse), 0, "{order}: letting go is not a press");
         report(true);
-        assert_eq!(escapes(&mut app, &mouse), 1, "a fresh press sends one");
+        assert_eq!(escapes(&mut app, &mouse), 1, "{order}: a fresh press sends one");
         report(true);
         assert_eq!(escapes(&mut app, &mouse), 0);
         // A tap that is down and up again before the UI looks is still a press.
         report(false);
         report(true);
         report(false);
-        assert_eq!(escapes(&mut app, &mouse), 1, "a quick tap between two looks");
+        assert_eq!(escapes(&mut app, &mouse), 1, "{order}: a quick tap between two looks");
     }
 
     /// A daemon that sends a record every couple of milliseconds, never going quiet, is still left for
