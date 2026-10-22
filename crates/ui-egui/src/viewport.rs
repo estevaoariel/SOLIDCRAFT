@@ -1367,12 +1367,41 @@ fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_points: bool, 
     // The edges seen near the cursor, when the GPU pick buffer has them for this view (Select
     // Other wants hidden ones too).
     let seen = if all { None } else { crate::pick_buffer::edges_near(app, proj, pos, &st) };
+    // The face under the pointer wins over the vertices and edges inside it when they are not
+    // the boundary the pointer means: the edges between faces picked as one with it (a modelled
+    // thread's thousands of faces), and, when the face is small on screen (a finely faceted
+    // surface), any vertex or edge further than a couple of points away.
+    let inside = match bestf.as_ref().map(|(_, h)| h) {
+        Some(Hit::Face { body, index, .. }) if !all => st.body(body).map(|b| {
+            let m = b.mesh();
+            let groups = solidcraft_engine::doc::face_groups::face_groups_soon(&app.session.doc, b);
+            let group = groups.as_ref().and_then(|g| g.group_of(*index));
+            // Small on screen: only worth the look for a face picked alone.
+            let small = group.is_none() && {
+                let mut lo = egui::pos2(f32::INFINITY, f32::INFINITY);
+                let mut hi = egui::pos2(f32::NEG_INFINITY, f32::NEG_INFINITY);
+                for (t, f) in m.triangles.iter().zip(&m.tri_face) {
+                    if *f as usize == *index {
+                        for p in m.tri(t).into_iter().flatten().filter_map(|p| proj.to_screen(p)) {
+                            lo = lo.min(p);
+                            hi = hi.max(p);
+                        }
+                    }
+                }
+                lo.x <= hi.x && (hi - lo).length() < 21.0
+            };
+            (body.clone(), groups.zip(group), small)
+        }),
+        _ => None,
+    };
     let mut bestv = Near::new(all);
     let mut beste = Near::new(all);
     for (i, b) in st.bodies.iter().enumerate() {
         if !app.session.body_visible(&b.name) {
             continue;
         }
+        let inside = inside.as_ref().filter(|(body, _, _)| *body == b.name);
+        let (vertex_px, edge_px) = if inside.is_some_and(|(_, _, small)| *small) { (2.0, 2.0) } else { (7.0, 6.0) };
         // Only bodies whose outline on screen is near the cursor can have an edge under it.
         if let Some((_, bb)) = bounds.get(i)
             && screen_box(proj, bb, 8.0).is_some_and(|r| !r.contains(pos))
@@ -1393,12 +1422,18 @@ fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_points: bool, 
             if !m.edge_pickable(ei) {
                 continue;
             }
+            // Between two faces picked as one with the face under the pointer: not a boundary.
+            if let Some((_, Some((groups, group)), _)) = inside
+                && m.edge_faces.get(ei).is_some_and(|fs| !fs.is_empty() && fs.iter().all(|f| groups.group_of(*f as usize) == Some(*group)))
+            {
+                continue;
+            }
             if last_edge != Some(ei) {
                 last_edge = Some(ei);
                 for v in [e.first(), e.last()].into_iter().flatten() {
                     if let Some(sp) = proj.to_screen(*v) {
                         let dd = sp.distance(pos);
-                        if dd < 7.0 && visible(*v) && bestv.wants(dd) {
+                        if dd < vertex_px && visible(*v) && bestv.wants(dd) {
                             bestv.offer(dd, Hit::Vertex { body: b.name.clone(), point: *v });
                         }
                     }
@@ -1409,7 +1444,7 @@ fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_points: bool, 
             let dd = seg_dist(pos, a, c);
             // Visible where the cursor is: the edge's point under the cursor, not an end or
             // the middle, which can lie deeper than the face the cursor is on.
-            if dd < 6.0 && beste.wants(dd) && visible(ray_segment_closest(o, d, *p0, *p1)) {
+            if dd < edge_px && beste.wants(dd) && visible(ray_segment_closest(o, d, *p0, *p1)) {
                 beste.offer(dd, Hit::Edge { body: b.name.clone(), index: ei, mid: polyline_mid(e) });
             }
         }
@@ -1844,6 +1879,7 @@ fn edge_of(m: &solidcraft_engine::geom::Mesh, index: usize, point: Vec3) -> Opti
     m.edges.iter().min_by(|a, b| near(a).total_cmp(&near(b))).filter(|e| near(e) < tol * 1e3)
 }
 
+#[cfg(test)]
 fn face_tris(sc: &mut GpuScene, m: &solidcraft_engine::geom::Mesh, face: usize, col: [u8; 4], lit: bool) {
     mesh_tris(sc, m, col, lit, |f| f as usize == face);
 }
@@ -1878,9 +1914,25 @@ fn edge_lines(sc: &mut GpuScene, e: &[Vec3], core: Color32, halo: Color32, w: f3
 }
 
 /// The outline of a highlighted face where the model hides it (dimmed).
-fn hidden_face_outline(sc: &mut GpuScene, m: &solidcraft_engine::geom::Mesh, face: usize, col: Color32) {
+/// Whether an edge (between `faces`) lies inside one thread's faces: no boundary to draw or pick.
+fn inside_group(groups: Option<&solidcraft_engine::doc::face_groups::FaceGroups>, faces: &[u32]) -> bool {
+    let Some(groups) = groups else { return false };
+    let mut of = faces.iter().map(|f| groups.group_of(*f as usize));
+    match of.next() {
+        Some(Some(g)) => faces.len() > 1 && of.all(|x| x == Some(g)),
+        _ => false,
+    }
+}
+
+fn hidden_faces_outline(
+    sc: &mut GpuScene,
+    m: &solidcraft_engine::geom::Mesh,
+    faces: &std::collections::HashSet<usize>,
+    groups: Option<&solidcraft_engine::doc::face_groups::FaceGroups>,
+    col: Color32,
+) {
     for (ei, e) in m.edges.iter().enumerate() {
-        let on = m.edge_faces.get(ei).is_some_and(|f| f.iter().any(|x| *x as usize == face));
+        let on = m.edge_faces.get(ei).is_some_and(|f| f.iter().any(|x| faces.contains(&(*x as usize))) && !inside_group(groups, f));
         if on && m.edge_pickable(ei) {
             for p in e.windows(2) {
                 sc.hidden_line(p[0].to_f32(), p[1].to_f32(), c4(col.gamma_multiply(0.45)), 1.4);
@@ -1948,8 +2000,32 @@ fn highlight_geometry_key(app: &SolveApp) -> u64 {
     let selected = app.highlighted();
     app.session.revision.hash(&mut h);
     (std::sync::Arc::as_ptr(&crate::open_meshing::shown_world(app)) as usize).hash(&mut h);
-    serde_json::to_string(&selected).unwrap_or_default().hash(&mut h);
-    format!("{:?}", app.viewport.hover).hash(&mut h);
+    // A thread selected is thousands of faces: they are hashed by body and index, not written
+    // out every frame.
+    selected.len().hash(&mut h);
+    for item in &selected {
+        match item {
+            Sel::Face { body, index, .. } => (0u8, body, index).hash(&mut h),
+            other => serde_json::to_string(other).unwrap_or_default().hash(&mut h),
+        }
+    }
+    // A face hovered stands for the faces lit with it: moving over them (or within one) lights
+    // the same, and the highlight is not built again.
+    let group = match &app.viewport.hover {
+        Some(Hit::Face { body, index, .. }) => app
+            .session
+            .world_state()
+            .body(body)
+            .and_then(|b| solidcraft_engine::doc::face_groups::face_groups_soon(&app.session.doc, b))
+            .and_then(|g| g.of(*index))
+            .and_then(|g| g.first().copied())
+            .map(|first| (body.clone(), first)),
+        _ => None,
+    };
+    match group {
+        Some(group) => group.hash(&mut h),
+        None => format!("{:?}", app.viewport.hover).hash(&mut h),
+    }
     app.viewport.hover_feature.hash(&mut h);
     app.viewport.hover_bodies.hash(&mut h);
     // Which mesh lights a face follows how the model draws its body (see `shown_mesh`).
@@ -2005,9 +2081,15 @@ pub(crate) fn build_highlight(app: &SolveApp) -> GpuScene {
     // Faces lit over the model use the triangles the model shows them with.
     let shown = |b: &solidcraft_engine::doc::ModelBody| shown_mesh(app, b, &active_bodies);
     let mut sel = Vec::new();
+    // Faces by body and index: a selected thread stands for thousands of them.
+    let mut seen_faces: std::collections::HashSet<(String, usize)> = std::collections::HashSet::new();
     for item in app.highlighted() {
         for piece in displayed_selection(app, &item) {
-            if !sel.iter().any(|x| crate::selection::same_item(x, &piece)) {
+            let fresh = match &piece {
+                Sel::Face { body, index, .. } => seen_faces.insert((body.clone(), *index)),
+                _ => !sel.iter().any(|x| crate::selection::same_item(x, &piece)),
+            };
+            if fresh {
                 sel.push(piece);
             }
         }
@@ -2088,16 +2170,31 @@ pub(crate) fn build_highlight(app: &SolveApp) -> GpuScene {
         return sc;
     }
     let mut feedback = GpuScene::default();
+    // Selected faces, a pass per body however many of its faces are selected (a modelled
+    // thread is thousands).
+    let mut faces_of: Vec<(&str, std::collections::HashSet<usize>)> = Vec::new();
+    for x in &sel {
+        if let Sel::Face { body, index, .. } = x {
+            match faces_of.iter_mut().find(|(b, _)| *b == body.as_str()) {
+                Some((_, faces)) => {
+                    faces.insert(*index);
+                }
+                None => faces_of.push((body.as_str(), std::collections::HashSet::from([*index]))),
+            }
+        }
+    }
+    for (body, faces) in &faces_of {
+        // A live preview stands in for the body: its old faces would fight with it.
+        if let Some(b) = st.body(body).filter(|_| app.session.body_visible(body) && !app.preview.effective_replaced().iter().any(|r| r == *body)) {
+            mesh_tris(&mut feedback, &shown(b), c4(t.sel_face), false, |f| faces.contains(&(f as usize)));
+            let groups = solidcraft_engine::doc::face_groups::face_groups_soon(&s.doc, b);
+            hidden_faces_outline(&mut feedback, &drawn_mesh(app, b), faces, groups.as_deref(), t.sel_edge);
+        }
+    }
     // Selected things.
     for x in &sel {
         match x {
-            Sel::Face { body, index, .. } => {
-                // A live preview stands in for the body: its old faces would fight with it.
-                if let Some(b) = st.body(body).filter(|_| app.session.body_visible(body) && !app.preview.effective_replaced().contains(body)) {
-                    face_tris(&mut feedback, &shown(b), *index, c4(t.sel_face), false);
-                    hidden_face_outline(&mut feedback, &drawn_mesh(app, b), *index, t.sel_edge);
-                }
-            }
+            Sel::Face { .. } => {}
             Sel::Body { name } => {
                 if let Some(b) = st.body(name)
                     && app.session.body_visible(name)
@@ -2223,12 +2320,21 @@ pub(crate) fn build_highlight(app: &SolveApp) -> GpuScene {
                 let k = t.hover_face_lift;
                 let c = body_rgb(app, body);
                 let m = drawn_mesh(app, b);
-                let patch = m.surface_patch(*index);
-                let lit = shown(b);
+                // The face with the faces picked as one with it (a modelled thread), in one pass.
+                let patch = face_patch(s, b, &m, *index);
+                let mut in_patch = vec![false; m.tri_face.iter().map(|f| *f as usize + 1).max().unwrap_or(0).max(*index + 1)];
                 for &f in &patch {
-                    face_tris(&mut feedback, &lit, f, [c.0.saturating_add(k), c.1.saturating_add(k), c.2.saturating_add(k), 255], true);
+                    if let Some(slot) = in_patch.get_mut(f) {
+                        *slot = true;
+                    }
                 }
-                for (e, _) in m.edge_faces.iter().enumerate().filter(|(_, fs)| fs.iter().any(|f| patch.contains(&(*f as usize)))) {
+                let lit = shown(b);
+                let col = [c.0.saturating_add(k), c.1.saturating_add(k), c.2.saturating_add(k), 255];
+                mesh_tris(&mut feedback, &lit, col, true, |f| in_patch.get(f as usize).copied().unwrap_or(false));
+                // Its edges, but not those between two faces of one thread: no boundary there.
+                let groups = solidcraft_engine::doc::face_groups::face_groups_soon(&s.doc, b);
+                let lit_face = |f: &u32| in_patch.get(*f as usize).copied().unwrap_or(false);
+                for (e, _) in m.edge_faces.iter().enumerate().filter(|(_, fs)| fs.iter().any(lit_face) && !inside_group(groups.as_deref(), fs)) {
                     if let Some(p) = m.edges.get(e)
                         && m.edge_pickable(e)
                     {
@@ -3181,12 +3287,49 @@ pub(crate) fn picked_selection(s: &solidcraft_engine::Session, sel: &Sel) -> Vec
     {
         return letters.into_iter().map(|index| Sel::Profile { sketch: *sketch, index }).collect();
     }
-    grouped_selection(s, sel)
+    selection_pieces(s, sel)
 }
 
 /// Expand a visible rim or surface into the kernel pieces a command needs. The original
 /// face pick keeps its point (used by tools such as Hole and construction geometry).
+/// The faces picked as one with `face` of `b` (`m` its mesh): the pieces of its surface joined
+/// across hidden seams, and every face of a modelled thread (or of one imported face) it is part
+/// of. The thread's faces are worked out on a worker; until then the face goes with its surface.
+fn face_patch(s: &solidcraft_engine::Session, b: &solidcraft_engine::doc::ModelBody, m: &solidcraft_engine::geom::Mesh, face: usize) -> Vec<usize> {
+    face_pieces(s, b, m, face, true)
+}
+
+/// [`face_patch`], with the faces of the thread it is part of when `groups`.
+fn face_pieces(
+    s: &solidcraft_engine::Session,
+    b: &solidcraft_engine::doc::ModelBody,
+    m: &solidcraft_engine::geom::Mesh,
+    face: usize,
+    groups: bool,
+) -> Vec<usize> {
+    let mut patch = m.surface_patch(face);
+    if !groups {
+        return patch;
+    }
+    if let Some(group) = solidcraft_engine::doc::face_groups::face_groups_soon(&s.doc, b).and_then(|g| g.of(face)) {
+        let mut seen: std::collections::HashSet<usize> = patch.iter().copied().collect();
+        patch.extend(group.iter().copied().filter(|f| seen.insert(*f)));
+    }
+    patch
+}
+
 pub(crate) fn grouped_selection(s: &solidcraft_engine::Session, sel: &Sel) -> Vec<Sel> {
+    pieces(s, sel, true)
+}
+
+/// What a click or a box puts in the selection for `sel`: as [`grouped_selection`], but a face
+/// of a modelled thread stays one item (the thread's thousands of faces are what it stands for
+/// when shown or given to a command).
+pub(crate) fn selection_pieces(s: &solidcraft_engine::Session, sel: &Sel) -> Vec<Sel> {
+    pieces(s, sel, false)
+}
+
+fn pieces(s: &solidcraft_engine::Session, sel: &Sel, groups: bool) -> Vec<Sel> {
     let st = s.world_state();
     match sel {
         Sel::Edge { body, index, .. } => {
@@ -3202,21 +3345,28 @@ pub(crate) fn grouped_selection(s: &solidcraft_engine::Session, sel: &Sel) -> Ve
         Sel::Face { body, index, .. } => {
             if let Some(b) = st.body(body) {
                 let m = b.mesh();
-                let mut patch = m.surface_patch(*index);
+                let mut patch = face_pieces(s, b, &m, *index, groups);
                 patch.sort_by_key(|i| usize::from(i != index));
+                // A point on each face, from one pass over the triangles.
+                let wanted: std::collections::HashSet<usize> = patch.iter().copied().collect();
+                let mut point: std::collections::HashMap<usize, Vec3> = std::collections::HashMap::new();
+                for (t, f) in m.triangles.iter().zip(&m.tri_face) {
+                    let f = *f as usize;
+                    if f != *index
+                        && !point.contains_key(&f)
+                        && wanted.contains(&f)
+                        && let Some([a, b, c]) = m.tri(t)
+                    {
+                        point.insert(f, (a + b + c) / 3.0);
+                    }
+                }
                 return patch
                     .into_iter()
                     .filter_map(|i| {
                         if i == *index {
                             return Some(sel.clone());
                         }
-                        m.triangles.iter().zip(&m.tri_face).find_map(|(t, f)| {
-                            if *f as usize != i {
-                                return None;
-                            }
-                            let [a, b, c] = m.tri(t)?;
-                            Some(Sel::Face { body: body.clone(), index: i, point: (a + b + c) / 3.0 })
-                        })
+                        point.get(&i).map(|p| Sel::Face { body: body.clone(), index: i, point: *p })
                     })
                     .collect();
             }
@@ -3391,9 +3541,15 @@ fn box_select(app: &mut SolveApp, proj: &Proj, bx: BoxSel, add: bool) {
         }
     }
     let mut grouped = Vec::new();
+    // Faces by body and index: a box over a thread takes thousands of them.
+    let mut faces: std::collections::HashSet<(String, usize)> = std::collections::HashSet::new();
     for item in out {
-        for piece in grouped_selection(&app.session, &item) {
-            if !grouped.iter().any(|x| crate::selection::same_item(x, &piece)) {
+        for piece in selection_pieces(&app.session, &item) {
+            let fresh = match &piece {
+                Sel::Face { body, index, .. } => faces.insert((body.clone(), *index)),
+                _ => !grouped.iter().any(|x| crate::selection::same_item(x, &piece)),
+            };
+            if fresh {
                 grouped.push(piece);
             }
         }

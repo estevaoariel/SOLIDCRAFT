@@ -22,6 +22,7 @@ mod document;
 mod eval;
 pub mod expr;
 pub mod face_anchor;
+pub mod face_groups;
 mod feature_geometry;
 mod feature_refs;
 pub use face_anchor::{FaceAnchor, FaceAttachmentStatus};

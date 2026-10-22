@@ -2251,3 +2251,67 @@ fn hovering_a_large_body_does_not_wait_for_its_pick_index() {
     assert!(matches!(h.app.viewport.hover, Some(crate::viewport::Hit::Face { .. })), "{:?}", h.app.viewport.hover);
     assert!(hover_ms < index_ms / 3.0, "the first hover took {hover_ms:.1} ms; making the index takes {index_ms:.1} ms");
 }
+
+/// A modelled thread is thousands of small faces but one surface to point at: the pointer over
+/// it lands on a face (not on the vertices and edges between the thread's own faces), the face
+/// lights up with the whole thread, and a click selects the thread as one item, which stands for
+/// every one of its faces when it is shown and when a command takes faces. No hover waits for the
+/// thread's faces to be worked out.
+#[test]
+fn a_modelled_thread_hovers_and_selects_as_one_surface() {
+    let mut h = crate::scenario::Harness::new();
+    h.app.run("solid.cylinder", json!({"diameter": 8, "height": 16, "base": [0, 0, 0], "axis": [0, 0, 1]})).unwrap();
+    h.app.run("solid.thread", json!({"face": [4, 0, 8], "designation": "M8", "length": 10, "modeled": true})).unwrap();
+    let st = h.app.session.world_state();
+    let b = &st.bodies[0];
+    let names = solidcraft_engine::doc::naming::face_names(b);
+    let thread = h.app.session.doc.features.iter().find(|f| matches!(f.kind, solidcraft_engine::doc::FeatureKind::Thread { .. })).unwrap().id;
+    let made = names.iter().filter(|n| n.starts_with(&format!("F{thread}:"))).count();
+    assert!(made > 500, "{made} thread faces");
+    // Close in on the threaded part, side on.
+    h.app.cam.target = Vec3::new(0.0, 0.0, 5.0);
+    h.app.cam.distance = 30.0;
+    h.frames(3);
+    let mut slowest = 0.0f64;
+    let mut grouped = None;
+    for k in 0..40 {
+        let at = h.at(&json!({"world": [4.0 * (0.3 * k as f64).cos(), 4.0 * (0.3 * k as f64).sin(), 2.0 + (k % 6) as f64]})).unwrap();
+        let t = std::time::Instant::now();
+        h.step(&json!({"move": at})).unwrap();
+        slowest = slowest.max(t.elapsed().as_secs_f64() * 1000.0);
+        if let Some(crate::viewport::Hit::Face { body, index, point }) = h.app.viewport.hover.clone() {
+            let sel = Sel::Face { body, index, point };
+            let pieces = crate::viewport::grouped_selection(&h.app.session, &sel);
+            if pieces.len() >= made {
+                grouped = Some(sel);
+                break;
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert!(slowest < 250.0, "a hover took {slowest:.0} ms");
+    let sel = grouped.expect("hovering the thread lands on its faces, and they are worked out as one surface");
+    // Over the thread, the pointer finds the surface, not the vertices and edges inside it.
+    let faces = (0..12)
+        .filter(|k| {
+            let a = 0.5 * *k as f64;
+            let at = h.at(&json!({"world": [4.0 * a.cos(), 4.0 * a.sin(), 3.0 + (*k % 4) as f64]})).unwrap();
+            h.step(&json!({"move": at})).unwrap();
+            matches!(h.app.viewport.hover, Some(crate::viewport::Hit::Face { .. }))
+        })
+        .count();
+    assert!(faces >= 9, "{faces} of 12 hovers over the thread landed on its surface");
+    // A click selects it as one item, which stands for every face of the thread.
+    let point = match &sel {
+        Sel::Face { point, .. } => *point,
+        _ => Vec3::ZERO,
+    };
+    let at = h.at(&json!({"world": [point.x, point.y, point.z]})).unwrap();
+    let t = std::time::Instant::now();
+    h.step(&json!({"click": at})).unwrap();
+    let click_ms = t.elapsed().as_secs_f64() * 1000.0;
+    assert_eq!(h.app.session.selection.len(), 1, "one item: {:?}", h.app.session.selection.len());
+    let pieces = crate::viewport::grouped_selection(&h.app.session, &h.app.session.selection[0]);
+    assert!(pieces.len() >= made, "the thread stands for {} faces of {made}", pieces.len());
+    assert!(click_ms < 250.0, "the click took {click_ms:.0} ms");
+}
