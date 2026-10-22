@@ -8,6 +8,15 @@ use crate::ui_kit::{Container, Surface};
 use crate::{scenario, theme::Tokens};
 use egui::{Response, RichText, Ui, vec2};
 
+/// Collect the expression editors drawn by a form, in display order.
+pub(crate) fn value_fields(ctx: &egui::Context, draw: impl FnOnce() -> bool) -> (bool, Vec<(egui::Id, usize)>) {
+    let id = egui::Id::new("sc_value_fields");
+    ctx.data_mut(|data| data.insert_temp(id, Vec::<(egui::Id, usize)>::new()));
+    let enter = draw();
+    let fields = ctx.data_mut(|data| data.remove_temp::<Vec<(egui::Id, usize)>>(id)).unwrap_or_default();
+    (enter, fields)
+}
+
 /// One alignment policy for every kit text input. Align the galley itself rather than
 /// approximating font metrics with integer margins (Plex Mono and Sans differ).
 pub(super) fn text_input(edit: egui::TextEdit<'_>) -> egui::TextEdit<'_> {
@@ -148,6 +157,14 @@ fn editor(ui: &mut Ui, value: &mut String, hint: &str, completion: bool) -> (boo
         vec2(width, row_height()),
         text_input(egui::TextEdit::singleline(value)).hint_text(hint).font(font).background_color(t.control_fill).clip_text(true),
     );
+    if completion && ui.is_enabled() {
+        ui.ctx().data_mut(|data| {
+            let id = egui::Id::new("sc_value_fields");
+            if data.get_temp::<Vec<(egui::Id, usize)>>(id).is_some() {
+                data.get_temp_mut_or_default::<Vec<(egui::Id, usize)>>(id).push((response.id, value.chars().count()));
+            }
+        });
+    }
     crate::theme::TabAccent::number_focus(ui, &response);
     let label = crate::i18n::tr_label(label(ui));
     response.widget_info(|| {
@@ -490,7 +507,17 @@ fn length_drag<'a>(value: &'a mut f64, units: &str, decimals: u8) -> egui::DragV
 /// not intercept nearby canvas picks; the owner keeps completion and selection handling.
 pub(crate) fn canvas_value_field(ui: &mut Ui, id: egui::Id, value: &mut String) -> Response {
     let t = Tokens::get();
-    ui.add(egui::TextEdit::singleline(value).id(id).desired_width(t.space_24 * 3.0))
+    let response = ui.add(egui::TextEdit::singleline(value).id(id).desired_width(t.space_24 * 3.0));
+    let field = (ui.ctx().cumulative_pass_nr(), response.id, value.chars().count());
+    ui.ctx().data_mut(|data| data.insert_temp(egui::Id::new("sc_canvas_value_focus"), field));
+    response
+}
+
+/// Only a value box drawn this pass can receive the keyboard after a viewport pick.
+pub(crate) fn canvas_value_focus(ctx: &egui::Context) -> Option<(egui::Id, usize)> {
+    ctx.data(|data| data.get_temp::<(u64, egui::Id, usize)>(egui::Id::new("sc_canvas_value_focus")))
+        .filter(|(pass, _, _)| *pass == ctx.cumulative_pass_nr())
+        .map(|(_, id, length)| (id, length))
 }
 
 /// Placement editor whose owner routes Enter and Tab (including rejected expressions).
