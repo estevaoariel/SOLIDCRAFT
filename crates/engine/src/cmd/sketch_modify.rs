@@ -598,6 +598,11 @@ fn break_cmd(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"curves": out, "sketch": info}))
 }
 
+/// How far a line with nothing in its way extends: the reach its preview draws, and the length
+/// `sketch.extend` adds, so clicking a preview that overhangs its target adds that line instead
+/// of nothing.
+const EXTEND_REACH: f64 = 50.0;
+
 /// Preview the extend operation without modifying the sketch.
 /// Returns the hit point that would be reached if the user extends the curve,
 /// or None if extension is not possible (blocked by collinear curves).
@@ -799,9 +804,7 @@ pub fn extend_preview(sk: &solidcraft_sketch::Sketch, ci: usize, hover_pos: Vec2
         }
     }
 
-    best_hit.or_else(|| {
-        Some(end_pt + dir * 50.0) // Fallback: 50mm preview line
-    })
+    best_hit.or(Some(end_pt + dir * EXTEND_REACH))
 }
 
 /// One end of an arc growing along the arc's own circle, as a new arc, and what stops it.
@@ -823,8 +826,9 @@ struct ArcAim {
     /// The angle the growing end sits at, and how far round the circle the extension travels.
     end_angle: f64,
     travel: f64,
-    /// The point the extension stops at.
+    /// The point the extension stops at, and the curve that stops it there.
     hit: Vec2,
+    cutter: usize,
 }
 
 impl ArcAim {
@@ -915,7 +919,7 @@ fn arc_aim(sk: &Sketch, ci: usize, at: Vec2, cmd: &str) -> Result<Option<ArcAim>
     if ambiguous {
         return Err(bad(cmd, "multiple curves stop the extension at the same distance"));
     }
-    Ok(best.map(|(travel, hit, _)| ArcAim { end, far, at_b, centre, radius: r, end_angle, travel, hit }))
+    Ok(best.map(|(travel, hit, cutter)| ArcAim { end, far, at_b, centre, radius: r, end_angle, travel, hit, cutter }))
 }
 
 /// Keep the stop the nearest of the candidates, and remember it when another curve stops the
@@ -929,36 +933,24 @@ fn keep_stop(best: &mut Option<(f64, Vec2, usize)>, ambiguous: &mut bool, travel
     }
 }
 
-/// The point the extension ends at when the sketch already has one there: the arc's own far end,
-/// or the end of another arc on the same circle (the far side of the gap). Joining it keeps the
-/// geometry one chain instead of laying a second point over a point that is there. `None` when
-/// the stop needs a new point; an error when it is the end of unrelated geometry, which the
-/// extension would double.
-fn arc_stop(sk: &Sketch, ci: usize, aim: &ArcAim) -> Result<Option<usize>> {
-    let cmd = "sketch.extend";
+/// The point the extension ends at when the sketch already has one there: the arc's own far end
+/// (closing the gap between its two ends), or the end of another curve the extension runs into —
+/// an arc on the same circle across the gap, or any other curve crossing its path. Joining that
+/// point keeps the geometry one chain instead of laying a second point over a point that is
+/// there, so a circle met exactly where another curve already ends closes onto that curve.
+/// `None` when the stop needs a new point.
+fn arc_stop(sk: &Sketch, ci: usize, aim: &ArcAim) -> Option<usize> {
     let at_hit = |p: usize| sk.point(p).is_some_and(|pt| pt.dist(aim.hit) <= TOL * 10.0);
     if at_hit(aim.far) {
-        return Ok(Some(aim.far));
+        return Some(aim.far);
     }
-    for (oi, curve) in sk.curves.iter().enumerate() {
-        if oi == ci {
-            continue;
-        }
-        let CurveKind::Arc { a, b, .. } = curve.kind else { continue };
-        if sk.center(oi).is_none_or(|c| c.dist(aim.centre) > TOL * 10.0) {
-            continue;
-        }
-        if at_hit(a) {
-            return Ok(Some(a));
-        }
-        if at_hit(b) {
-            return Ok(Some(b));
-        }
-    }
-    if ends_at_curve_end(sk, ci, aim.hit) {
-        return Err(bad(cmd, "the extension target coincides with existing geometry"));
-    }
-    Ok(None)
+    sk.curves.iter().enumerate().filter(|(i, _)| *i != ci).find_map(|(_, c)| {
+        let ends = match c.kind {
+            CurveKind::Line { a, b } | CurveKind::Arc { a, b, .. } => [a, b],
+            _ => return None,
+        };
+        ends.into_iter().find(|p| at_hit(*p))
+    })
 }
 
 /// Add the arc an extension needs: a new arc on the same circle as `ci`, from the growing end to
@@ -992,22 +984,65 @@ fn ends_at_curve_end(sk: &Sketch, ci: usize, q: Vec2) -> bool {
     })
 }
 
-/// Extend an arc: always as a new arc, in either direction, up to the first geometry on the way.
+/// Whether the growing end of an arc already carries geometry: another curve starts there, or a
+/// constraint holds the point. Such an end keeps its place, so the extension has to be new
+/// geometry.
+fn arc_end_held(sk: &Sketch, ci: usize, end: usize) -> bool {
+    if sk.curves.iter().enumerate().any(|(i, c)| i != ci && uses(c, end)) {
+        return true;
+    }
+    sk.constraints.iter().any(|c| {
+        use solidcraft_sketch::ConstraintKind::*;
+        match c.kind {
+            Coincident { p, q } => p == end || q == end,
+            Fix { p } | PointOnCurve { p, .. } | Midpoint { p, .. } => p == end,
+            HorizontalPoints { p, q } | VerticalPoints { p, q } | Symmetric { p, q, .. } => p == end || q == end,
+            _ => false,
+        }
+    })
+}
+
+/// Extend an arc, in either direction, up to the first geometry on the way. A free end grows in
+/// place, so the sketch keeps one arc; an end that already carries geometry, or a stop where the
+/// sketch already has a point, is joined by a new arc instead.
 fn extend_arc(sk: &mut Sketch, ci: usize, at: Vec2) -> Result<String> {
     let cmd = "sketch.extend";
     let Some(aim) = arc_aim(sk, ci, at, cmd)? else {
         return Err(bad(cmd, "nothing to extend to"));
     };
-    let stop = arc_stop(sk, ci, &aim)?;
-    add_arc_extension(sk, ci, &aim, stop)
+    let stop = arc_stop(sk, ci, &aim);
+    // The arc's own far end is where the arc begins again: moving the end onto it would leave a
+    // whole circle, so the gap is filled by a new arc joining that end.
+    if stop.is_some_and(|p| p == aim.far) || arc_end_held(sk, ci, aim.end) {
+        return add_arc_extension(sk, ci, &aim, stop);
+    }
+    // A free end moves along instead, if the solver lets it.
+    let original = sk.point(aim.end).unwrap_or_default();
+    if let Some(pt) = sk.points.get_mut(aim.end) {
+        pt.pos = aim.hit;
+    }
+    let before = sk.points.iter().map(|p| p.pos).collect::<Vec<_>>();
+    let hold = solidcraft_sketch::Hold { points: (0..sk.points.len()).filter(|i| *i != aim.end).collect(), radii: (0..sk.curves.len()).collect() };
+    let moved = solidcraft_sketch::solve_with(sk, &hold, None, solidcraft_sketch::Analysis::StatusOnly, None).ok()
+        && sk.point(aim.end).is_some_and(|point| point.dist(aim.hit) <= TOL)
+        && sk.points.iter().enumerate().all(|(i, point)| i == aim.end || point.pos.dist(before[i]) <= TOL);
+    if !moved {
+        // The solve could not put the end where it belongs: the extension is a new arc instead.
+        if let Some(pt) = sk.points.get_mut(aim.end) {
+            pt.pos = original;
+        }
+        return add_arc_extension(sk, ci, &aim, stop);
+    }
+    // Held to what stopped it, the end stays on the geometry it reached.
+    pin(sk, aim.end, aim.cutter)?;
+    Ok(sk.points.get(aim.end).map(|x| x.id.clone()).unwrap_or_default())
 }
 
 /// The arc `sketch.extend` would add from the end of `ci` nearest `hover_pos`, for the viewport to
 /// show before the click: the new arc as points, the growing end first. `None` when extending
-/// there is not possible (nothing stops it) or the target is already other geometry's end.
+/// there is not possible (nothing on the way stops it, or stopping it is ambiguous).
 pub fn extend_arc_preview(sk: &solidcraft_sketch::Sketch, ci: usize, hover_pos: Vec2) -> Option<Vec<Vec2>> {
     let aim = arc_aim(sk, ci, hover_pos, "sketch.extend").ok().flatten()?;
-    arc_stop(sk, ci, &aim).ok()?;
     Some(aim.points())
 }
 
@@ -1021,7 +1056,8 @@ fn extend(s: &mut Session, p: &Value) -> Result<Value> {
         }
         let ci = curve_arg(sk, p, cmd)?;
         refuse_offset_ends(sk, ci, "extend", cmd)?;
-        // An arc grows along its own circle, either way round, as a new arc.
+        // An arc grows along its own circle, either way round: in place when its end is free, as
+        // a new arc when the end already carries geometry.
         if matches!(sk.curves.get(ci).map(|c| &c.kind), Some(CurveKind::Arc { .. })) {
             return extend_arc(sk, ci, at);
         }
@@ -1100,12 +1136,19 @@ fn extend(s: &mut Session, p: &Value) -> Result<Value> {
         if ambiguous {
             return Err(bad(cmd, "multiple curves stop the extension at the same distance"));
         }
-        let (_, q, oi) = best.ok_or_else(|| bad(cmd, "nothing to extend to"))?;
 
-        // A target that is already another curve's end would double that geometry.
-        if ends_at_curve_end(sk, ci, q) {
-            return Err(bad(cmd, "the extension target coincides with existing geometry"));
-        }
+        // Nothing in the way stops the extension: it runs as far as the preview draws, so the
+        // click adds the line the user saw rather than reporting that there is nothing to reach.
+        let (q, cutter) = match best {
+            Some((_, q, oi)) => {
+                // A target that is already another curve's end would double that geometry.
+                if ends_at_curve_end(sk, ci, q) {
+                    return Err(bad(cmd, "the extension target coincides with existing geometry"));
+                }
+                (q, Some(oi))
+            }
+            None => (sk.point(end).unwrap_or_default() + extension_direction * EXTEND_REACH, None),
+        };
 
         // The end joined to other geometry stays where it is: add a line from it.
         if !neighbors.is_empty() {
@@ -1148,7 +1191,11 @@ fn extend(s: &mut Session, p: &Value) -> Result<Value> {
         if let Some(pt) = sk.points.get_mut(end) {
             pt.pos = q;
         }
-        pin(sk, end, oi)?;
+        // Held to what stopped it, an end stays where the extension put it; an end with nothing
+        // to hold it is simply placed there.
+        if let Some(cutter) = cutter {
+            pin(sk, end, cutter)?;
+        }
         let before = sk.points.iter().map(|p| p.pos).collect::<Vec<_>>();
         let hold = solidcraft_sketch::Hold { points: (0..sk.points.len()).filter(|i| *i != end).collect(), radii: (0..sk.curves.len()).collect() };
         let moved = solidcraft_sketch::solve_with(sk, &hold, None, solidcraft_sketch::Analysis::StatusOnly, None).ok()
