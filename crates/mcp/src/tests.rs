@@ -75,6 +75,7 @@ fn handshake_and_tools_list() {
         call(&mut s, 1, "initialize", json!({"protocolVersion": "2025-03-26", "capabilities": {}, "clientInfo": {"name": "t", "version": "0"}}));
     assert_eq!(init["result"]["protocolVersion"], "2025-03-26");
     assert_eq!(init["result"]["serverInfo"]["name"], "solidcraft");
+    assert_eq!(init["result"]["serverInfo"]["version"], env!("CARGO_PKG_VERSION"));
     assert!(init["result"]["capabilities"]["tools"].is_object());
     assert!(init["result"]["instructions"].as_str().unwrap().contains("headless"));
     // An unknown version gets ours.
@@ -87,6 +88,7 @@ fn handshake_and_tools_list() {
     let tools = call(&mut s, 4, "tools/list", json!({}));
     let names: Vec<&str> = tools["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
     for want in [
+        "version",
         "list_commands",
         "describe_command",
         "execute",
@@ -124,6 +126,56 @@ fn handshake_and_tools_list() {
     assert!(d["result"]["contents"][0]["text"].as_str().unwrap().contains("timeline"));
     assert_eq!(call(&mut s, 7, "resources/read", json!({"uri": "solidcraft://nope"}))["error"]["code"], -32002);
     assert_eq!(call(&mut s, 8, "nope/nope", json!({}))["error"]["code"], -32601);
+}
+
+#[test]
+fn version_reports_headless_engine_and_cli_without_changing_design() {
+    let mut s = server();
+    let before = tool(&mut s, "inspect_design", json!({"measure": false}));
+    let v = tool(&mut s, "version", json!({}));
+    assert_eq!(v["name"], "solidcraft");
+    assert_eq!(v["version"], env!("CARGO_PKG_VERSION"));
+    assert!(!v["commit"].as_str().unwrap().is_empty());
+    assert_eq!(v["mode"], "headless");
+    assert_eq!(v["server"], json!({"name": "solidcraft", "version": env!("CARGO_PKG_VERSION")}));
+    assert_eq!(before, tool(&mut s, "inspect_design", json!({"measure": false})));
+    let commands = tool(&mut s, "list_commands", json!({"filter": "version"}));
+    assert!(commands.as_array().unwrap().iter().any(|c| c["id"] == "engine.version"));
+    assert_eq!(raw_tool(&mut s, "version", json!({"unexpected": true}))["error"]["code"], -32602);
+}
+
+#[test]
+fn version_reports_remote_engine_and_keeps_cli_version_separate() {
+    use std::io::{BufRead, BufReader, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap().to_string();
+    let app = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        stream.set_read_timeout(Some(std::time::Duration::from_secs(10))).unwrap();
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        for result in [
+            json!({"ok": true, "result": {"name": "solidcraft", "version": "0.1.2", "commit": "abcdef0"}}),
+            json!({"ok": false, "error": "unknown command `engine.version`"}),
+        ] {
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            let request: Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(request["method"], "engine.execute");
+            assert_eq!(request["params"], json!({"command": "engine.version", "params": {}}));
+            writeln!(stream, "{result}").unwrap();
+        }
+    });
+    let mut s = Server::new(Box::new(crate::Remote::new(&addr, Some("test-token"))));
+    let v = tool(&mut s, "version", json!({}));
+    assert_eq!(v["mode"], "app");
+    assert_eq!(v["version"], "0.1.2");
+    assert_eq!(v["commit"], "abcdef0");
+    assert_eq!(v["server"]["version"], env!("CARGO_PKG_VERSION"));
+    // An old app's error stays visible; the CLI version must never stand in for it.
+    let r = raw_tool(&mut s, "version", json!({}));
+    assert_eq!(r["result"]["isError"], true);
+    assert!(r["result"]["content"][0]["text"].as_str().unwrap().contains("unknown command"));
+    app.join().unwrap();
 }
 
 /// A URDF goes through `export` with its own options (#719).
@@ -1569,7 +1621,7 @@ fn tool_annotations_tell_the_whole_truth() {
     for name in ["execute", "batch", "save", "export", "open", "screenshot"] {
         assert_eq!(hints(name), (false, true, true), "{name}");
     }
-    for name in ["list_commands", "describe_command", "inspect_design", "measure", "body_topology", "crash_reports", "running"] {
+    for name in ["version", "list_commands", "describe_command", "inspect_design", "measure", "body_topology", "crash_reports", "running"] {
         assert_eq!(hints(name), (true, false, false), "{name}");
     }
     assert_eq!(hints("new_design"), (false, true, false));

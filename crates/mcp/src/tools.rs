@@ -62,6 +62,15 @@ fn string(desc: &str) -> Value {
 pub fn tool_definitions() -> Vec<Value> {
     vec![
         tool(
+            "version",
+            "SolidCraft version",
+            "The SolidCraft engine's version and source commit, plus mode (headless or app) and the MCP server's version. \
+             In app mode, queries the running app, whose version may differ from this CLI's; an older app without \
+             engine.version returns a tool error. In source archives without Git, commit is unknown.",
+            obj(json!({}), &[]),
+            Effect::ReadOnly,
+        ),
+        tool(
             "list_commands",
             "List commands",
             "The command catalog: id, label, toolbar tab/panel, shortcut, one-line parameter docs and whether the command is \
@@ -400,6 +409,16 @@ fn str_arg<'a>(a: &'a Map<String, Value>, k: &str) -> Option<&'a str> {
 
 fn dispatch(b: &mut dyn Backend, name: &str, a: &Map<String, Value>) -> Result<Value, String> {
     match name {
+        "version" => {
+            let engine = exec(b, "engine.version", json!({}))?;
+            Ok(json!({
+                "name": engine.get("name"),
+                "version": engine.get("version"),
+                "commit": engine.get("commit"),
+                "mode": if b.has_ui() { "app" } else { "headless" },
+                "server": {"name": "solidcraft", "version": env!("CARGO_PKG_VERSION")},
+            }))
+        }
         "list_commands" => {
             let all = b.call("engine.commands", json!({}))?;
             let Some(f) = str_arg(a, "filter").map(str::to_lowercase).filter(|f| !f.is_empty()) else { return Ok(all) };

@@ -3438,6 +3438,24 @@ fn renaming_the_first_imported_duplicate_keeps_the_numbers_of_the_others() {
     assert!(s.doc.materials.contains_key("X (3)"), "the material is still on X (3): {:?}", s.doc.materials.keys().collect::<Vec<_>>());
 }
 
+#[test]
+fn engine_version_is_discoverable_and_keeps_design_and_history() {
+    let mut s = Session::default();
+    run(&mut s, "parameters.add", json!({"name": "width", "expression": "10"}));
+    run(&mut s, "edit.undo", json!({}));
+    let before = run(&mut s, "document.inspect", json!({"measure": false}));
+    let commands = run(&mut s, "engine.commands", json!({}));
+    assert!(commands.as_array().unwrap().iter().any(|c| c["id"] == "engine.version"));
+    let version = run(&mut s, "engine.version", json!({}));
+    assert_eq!(version["name"], "solidcraft");
+    assert_eq!(version["version"], env!("CARGO_PKG_VERSION"));
+    assert!(!version["commit"].as_str().unwrap().is_empty());
+    assert_eq!(before, run(&mut s, "document.inspect", json!({"measure": false})));
+    // A read-only query must also keep the redo stack.
+    run(&mut s, "edit.redo", json!({}));
+    assert!(s.doc.params.iter().any(|p| p.name == "width"));
+}
+
 /// Parameters that work are listed in the command's params doc, which is all agents see (#271).
 #[test]
 fn params_docs_list_working_parameters() {

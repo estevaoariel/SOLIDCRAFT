@@ -47,6 +47,21 @@ A `batch` that could not be sent says the app is not running, so it is safe to s
 stdout carries only protocol messages; errors go to stderr. Bridged screenshots are written to a
 temporary file by the app and read back by the server, so both must run on the same machine.
 
+### Version discovery
+
+Call the read-only `version` tool with `{}` to get `name`, `version`, `commit`, `mode`
+(`headless` or `app`), and `server: {name, version}`. The top-level version and commit identify
+the engine executing modelling commands. In app mode they come from the running app, which
+may be a different version from the CLI. `server.version` and the MCP handshake's
+`serverInfo.version` identify the CLI's MCP server. A source archive built without Git reports
+`commit: "unknown"`.
+
+The same engine information is available through `execute` with command `engine.version`,
+or `list_commands` with filter `version`. Neither query changes the design or its undo history.
+If the app is unavailable or predates `engine.version`, the tool returns an error rather than
+reporting the CLI's version as the app's. Use `list_commands` / `describe_command` to check
+specific command availability and parameter contracts.
+
 ### Parameter checking
 
 Commands with a typed parameter contract (`solid.box`, `solid.extrude` and `engine.describe`
@@ -109,7 +124,7 @@ file dialogs are never limited.
 ### Tool annotations
 
 Each tool says what it may do, for clients that ask before running tools (or auto-approve on
-these hints). `list_commands`, `describe_command`, `inspect_design`, `measure`, `body_topology`
+these hints). `version`, `list_commands`, `describe_command`, `inspect_design`, `measure`, `body_topology`
 and `crash_reports` are read-only. `set_parameter`, `undo` and `redo` change the design undoably.
 `new_design` replaces it (destructive). `execute`, `batch`, `open`, `save`, `export` and
 `screenshot` (whose `path` writes a file) can read, write, overwrite or delete files: they are
