@@ -9,8 +9,11 @@ pub(super) fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             ui_kit::row(ui, app.tr("ui.units_of_new_designs"), |ui| {
                 let mut selected = UNITS.iter().position(|u| *u == app.preferences.default_units).unwrap_or(0);
                 ui_kit::segmented(ui, &mut selected, &UNITS, ui_kit::Segments { intrinsic: true, ..Default::default() });
-                if let Some(unit) = UNITS.get(selected) {
+                if let Some(unit) = UNITS.get(selected)
+                    && app.preferences.default_units != *unit
+                {
                     app.preferences.default_units = (*unit).into();
+                    default_units_changed(app);
                 }
             });
             ui_kit::row(ui, app.tr("ui.length_decimals"), |ui| {
