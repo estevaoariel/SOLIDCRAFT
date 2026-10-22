@@ -249,6 +249,9 @@ pub struct Session {
     pub revision: u64,
     /// Project a face's edges into a sketch created on it (the default; `sketch.auto_project`).
     pub auto_project: bool,
+    /// Exports to formats that can't mark a body hidden (STL, OBJ, 3MF) leave out the bodies the
+    /// view hides (`file.export_visible_only`; off by default). A preference, like `auto_project`.
+    pub export_visible_only: bool,
     /// How calls that break a command's parameter contract are treated (off by default). It
     /// belongs to the session, not the design, so it survives opening and starting designs.
     pub param_check: schema::ParamCheck,
@@ -412,6 +415,7 @@ impl Session {
             log: Vec::new(),
             revision: 1,
             auto_project: true,
+            export_visible_only: false,
             param_check: schema::ParamCheck::Off,
             active_component: 0,
             active_occurrence_path: None,
@@ -440,13 +444,15 @@ impl Session {
     }
 
     /// Become `fresh` (another design opened, recovered or started), keeping the settings that
-    /// are the user's rather than the design's: `auto_project` is a preference (#680).
+    /// are the user's rather than the design's: `auto_project` and `export_visible_only` are
+    /// preferences (#680).
     /// Checkpoints survive too: a batch that failed after `file.new` or `doc.open` goes back
     /// from the checkpoint it took before its first step, and that checkpoint belongs to the
     /// design before the batch, which is what the batch promised (#3242). The design is what a
     /// checkpoint keeps, not the replaced session's file path (docs/mcp.md).
     pub fn replace_design(&mut self, fresh: Session) {
         let auto_project = self.auto_project;
+        let export_visible_only = self.export_visible_only;
         let param_check = self.param_check;
         let render_viewport = self.render_viewport.clone();
         let render_jobs = self.render_jobs.scratch();
@@ -454,6 +460,7 @@ impl Session {
         let next_checkpoint = self.next_checkpoint;
         *self = fresh;
         self.auto_project = auto_project;
+        self.export_visible_only = export_visible_only;
         self.param_check = param_check;
         self.render_viewport = render_viewport;
         self.render_jobs = render_jobs;
@@ -944,6 +951,7 @@ impl Session {
             log: Vec::new(),
             revision: self.revision,
             auto_project: self.auto_project,
+            export_visible_only: self.export_visible_only,
             param_check: self.param_check,
             active_component: self.active_component,
             active_occurrence_path: self.active_occurrence_path.clone(),

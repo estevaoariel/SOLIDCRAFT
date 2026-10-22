@@ -62,6 +62,14 @@ simulators and ROS: a link per component placement with its mesh, mass and inert
 assembly's joints, so the parts move in the simulator as they do in SolidCraft. The meshes are
 written as STL files next to the `.urdf`. See [`docs/urdf.md`](https://github.com/bherbruck/solidcraft/blob/main/docs/urdf.md).
 
+STL, OBJ and 3MF files have no way to mark a body hidden. With **Export only visible bodies**
+ticked (Preferences › Design, or `file.export_visible_only`; off by default), exporting the whole
+design to one of them leaves out the bodies the view hides: hidden bodies, and the bodies of a
+hidden component placement, folder or group. Bodies you pick yourself are exported as picked.
+STEP, IGES, URDF and design files keep every body. Scripts and agents choose per export with
+`visible_only` on `file.export` and `file.save_mesh`; the reply lists the bodies left out, and an
+export with every body hidden is refused rather than writing an empty file.
+
 Saves are atomic: a crash at any moment leaves either the old file or the new one, and the
 replaced version is kept as `<file>.bak`. A save keeps the file's permissions, and a design
 opened through a symbolic link (a synced folder linked into a project) is saved into the file the

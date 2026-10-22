@@ -611,6 +611,7 @@ struct Snapshot {
     agent: crate::agent_cursor::Settings,
     autosave: f64,
     auto_project: bool,
+    export_visible_only: bool,
     keys: std::collections::BTreeMap<String, String>,
 }
 
@@ -628,6 +629,7 @@ impl Snapshot {
             agent: app.ui.agent_cursor,
             autosave: app.autosave_minutes,
             auto_project: app.session.auto_project,
+            export_visible_only: app.session.export_visible_only,
             keys: app.keymap.custom.clone(),
         }
     }
@@ -648,6 +650,7 @@ impl Snapshot {
         app.autosave_minutes = self.autosave;
         set_autosave(app);
         app.session.auto_project = self.auto_project;
+        app.session.export_visible_only = self.export_visible_only;
         app.keymap.custom = self.keys;
         if app.preferences.msaa != msaa {
             save_graphics(app);
@@ -777,7 +780,8 @@ fn defaults(app: &mut SolveApp, page: usize) {
             app.autosave_minutes = 5.0;
             set_autosave(app);
         }
-        1 | PAGE_DESIGN | PAGE_AI => {}
+        1 | PAGE_AI => {}
+        PAGE_DESIGN => app.session.export_visible_only = false,
         PAGE_SHORTCUTS => crate::keymap::reset(app, None),
         PAGE_GRAPHICS => {
             app.ui.visual_style = 0;
@@ -1462,6 +1466,13 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                 ui_kit::Text::Note("orientation"),
             );
             setting::offer_stand_up(app, ui);
+            let mut visible_only = app.session.export_visible_only;
+            let response =
+                ui_kit::checkbox(ui, app.tr("ui.export_only_visible_bodies"), &mut visible_only).on_hover_text(app.tr("ui.export_visible_only_tip"));
+            crate::scenario::publish_rect("prefs:export_visible_only", response.rect);
+            if response.changed() {
+                let _ = app.run("file.export_visible_only", json!({"value": visible_only}));
+            }
         }
         PAGE_GRAPHICS => {
             ui_kit::row(ui, app.tr("ui.graphics_preset"), |ui| graphics_preset_selector(app, ui));
@@ -2509,6 +2520,41 @@ mod tests {
         assert!(other.preferences.timeline_left);
         assert!(other.preferences.timeline_left_browser_collapsed);
         assert_eq!(other.tr("ui.preferences"), "環境設定");
+    }
+
+    /// Export only visible bodies is kept between runs, put back by Cancel, turned off by the
+    /// Design page's Restore Defaults, and followed by the export it sets.
+    #[test]
+    fn export_only_visible_bodies_is_a_kept_preference() {
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
+        assert!(!app.session.export_visible_only, "off by default");
+        control(&mut app, &json!({"open": "Design"})).unwrap();
+        app.run("file.export_visible_only", json!({"value": true})).unwrap();
+        control(&mut app, &json!({"button": "cancel"})).unwrap();
+        assert!(!app.session.export_visible_only, "Cancel puts it back");
+        control(&mut app, &json!({"open": "Design"})).unwrap();
+        app.run("file.export_visible_only", json!({"value": true})).unwrap();
+        control(&mut app, &json!({"button": "ok"})).unwrap();
+        assert!(app.session.export_visible_only);
+
+        let mut other = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
+        other.load_prefs(&app.prefs());
+        assert!(other.session.export_visible_only, "kept between runs");
+
+        let dir = std::env::temp_dir().join(format!("solidcraft-visible-pref-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        app.run("solid.box", json!({"length": 10, "width": 10, "height": 10})).unwrap();
+        app.run("solid.box", json!({"length": 10, "width": 10, "height": 10, "base": [30, 0, 0]})).unwrap();
+        let hidden = app.session.world_state().bodies[1].name.clone();
+        app.run("browser.visibility", json!({"visible": false, "items": [hidden]})).unwrap();
+        let path = dir.join("shown.obj");
+        let r = app.run("file.export", json!({"path": path.to_string_lossy()})).unwrap();
+        assert_eq!(r["left_out"], json!([hidden]), "{r}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap().lines().filter(|l| l.starts_with("o ")).count(), 1);
+
+        control(&mut app, &json!({"open": "Design", "button": "defaults"})).unwrap();
+        assert!(!app.session.export_visible_only, "Restore Defaults turns it off");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A STEP file opened Z-up is offered to be stood up: a quarter turn about X, undoable.

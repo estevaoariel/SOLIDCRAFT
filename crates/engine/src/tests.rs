@@ -1613,6 +1613,80 @@ fn extrude_a_body_face() {
     assert!(s.execute("solid.extrude", &json!({"face": [500, 5, 20], "distance": 10})).is_err());
 }
 
+/// Export only visible bodies: with the preference on, STL, OBJ and 3MF leave out a hidden body
+/// and the bodies of a hidden occurrence, as the view does; STEP and design files keep every
+/// body; `visible_only` overrides the preference, named bodies are exported as named, and
+/// nothing shown is an error, never an empty file.
+#[test]
+fn export_visible_only_leaves_hidden_bodies_out_of_mesh_files() {
+    let dir = std::env::temp_dir().join(format!("solidcraft-visible-only-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let at = |name: &str| dir.join(name).to_string_lossy().to_string();
+    let objects = |path: &str| -> Vec<String> {
+        std::fs::read_to_string(path).unwrap().lines().filter_map(|l| l.strip_prefix("o ").map(str::to_string)).collect()
+    };
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10}));
+    run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "base": [30, 0, 0]}));
+    let c = run(&mut s, "component.create", json!({"name": "Lid"}));
+    run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "base": [60, 0, 0]}));
+    run(&mut s, "component.activate", json!({"component": 0}));
+    let names: Vec<String> = s.world_state().bodies.iter().map(|b| b.name.clone()).collect();
+    assert_eq!(names.len(), 3, "{names:?}");
+    let (shown, hidden, in_lid) = (names[0].clone(), names[1].clone(), names[2].clone());
+    run(&mut s, "browser.visibility", json!({"visible": false, "items": [hidden]}));
+    run(&mut s, "browser.visibility", json!({"visible": false, "paths": [[c["occurrence"]]]}));
+    assert!(s.body_visible(&shown) && !s.body_visible(&hidden) && !s.body_visible(&in_lid));
+
+    // Off (the default): every body, as before.
+    assert!(!s.export_visible_only);
+    run(&mut s, "file.export", json!({"path": at("all.obj")}));
+    assert_eq!(objects(&at("all.obj")).len(), 3);
+
+    let r = run(&mut s, "file.export_visible_only", json!({"value": true}));
+    assert_eq!(r["export_visible_only"], true);
+    let r = run(&mut s, "file.export", json!({"path": at("shown.obj")}));
+    assert_eq!(objects(&at("shown.obj")), vec![shown.replace(char::is_whitespace, "_")]);
+    assert_eq!(r["left_out"], json!([hidden, in_lid]), "{r}");
+    for (file, format) in [("shown.stl", "stl"), ("shown.3mf", "3mf"), ("tagged.3mf", "3mf-tagged")] {
+        run(&mut s, "file.export", json!({"path": at(file), "format": format}));
+        let mut back = Session::default();
+        let r = run(&mut back, "doc.open", json!({"path": at(file)}));
+        assert_eq!(back.world_state().bodies.len(), 1, "{format}: {r}");
+    }
+    let r = run(&mut s, "file.save_mesh", json!({"path": at("mesh.3mf")}));
+    assert_eq!(r["left_out"], json!([hidden, in_lid]), "{r}");
+
+    // Formats that keep every body: STEP (here an assembly) and the design.
+    run(&mut s, "file.export", json!({"path": at("all.step")}));
+    let step = std::fs::read_to_string(at("all.step")).unwrap();
+    assert_eq!(step.matches("MANIFOLD_SOLID_BREP").count(), 3);
+    run(&mut s, "file.export", json!({"path": at("all.json"), "format": "json"}));
+    let e = s.execute("file.export", &json!({"path": at("x.step"), "visible_only": true})).unwrap_err().to_string();
+    assert!(e.contains("STL, OBJ and 3MF"), "{e}");
+
+    // The parameter wins over the preference; named bodies are exported as named.
+    run(&mut s, "file.export", json!({"path": at("every.obj"), "visible_only": false}));
+    assert_eq!(objects(&at("every.obj")).len(), 3);
+    run(&mut s, "file.export", json!({"path": at("named.obj"), "bodies": [hidden]}));
+    assert_eq!(objects(&at("named.obj")).len(), 1);
+    let e = s.execute("file.export", &json!({"path": at("none.obj"), "bodies": [hidden], "visible_only": true})).unwrap_err().to_string();
+    assert!(e.contains("every body is hidden"), "{e}");
+
+    // Nothing shown: an error, and no file.
+    run(&mut s, "browser.visibility", json!({"visible": false, "items": [shown]}));
+    let e = s.execute("file.export", &json!({"path": at("empty.stl")})).unwrap_err().to_string();
+    assert!(e.contains("every body is hidden"), "{e}");
+    assert!(!dir.join("empty.stl").exists());
+
+    // A preference: it stays on for the next design, and toggles without a value.
+    run(&mut s, "file.new", json!({}));
+    assert!(s.export_visible_only);
+    run(&mut s, "file.export_visible_only", json!({}));
+    assert!(!s.export_visible_only);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Export 3MF; open and insert it as mesh bodies; mesh bodies move and export but refuse
 /// solid features.
 #[test]

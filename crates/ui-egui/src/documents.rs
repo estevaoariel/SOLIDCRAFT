@@ -139,6 +139,7 @@ fn swap_in(app: &mut SolveApp, slot: DocSlot) -> DocSlot {
     put_view(app, slot.view);
     // Preferences the session holds go with the user, not the tab (#680).
     app.session.auto_project = out.session.auto_project;
+    app.session.export_visible_only = out.session.export_visible_only;
     // Views cache by revision: the incoming design must not look unchanged.
     app.session.invalidate_view(out_rev);
     app.ui.ribbon_context = None;

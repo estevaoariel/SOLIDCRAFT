@@ -660,6 +660,7 @@ impl SolveApp {
             "perspective": self.ui.perspective,
             "pick_bodies": self.ui.pick_bodies,
             "auto_project": self.session.auto_project,
+            "export_visible_only": self.session.export_visible_only,
             "visual_style": self.ui.visual_style,
             "browser_collapsed": self.tree.collapsed,
             "browser_expanded": self.tree.expanded,
@@ -695,6 +696,9 @@ impl SolveApp {
         }
         if let Some(a) = flag("auto_project") {
             self.session.auto_project = a;
+        }
+        if let Some(e) = flag("export_visible_only") {
+            self.session.export_visible_only = e;
         }
         if let Some(m) = v.get("autosave_minutes").and_then(Value::as_f64).filter(|m| m.is_finite()) {
             self.autosave_minutes = m.clamp(0.0, 600.0);

@@ -48,12 +48,16 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("file.export", "Export", export)
         .icon("export")
         .noundo()
-        .params("path; format?: stl|stla|obj|step|3mf|3mf-tagged|urdf|json (default from extension; 3mf-tagged: 3MF whose triangles carry their B-rep face, at full precision, for meshing and analysis tools; docs/formats/3mf-face-tags.md; urdf: the whole assembly as a robot, with STL meshes written next to it; docs/urdf.md); bodies?: [names] (JSON and URDF export the complete design); urdf only: mesh_prefix? (before each mesh file name, e.g. package://robot/meshes/), effort? (default 1000), velocity? (default 10)"),
+        .params("path; format?: stl|stla|obj|step|3mf|3mf-tagged|urdf|json (default from extension; 3mf-tagged: 3MF whose triangles carry their B-rep face, at full precision, for meshing and analysis tools; docs/formats/3mf-face-tags.md; urdf: the whole assembly as a robot, with STL meshes written next to it; docs/urdf.md); bodies?: [names] (JSON and URDF export the complete design); visible_only?: bool (STL, OBJ and 3MF only: leave out hidden bodies, as the view hides them; default: the file.export_visible_only preference when no bodies are named); urdf only: mesh_prefix? (before each mesh file name, e.g. package://robot/meshes/), effort? (default 1000), velocity? (default 10)"),
     CommandSpec::new("file.save_mesh", "Save As Mesh", save_mesh)
         .at("MESH", "MODIFY")
         .icon("mesh_export")
         .noundo()
-        .params("path; format?: stl|3mf|3mf-tagged (default from the extension, else stl; 3mf-tagged: docs/formats/3mf-face-tags.md); bodies?: [names] (default: all); ascii?: bool (STL); slicer?: id, name or program path from file.slicers (open the saved file there)"),
+        .params("path; format?: stl|3mf|3mf-tagged (default from the extension, else stl; 3mf-tagged: docs/formats/3mf-face-tags.md); bodies?: [names] (default: all); visible_only?: bool (see file.export); ascii?: bool (STL); slicer?: id, name or program path from file.slicers (open the saved file there)"),
+    CommandSpec::new("file.export_visible_only", "Export Only Visible Bodies", export_visible_only)
+        .icon("export")
+        .noundo()
+        .params("value?: bool (default toggles): file.export and file.save_mesh leave hidden bodies (hidden themselves, or in a hidden component, occurrence, folder or group) out of STL, OBJ and 3MF files, which can't mark a body hidden; STEP, IGES, URDF and design files keep every body"),
     CommandSpec::new("file.slicers", "Installed Slicers", slicers).icon("export")
         .noundo()
         .params("→ the slicers found on this machine: [{id, name, icon?}]; pass an id or name as file.save_mesh's `slicer`"),
@@ -480,7 +484,43 @@ fn save_as(s: &mut Session, p: &Value) -> Result<Value> {
     )
 }
 
-fn export_to(s: &Session, path: &str, format: Format, bodies: &[String]) -> Result<Value> {
+fn export_visible_only(s: &mut Session, p: &Value) -> Result<Value> {
+    s.export_visible_only = bool_(p, "value").unwrap_or(!s.export_visible_only);
+    Ok(json!({"export_visible_only": s.export_visible_only}))
+}
+
+/// Formats with no way to mark a body hidden: the ones `visible_only` leaves hidden bodies out of.
+fn hides_by_leaving_out(format: Format) -> bool {
+    matches!(format, Format::StlBinary | Format::StlAscii | Format::Obj | Format::ThreeMf | Format::ThreeMfTagged)
+}
+
+/// Whether an export leaves hidden bodies out: `visible_only` when given, else the preference
+/// for a whole-design export (named bodies are exported as named).
+fn visible_only(s: &Session, p: &Value, format: Format, cmd: &str) -> Result<bool> {
+    match bool_(p, "visible_only") {
+        Some(true) if !hides_by_leaving_out(format) => {
+            Err(bad(cmd, "`visible_only` applies to STL, OBJ and 3MF; STEP, IGES, URDF and design files keep every body"))
+        }
+        Some(v) => Ok(v),
+        None => Ok(hides_by_leaving_out(format) && s.export_visible_only && string_list(p, "bodies").is_empty()),
+    }
+}
+
+/// The bodies an export with `visible_only` writes: those named (or all), less the hidden ones,
+/// and the hidden ones it leaves out. Nothing shown is an error, never an empty file.
+fn visible_bodies(s: &Session, bodies: &[String], cmd: &str) -> Result<(Vec<String>, Vec<String>)> {
+    let world = s.world_state();
+    let (shown, hidden): (Vec<String>, Vec<String>) =
+        world.bodies.iter().filter(|b| bodies.is_empty() || bodies.contains(&b.name)).map(|b| b.name.clone()).partition(|name| s.body_visible(name));
+    if shown.is_empty() {
+        return Err(bad(cmd, "nothing to export: every body is hidden (show one, or export with visible_only: false)"));
+    }
+    Ok((shown, hidden))
+}
+
+fn export_to(s: &Session, path: &str, format: Format, bodies: &[String], visible_only: bool, cmd: &str) -> Result<Value> {
+    let (bodies, left_out) = if visible_only { visible_bodies(s, bodies, cmd)? } else { (bodies.to_vec(), Vec::new()) };
+    let bodies = bodies.as_slice();
     let name = std::path::Path::new(path).file_stem().map(|x| x.to_string_lossy().to_string()).unwrap_or_else(|| s.doc.name.clone());
     // A design with components exports as a STEP assembly; otherwise bodies as placed.
     let bytes = if format == Format::Design {
@@ -496,7 +536,11 @@ fn export_to(s: &Session, path: &str, format: Format, bodies: &[String]) -> Resu
         solidcraft_io::export_with_metadata(&s.doc.painted(&s.world_state()), bodies, format, &name, &s.doc.metadata)?
     };
     solidcraft_io::vfs::write(path, &bytes).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
-    Ok(json!({"path": path, "bytes": bytes.len(), "format": format!("{format:?}")}))
+    let mut out = json!({"path": path, "bytes": bytes.len(), "format": format!("{format:?}")});
+    if !left_out.is_empty() {
+        out["left_out"] = json!(left_out);
+    }
+    Ok(out)
 }
 
 fn export(s: &mut Session, p: &Value) -> Result<Value> {
@@ -505,7 +549,8 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
     if format == Format::Urdf {
         return export_urdf(s, path, p);
     }
-    export_to(s, path, format, &string_list(p, "bodies"))
+    let visible_only = visible_only(s, p, format, "file.export")?;
+    export_to(s, path, format, &string_list(p, "bodies"), visible_only, "file.export")
 }
 
 /// The assembly as a URDF and its meshes next to it (docs/urdf.md). Every path is checked before
@@ -515,6 +560,7 @@ fn export_urdf(s: &Session, path: &str, p: &Value) -> Result<Value> {
     if !string_list(p, "bodies").is_empty() {
         return Err(bad(cmd, "urdf exports the whole assembly; omit bodies"));
     }
+    visible_only(s, p, Format::Urdf, cmd)?;
     let positive = |k: &str| match p.get(k) {
         None | Some(Value::Null) => Ok(None),
         Some(_) => num(p, k).filter(|x| *x > 0.0).map(Some).ok_or_else(|| bad(cmd, format!("`{k}` must be a positive number"))),
@@ -586,7 +632,8 @@ fn save_mesh(s: &mut Session, p: &Value) -> Result<Value> {
             crate::slicers::resolve(spec).ok_or_else(|| bad(cmd, format!("no slicer `{spec}` (see file.slicers, or give the path of a program)")))?,
         ),
     };
-    let mut out = export_to(s, path, format, &string_list(p, "bodies"))?;
+    let visible_only = visible_only(s, p, format, cmd)?;
+    let mut out = export_to(s, path, format, &string_list(p, "bodies"), visible_only, cmd)?;
     if let (Some(slicer), Some(obj)) = (slicer, out.as_object_mut()) {
         // The file is saved either way; a slicer that won't start is reported, not fatal.
         match slicer.open(path) {
