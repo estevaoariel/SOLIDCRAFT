@@ -178,7 +178,7 @@ pub fn page(app: &mut SolveApp, ui: &mut egui::Ui) {
             }
         });
         ui_kit::row(ui, tr("ui.agent_chat_turn_limit"), |ui| {
-            ui_kit::number_field(ui, &mut app.preferences.agent_chat_turn_limit, 1..=200, 1.0, "");
+            ui_kit::plain_number_field(ui, &mut app.preferences.agent_chat_turn_limit, 1..=200);
         });
         ui_kit::text(ui, tr("ui.agent_chat_privacy_note"), ui_kit::Text::Note("privacy"));
     });
