@@ -14,12 +14,10 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
-#[path = "text_call.rs"]
-mod text_call;
-
 use super::acp::ModelInfo;
 use super::backend::{ChatBackend, Event, HttpFn, HttpRequest, PromptPart, StartContext, ToolStatus};
 use super::process::{AgentProcess, FromAgent, ProcessHandle};
+use super::text_call;
 
 /// Model requests for one message, at most (each answer with tool calls is one).
 pub const MAX_REQUESTS_PER_TURN: usize = 24;
@@ -33,6 +31,10 @@ const REQUEST_TIMEOUT_S: u64 = 300;
 const TOOL_TIMEOUT: Duration = Duration::from_secs(330);
 /// How often a waiting request or tool call looks at the cancel flag.
 const CANCEL_POLL: Duration = Duration::from_millis(40);
+
+/// Times one message's turn is handed back to the model for an empty reply or a reply that only
+/// describes an action, at most (more makes small models loop).
+const MAX_HAND_BACKS: usize = 2;
 
 /// Tools the model is not offered.
 const HIDDEN_TOOLS: &[&str] = &["crash_reports"];
@@ -249,7 +251,9 @@ impl Worker {
         while self.history.len() > 2 && self.history.get(1).is_some_and(|m| m["role"] != "user") {
             self.history.remove(1);
         }
-        let mut empty_retried = false;
+        let asked_change = parts.iter().any(|p| matches!(p, PromptPart::Text(t) if text_call::asks_for_change(t)));
+        // Each guard hands the turn back once, and both share the per-turn limit.
+        let (mut hand_backs, mut empty_retried, mut nudged, mut used_tool) = (0, false, false, false);
         for request in 0..MAX_REQUESTS_PER_TURN {
             // The history as of here is complete (every tool call answered): a cancelled request
             // goes back to it, so no half-finished round is left to confuse the next message.
@@ -279,28 +283,33 @@ impl Worker {
             let msg = reply.pointer("/choices/0/message").cloned().unwrap_or(Value::Null);
             let text = msg.get("content").and_then(Value::as_str).unwrap_or("");
             let mut calls: Vec<Value> = msg.get("tool_calls").and_then(Value::as_array).cloned().unwrap_or_default();
+            // The answer shown in the panel: a call written as text is shown as a tool call, not
+            // as its JSON.
+            let mut shown = text;
             if calls.is_empty()
-                && let Some(mut call) = text_call::pickup(text, &self.tools)
+                && let Some((mut call, start)) = text_call::pickup(text, &self.tools)
             {
                 self.next = self.next.saturating_add(1);
                 call["id"] = json!(format!("text-call-{}", self.next));
                 calls.push(call);
+                shown = text_call::prose_before(text, start);
             }
+            let can_hand_back = hand_backs < MAX_HAND_BACKS && request + 1 < MAX_REQUESTS_PER_TURN;
             if calls.is_empty() && text.trim().is_empty() {
-                // One hand-back per turn, using the same request budget as tool rounds.
-                if !empty_retried && request + 1 < MAX_REQUESTS_PER_TURN {
+                if !empty_retried && can_hand_back {
                     empty_retried = true;
+                    hand_backs += 1;
                     self.history.push(json!({"role": "user", "content": "your reply was empty; answer or call a tool"}));
                     continue;
                 }
-                let text = "The model gave no answer.";
-                self.emit(Event::Text { thought: false, text: text.into() });
+                let text = crate::i18n::tr("ui.ai_model_no_answer").to_string();
+                self.emit(Event::Text { thought: false, text: text.clone() });
                 self.history.push(json!({"role": "assistant", "content": text}));
                 self.emit(Event::TurnEnded { reason: String::new() });
                 return;
             }
-            if !text.trim().is_empty() {
-                self.emit(Event::Text { thought: false, text: text.to_string() });
+            if !shown.trim().is_empty() {
+                self.emit(Event::Text { thought: false, text: shown.to_string() });
             }
             let mut kept = json!({"role": "assistant", "content": msg.get("content").cloned().unwrap_or(Value::Null)});
             if !calls.is_empty() {
@@ -308,9 +317,28 @@ impl Worker {
             }
             self.history.push(kept);
             if calls.is_empty() {
+                // A reply that only describes an action (in prose or code) when nothing has run
+                // yet: hand it back once, then say plainly that no tool was used.
+                let named = text_call::named_command(text);
+                if !used_tool && !self.tools.is_empty() && (nudged || named.is_some() || asked_change) {
+                    if !nudged && can_hand_back {
+                        nudged = true;
+                        hand_backs += 1;
+                        let nudge = match named {
+                            Some(id) => format!("you described `{id}`; call the tool to do it, or say why not"),
+                            None => "you described a change; call a SolidCraft tool to do it, or say why not".to_string(),
+                        };
+                        self.history.push(json!({"role": "user", "content": nudge}));
+                        continue;
+                    }
+                    if nudged {
+                        self.emit(Event::Text { thought: false, text: format!("\n\n{}", crate::i18n::tr("ui.ai_no_tool_used")) });
+                    }
+                }
                 self.emit(Event::TurnEnded { reason: String::new() });
                 return;
             }
+            used_tool = true;
             for (i, c) in calls.iter().enumerate().take(32) {
                 let id = c.get("id").and_then(Value::as_str).map_or_else(|| format!("call-{i}"), str::to_string);
                 let name = c.pointer("/function/name").and_then(Value::as_str).unwrap_or("").to_string();
@@ -595,7 +623,7 @@ mod tests {
             r#"{"name":"batch","arguments":{"commands":[]}"#,
             "```json\n{name: 'batch', arguments: {commands: []}\n```",
         ] {
-            let call = text_call::pickup(text, &tools).expect(text);
+            let (call, _) = text_call::pickup(text, &tools).expect(text);
             assert_eq!(call["function"]["name"], "batch", "{text}");
             assert_eq!(tool_arguments(call.pointer("/function/arguments")), Ok(json!({"commands": []})), "{text}");
         }
@@ -608,7 +636,7 @@ mod tests {
             r#"{"tool":"solid.box(width: 20)","args":{}}"#,
             r#"{"tool":"solid.box {width: 20}","args":{"height":10}}"#,
         ] {
-            let call = text_call::pickup(text, &tools).expect(text);
+            let (call, _) = text_call::pickup(text, &tools).expect(text);
             assert_eq!(call["function"]["name"], "execute", "{text}");
             let args = tool_arguments(call.pointer("/function/arguments")).unwrap();
             assert_eq!(args["command"], "solid.box", "{text}");
@@ -621,7 +649,7 @@ mod tests {
 
     #[test]
     fn text_calls_ignore_prose_and_bound_hostile_input() {
-        let quoted = text_call::pickup(r#"{name:'batch',arguments:{note:'a } bracket [ and "word"', list:[1,2,], enabled:true}}"#, &[]).unwrap();
+        let (quoted, _) = text_call::pickup(r#"{name:'batch',arguments:{note:'a } bracket [ and "word"', list:[1,2,], enabled:true}}"#, &[]).unwrap();
         assert_eq!(
             tool_arguments(quoted.pointer("/function/arguments")),
             Ok(json!({
@@ -688,6 +716,68 @@ mod tests {
         let assistant = &messages[messages.len() - 2];
         assert_eq!(assistant["tool_calls"][0]["id"], "native");
         assert_eq!(assistant["tool_calls"][0]["function"]["name"], "measure");
+    }
+
+    /// A reply that only describes an action (deepseek-r1 answers in prose or code) is handed
+    /// back once; if the model still runs nothing, the panel says so in one plain line.
+    #[test]
+    fn a_described_action_is_handed_back_once() {
+        let reply = |content: &str| (200, json!({"choices": [{"message": {"role": "assistant", "content": content}}]}));
+        let no_tool = crate::i18n::tr("ui.ai_no_tool_used").to_string();
+        let run = |answers: Vec<(u16, Value)>, ask: &str| {
+            let (mut w, seen) = scripted_worker(answers);
+            let (tx, rx) = channel();
+            w.events = tx;
+            w.turn(vec![PromptPart::Text(ask.into())]);
+            let texts: Vec<String> = rx.try_iter().filter_map(|e| if let Event::Text { text, .. } = e { Some(text) } else { None }).collect();
+            let sent = seen.lock().unwrap().clone();
+            (texts, sent)
+        };
+
+        // Names a command id: the nudge names it; a second prose reply ends with the plain line.
+        let (texts, sent) = run(vec![reply("Use `solid.box` with width 20."), reply("I would rather explain it.")], "what is a box?");
+        assert_eq!(sent.len(), 2);
+        let last = sent[1]["messages"].as_array().unwrap().last().unwrap().clone();
+        assert_eq!(last["role"], "user");
+        assert_eq!(last["content"], "you described `solid.box`; call the tool to do it, or say why not");
+        assert!(texts.iter().any(|t| t.trim() == no_tool), "{texts:?}");
+
+        // The user asked for a change: the call that follows the nudge runs, and no line is added.
+        let (texts, sent) =
+            run(vec![reply("Sure:\nbatch set_parameter length 20"), reply("{name:'measure',arguments:{}}"), reply("Done.")], "Make a 20 mm cube");
+        assert_eq!(sent.len(), 3);
+        assert_eq!(
+            sent[1]["messages"].as_array().unwrap().last().unwrap()["content"],
+            "you described a change; call a SolidCraft tool to do it, or say why not"
+        );
+        assert!(!texts.iter().any(|t| t.contains(&no_tool)), "{texts:?}");
+
+        // A plain answer to a question, or a summary after a tool ran, is not handed back.
+        let (texts, sent) = run(vec![reply("The volume is 8000 mm³.")], "what is the volume?");
+        assert_eq!(sent.len(), 1);
+        assert!(!texts.iter().any(|t| t.contains(&no_tool)));
+        let (_, sent) = run(vec![reply("{name:'measure',arguments:{}}"), reply("Made it with `solid.box`.")], "make a box");
+        assert_eq!(sent.len(), 2);
+
+        // The two hand-backs are the turn's limit: an empty reply after the nudge is retried
+        // once, and then the turn ends.
+        let (texts, sent) = run(vec![reply("Run `solid.box`."), reply(""), reply("Run `solid.box`.")], "make a box");
+        assert_eq!(sent.len(), 3);
+        assert!(texts.iter().any(|t| t.trim() == no_tool), "{texts:?}");
+    }
+
+    #[test]
+    fn text_call_pickup_shows_prose_and_skips_plain_objects() {
+        let text = "I'll measure it.\n```json\n{\"name\": \"measure\", \"arguments\": {}}\n```";
+        let (call, start) = text_call::pickup(text, &[]).unwrap();
+        assert_eq!(call["function"]["name"], "measure");
+        assert_eq!(text_call::prose_before(text, start), "I'll measure it.");
+        // An object in the answer is not a call unless it carries arguments or names a tool.
+        assert!(text_call::pickup(r#"The body is {"name": "Body1", "volume": 8000}."#, &[]).is_none());
+        assert_eq!(text_call::named_command("then `sketch.create` and solid.box."), Some("sketch.create"));
+        assert_eq!(text_call::named_command("make.it.so and e.g. this"), None);
+        assert!(text_call::asks_for_change("please Make a 20 mm cube"));
+        assert!(!text_call::asks_for_change("what is the volume?"));
     }
 
     #[test]

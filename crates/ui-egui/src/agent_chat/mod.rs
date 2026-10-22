@@ -35,6 +35,8 @@ pub mod paste;
 #[cfg(not(target_arch = "wasm32"))]
 mod process;
 pub mod settings;
+#[cfg(not(target_arch = "wasm32"))]
+mod text_call;
 
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender};

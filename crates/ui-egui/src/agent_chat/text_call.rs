@@ -1,11 +1,18 @@
-//! Recognise one intended call in model text; execution stays in the normal tool loop.
+//! Recognise one intended call in model text; execution stays in the normal tool loop. Also the
+//! narrow checks for a reply that only describes an action instead of calling a tool.
 
 use serde_json::{Value, json};
 
 const MAX_TEXT_BYTES: usize = 64 * 1024;
 const MAX_DEPTH: usize = 64;
+/// Words of a reply looked at for a command id, at most.
+const MAX_WORDS: usize = 4096;
+/// Words of the user's message looked at for a request to change the design, at most.
+const MAX_REQUEST_WORDS: usize = 64;
 
-pub(super) fn pickup(text: &str, tools: &[Value]) -> Option<Value> {
+/// One intended call written in the text, as a `tool_calls` entry, and the byte offset where
+/// it starts (the prose before it is still the model's answer).
+pub(super) fn pickup(text: &str, tools: &[Value]) -> Option<(Value, usize)> {
     if text.len() > MAX_TEXT_BYTES {
         return None;
     }
@@ -14,19 +21,52 @@ pub(super) fn pickup(text: &str, tools: &[Value]) -> Option<Value> {
         let Some(value) = object(text.get(start..)?) else { continue };
         let Some((name, args)) = intended_call(&value, tools) else { continue };
         let arguments = if args.is_string() { args } else { Value::String(args.to_string()) };
-        return Some(json!({
+        let call = json!({
             "id": "text-call", "type": "function",
             "function": {"name": name, "arguments": arguments}
-        }));
+        });
+        return Some((call, start));
     }
     None
 }
 
+/// The prose before a picked-up call, without the opening of a code fence around it.
+pub(super) fn prose_before(text: &str, start: usize) -> &str {
+    let before = text.get(..start).unwrap_or("").trim_end();
+    match before.rfind("```") {
+        Some(fence) if before.get(fence + 3..).is_some_and(|tag| tag.chars().all(|c| c.is_ascii_alphanumeric())) => {
+            before.get(..fence).unwrap_or("").trim_end()
+        }
+        _ => before,
+    }
+}
+
+/// The first SolidCraft command id a reply names, in prose or in code (`solid.box`).
+pub(super) fn named_command(text: &str) -> Option<&'static str> {
+    if text.len() > MAX_TEXT_BYTES {
+        return None;
+    }
+    text.split(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '.' | '_')))
+        .take(MAX_WORDS)
+        .map(|w| w.trim_matches('.'))
+        .filter(|w| w.contains('.') && w.len() <= 64)
+        .find_map(|w| solidcraft_engine::cmd::find_command(w).map(|spec| spec.id))
+}
+
+/// Words that ask for a change to the design.
+const CHANGE_WORDS: &str = "add build chamfer change create cut delete draw drill extrude fillet make mirror move pattern remove rename resize \
+     revolve rotate scale shell sketch translate";
+
+/// Whether the user's message asks for a change to the design ("make a 20 mm cube").
+pub(super) fn asks_for_change(text: &str) -> bool {
+    text.split(|c: char| !c.is_alphabetic()).take(MAX_REQUEST_WORDS).any(|w| CHANGE_WORDS.split_whitespace().any(|k| k.eq_ignore_ascii_case(w)))
+}
+
 fn intended_call(value: &Value, tools: &[Value]) -> Option<(String, Value)> {
     let call = value.get("function").unwrap_or(value);
-    let (name, mut args) = if let Some(name) = call.get("name").or_else(|| call.get("tool")).and_then(Value::as_str) {
-        let args = call.get("arguments").or_else(|| call.get("parameters")).or_else(|| call.get("args")).cloned().unwrap_or_else(|| json!({}));
-        (name, args)
+    let (name, mut args, has_args) = if let Some(name) = call.get("name").or_else(|| call.get("tool")).and_then(Value::as_str) {
+        let given = call.get("arguments").or_else(|| call.get("parameters")).or_else(|| call.get("args"));
+        (name, given.cloned().unwrap_or_else(|| json!({})), given.is_some())
     } else {
         let map = call.as_object()?;
         if map.len() != 1 {
@@ -36,7 +76,7 @@ fn intended_call(value: &Value, tools: &[Value]) -> Option<(String, Value)> {
         // Bare objects are calls only when their key names a real command.
         let split = name.find(|c: char| c.is_whitespace() || c == '{' || c == '(').unwrap_or(name.len());
         solidcraft_engine::cmd::find_command(name.get(..split)?)?;
-        (name.as_str(), args.clone())
+        (name.as_str(), args.clone(), true)
     };
     if tools.iter().any(|t| t.pointer("/function/name").and_then(Value::as_str) == Some(name)) {
         return Some((name.to_string(), args));
@@ -60,8 +100,9 @@ fn intended_call(value: &Value, tools: &[Value]) -> Option<(String, Value)> {
         }
         return Some(("execute".into(), json!({"command": spec.id, "params": args})));
     }
-    // Unknown named tools get the same error feedback as native calls.
-    Some((name.to_string(), args))
+    // An unknown name with arguments is a call: it gets the same error feedback as a native
+    // one. Without arguments it is just an object in the answer (`{"name": "Body1", …}`).
+    has_args.then(|| (name.to_string(), args))
 }
 
 /// Strip surrounding prose by ending at the root's closing brace. Quote JSON5-style keys
