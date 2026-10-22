@@ -76,6 +76,9 @@ pub struct Input {
     pub logged_device: Option<String>,
     /// "Restore 3D Mouse Defaults" was clicked and waits for its answer.
     pub restore_pending: bool,
+    /// The reading is the last value a daemon keeps until its next report (spacenavd sends only on
+    /// change), not a report the device is still sending. The calibration window needs the difference.
+    pub retained: bool,
     /// The motion `navigate_frame` handed the view this frame (calibrated, reassigned, inverted and
     /// scaled), for the test model on the Preferences page to move with; none when the view got none.
     pub motion: Option<DeviceMotion>,
@@ -532,7 +535,7 @@ pub fn navigate_frame(app: &mut SolveApp, ctx: &egui::Context, mapping: DriverMa
     }
     if let Some((device, wizard)) = &mut app.space_mouse.calibrating {
         if app.space_mouse.device.as_ref() == Some(device) {
-            wizard.feed(axes.into(), seconds);
+            wizard.feed_reading(axes.into(), seconds, !app.space_mouse.retained);
             ctx.request_repaint_after(calibration_repaint_after(changed, ctx.input(|i| i.focused)));
             return false;
         }
@@ -607,6 +610,32 @@ mod tests {
         let page = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
         crate::navigation::device(app, page, crate::navigation::NavCaps::MODEL);
         handed
+    }
+
+    /// The calibration window is told whether a reading is a report the device still sends or a value a
+    /// daemon keeps: a ball that slows to a lower speed and keeps sending it is rolling (fresh), while the
+    /// same readings as a kept value end the step.
+    #[test]
+    fn the_calibration_window_is_told_whether_the_reading_is_fresh() {
+        use solidcraft_space_mouse::{Kind, Stage, Wizard};
+        for (retained, step_done) in [(false, false), (true, true)] {
+            let mut app = app();
+            app.space_mouse.device = Some("hid 046d:c62b".into());
+            app.space_mouse.retained = retained;
+            app.space_mouse.calibrating = Some(("hid 046d:c62b".into(), Wizard::new(Kind::Trackball)));
+            let ctx = egui::Context::default();
+            ctx.run_ui(egui::RawInput::default(), |_| {}).textures_delta.clear();
+            let mut feed = |axes: Axes, frames: usize| {
+                for _ in 0..frames {
+                    frame(&mut app, &ctx, DriverMapping::default(), axes, 0.02);
+                }
+            };
+            feed(Axes::default(), 400);
+            feed(Axes { translation: [40, 3, 0], rotation: [0; 3] }, 30);
+            feed(Axes { translation: [10, 0, 0], rotation: [0; 3] }, 35);
+            let stage = app.space_mouse.calibrating.as_ref().map(|(_, wizard)| wizard.stage());
+            assert_eq!(stage == Some(Stage::Step(1)), step_done, "retained {retained}: {stage:?}");
+        }
     }
 
     fn raw(axes: Axes) -> Motion {

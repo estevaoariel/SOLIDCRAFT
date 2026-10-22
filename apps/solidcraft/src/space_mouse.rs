@@ -901,6 +901,7 @@ impl SpaceMouse {
         // calibration of another device doesn't count; it ends in `navigate_frame`.
         let calibrating = app.space_mouse.calibrating.as_ref().is_some_and(|(device, _)| app.space_mouse.device.as_ref() == Some(device));
         let rest = if calibrating { Axes::default() } else { at_rest(calibration) };
+        app.space_mouse.retained = reading.held;
         navigate_frame(app, ctx, self.driver_mapping, reading.current_with(now, rest, settle_band(calibration)), seconds);
     }
 }

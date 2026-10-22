@@ -593,6 +593,10 @@ pub struct Wizard {
     /// The last reading, and how long it has been exactly that.
     last: Option<[i16; 6]>,
     same: f64,
+    /// Whether the reading being fed is a report the device just sent (a steady one is then the
+    /// device still sending, so a ball still rolling), not the last value a daemon keeps until the
+    /// next report.
+    fresh: bool,
 }
 
 impl Default for Wizard {
@@ -613,6 +617,7 @@ impl Default for Wizard {
             held: false,
             last: None,
             same: 0.0,
+            fresh: false,
         }
     }
 }
@@ -697,8 +702,19 @@ impl Wizard {
         }
     }
 
-    /// One reading, `seconds` after the previous one.
+    /// One reading, `seconds` after the previous one, which may be a value kept since the last report
+    /// (spacenavd sends only on change). See [`Self::feed_reading`].
     pub fn feed(&mut self, raw: [i16; 6], seconds: f64) {
+        self.feed_reading(raw, seconds, false);
+    }
+
+    /// One reading, `seconds` after the previous one. `fresh` says it is a report the device itself is
+    /// still sending (a HID device's, not stale yet), not the last value a daemon keeps. A trackball
+    /// whose fresh reports repeat one speed is still rolling: it never counts as having come to rest
+    /// there, whatever fraction of its peak that speed is. Without that (a kept value), a plateau below
+    /// half the peak for the settle time is taken as where the ball stopped.
+    pub fn feed_reading(&mut self, raw: [i16; 6], seconds: f64, fresh: bool) {
+        self.fresh = fresh;
         // A stalled frame shouldn't finish a stage on its own.
         let seconds = if seconds.is_finite() { seconds.clamp(0.0, 0.1) } else { 0.0 };
         // Steady while every axis's readings since the run began stay within its noise.
@@ -883,7 +899,7 @@ impl Wizard {
         self.held |= high && self.same >= HELD_SECONDS;
         // A still-high reading is never a place the ball came to rest: a quantized ball can send the
         // same speed while it rolls. Held steady far out only makes `mismatch` suggest a cap.
-        let stopped = away <= 0.5 || (stuck && !high);
+        let stopped = away <= 0.5 || (stuck && !high && !self.fresh);
         if away >= 1.0 && !stuck {
             self.recording.step(index, raw);
             self.seconds += seconds;
@@ -1143,6 +1159,13 @@ mod tests {
     fn hold(wizard: &mut Wizard, reading: [i16; 6], seconds: f64) {
         for _ in 0..(seconds / 0.02).round() as usize {
             wizard.feed(reading, 0.02);
+        }
+    }
+
+    /// As `hold`, each reading flagged fresh or not.
+    fn hold_fresh(wizard: &mut Wizard, reading: [i16; 6], seconds: f64, fresh: bool) {
+        for _ in 0..(seconds / 0.02).round() as usize {
+            wizard.feed_reading(reading, 0.02, fresh);
         }
     }
 
@@ -1760,6 +1783,33 @@ mod tests {
         // The raw axes it has no use for read nothing; the ones it has read at full scale.
         assert_eq!(calibration.apply([0, 0, 0, 99, 99, 0]), [0; 6]);
         assert_eq!(calibration.apply([40, 0, 0, 0, 0, 0])[0], FULL_SCALE);
+    }
+
+    /// A ball that slows to a lower speed and keeps sending it is still rolling: its fresh reports are not
+    /// where it came to rest. (Without freshness, a daemon's kept value, the same plateau does end the step.)
+    #[test]
+    fn a_decelerating_trackball_that_keeps_sending_is_not_taken_for_rest() {
+        let run = |fresh: bool| {
+            let mut wizard = Wizard::new(Kind::Trackball);
+            hold_fresh(&mut wizard, [0; 6], REST_SECONDS + TOUCH_SECONDS + 0.1, fresh);
+            assert_eq!(wizard.stage(), Stage::Step(0));
+            hold_fresh(&mut wizard, [40, 3, 0, 0, 0, 0], 0.6, fresh);
+            hold_fresh(&mut wizard, [10, 0, 0, 0, 0, 0], 0.7, fresh);
+            wizard
+        };
+        // Reports still arriving at that speed: the ball is rolling, the step is not done.
+        let mut wizard = run(true);
+        assert_eq!(wizard.stage(), Stage::Step(0), "a fresh plateau is motion");
+        // It then stops (a zero report) and the strokes go on: the first axis is not recorded as 10 at rest.
+        hold_fresh(&mut wizard, [0; 6], 0.2, true);
+        assert_eq!(wizard.stage(), Stage::Step(1));
+        for (index, reading) in BALL.into_iter().skip(1) {
+            strokes(&mut wizard, reading, index);
+        }
+        let calibration = wizard.result().unwrap().expect("no NoResponse for the first axis");
+        assert!(calibration.axes[0].rest == 0 && calibration.axes[0].dead_zone < 5, "{:?}", calibration.axes[0]);
+        // The same readings as a kept value (no freshness) keep the old reading of a plateau.
+        assert_eq!(run(false).stage(), Stage::Step(1), "a kept value that stops changing is where it stopped");
     }
 
     #[test]
