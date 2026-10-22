@@ -42,7 +42,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         "features?: [id|name], groups?: [folder ids], group?: folder id, position: insertion slot; atomically changes folder membership and moves all selected contents as one block",
     ),
     CommandSpec::new("timeline.rollback", "Move Timeline Marker", rollback).icon("rollback").params("position: number of features to keep active, or \"end\" (omit = end)"),
-    CommandSpec::new("timeline.roll_to", "Roll History Marker", rollback).icon("rollback")
+    CommandSpec::new("timeline.roll_to", "Roll History Marker", roll_to).icon("rollback")
         .params("position: number of features to keep active, or \"end\" (omit = end) | feature: id|name (the marker goes right after it)"),
     CommandSpec::new("timeline.reorder", "Reorder Feature", reorder).icon("reorder")
         .params("feature: id|name, position: its new index; refused when a feature that worked would fail"),
@@ -499,10 +499,19 @@ fn move_many(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn rollback(s: &mut Session, p: &Value) -> Result<Value> {
+    move_marker(s, p, "timeline.rollback")
+}
+
+fn roll_to(s: &mut Session, p: &Value) -> Result<Value> {
+    move_marker(s, p, "timeline.roll_to")
+}
+
+/// `timeline.rollback` and `timeline.roll_to`, refusing in the name of the one asked for (#4712).
+fn move_marker(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
     let n = s.doc.features.len();
     let pos = match p.get("feature") {
         Some(f) => {
-            let id = feature_id(s, Some(f), "timeline.roll_to")?;
+            let id = feature_id(s, Some(f), cmd)?;
             s.doc.feature_index(id).map(|i| i + 1)
         }
         // A number of features, or "end" (as omitting it); anything else is refused rather than
@@ -513,7 +522,13 @@ fn rollback(s: &mut Session, p: &Value) -> Result<Value> {
             Some(v) => {
                 let x = v.as_f64().or_else(|| v.as_str().and_then(|t| t.trim().parse::<f64>().ok())).and_then(crate::params::finite);
                 let why = "`position` must be a number of features to keep active, or \"end\"";
-                Some(x.map(|x| x.max(0.0) as usize).ok_or_else(|| bad("timeline.roll_to", why))?)
+                let x = x.ok_or_else(|| bad(cmd, why))?;
+                // A negative position was taken as 0, rolling the whole timeline back: an agent
+                // meaning "one step back" by -1 lost every body without a word (#4712).
+                if x < 0.0 {
+                    return Err(bad(cmd, format!("`position` {x} is negative: it counts the features to keep active, 0 to {n} (or \"end\")")));
+                }
+                Some(x as usize)
             }
         },
     };

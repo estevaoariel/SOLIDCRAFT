@@ -27,6 +27,16 @@ fn roll_to_takes_a_number_or_end_and_refuses_anything_else() {
             assert_eq!(s.doc.marker, Some(1), "{bad}: the refused call left the marker where it was");
         }
         assert_eq!(run(&mut s, cmd, json!({}))["marker"], 2, "omitted: the end");
+        // #4712: a negative position is refused (it rolled the whole timeline back), in the
+        // name of the command asked for.
+        run(&mut s, cmd, json!({"position": 1}));
+        for neg in [json!(-1), json!("-1"), json!(-0.5)] {
+            let e = s.execute(cmd, &json!({"position": neg})).unwrap_err().to_string();
+            assert!(e.contains("negative") && e.contains(&format!("`{cmd}`")), "{neg}: {e}");
+            assert_eq!(s.doc.marker, Some(1), "{neg}: the marker stays");
+        }
+        let e = s.execute(cmd, &json!({"position": "start"})).unwrap_err().to_string();
+        assert!(e.contains(&format!("`{cmd}`")), "named as asked: {e}");
     }
 }
 
