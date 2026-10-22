@@ -47,6 +47,13 @@ pub const RESERVED: &[&str] = &[
     "Ctrl+Right",
     "Ctrl+Up",
     "Ctrl+Down",
+    "Ctrl+1",
+    "Ctrl+2",
+    "Ctrl+3",
+    "Ctrl+4",
+    "Ctrl+5",
+    "Ctrl+6",
+    "Ctrl+7",
     "Ctrl+8",
 ];
 
