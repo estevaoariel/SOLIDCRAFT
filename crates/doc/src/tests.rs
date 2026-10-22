@@ -125,6 +125,221 @@ fn results_kept_ahead_outlive_the_cache() {
     assert!(rel(measure(&m.state().bodies[0].body).unwrap().volume, 30000.0) < 1e-9);
 }
 
+fn add_in(doc: &mut Document, component: u64, name: &str, kind: serde_json::Value) {
+    let kind: FeatureKind = serde_json::from_value(kind).unwrap();
+    let id = doc.add_feature(kind, Some(name)).unwrap();
+    doc.feature_mut(id).unwrap().component = component;
+}
+
+/// A plate in one component, then a rod in another, slotted by a box cut patterned round it.
+fn two_parts(slot_targets: &[&str]) -> Document {
+    let mut doc = Document::new("two parts");
+    doc.set_param("w", "40 mm", None, None).unwrap();
+    doc.set_param("slot", "1 mm", None, None).unwrap();
+    let plate = doc.add_component(Some("Plate"), 0).unwrap();
+    let rod = doc.add_component(Some("Rod"), 0).unwrap();
+    add_in(
+        &mut doc,
+        plate,
+        "Plate",
+        serde_json::json!({"type": "box", "corner": ["0", "0", "0"], "length": "w", "width": "30", "height": "5", "operation": "new_body"}),
+    );
+    add_in(
+        &mut doc,
+        rod,
+        "Rod",
+        serde_json::json!({"type": "cylinder", "base": ["0", "0", "0"], "axis": [0.0, 0.0, 1.0], "radius": "4", "height": "20", "operation": "new_body"}),
+    );
+    add_in(
+        &mut doc,
+        rod,
+        "Slot",
+        serde_json::json!({"type": "box", "corner": ["3", "-0.5", "2"], "length": "2", "width": "slot", "height": "20", "operation": "cut"}),
+    );
+    for f in doc.features.iter_mut().filter(|f| f.name == "Plate" || f.name == "Rod") {
+        f.body_names = vec![f.name.clone()];
+    }
+    if let Some(f) = doc.features.iter_mut().find(|f| f.name == "Slot") {
+        f.participants = slot_targets.iter().map(|t| t.to_string()).collect();
+    }
+    add_in(
+        &mut doc,
+        rod,
+        "Slots",
+        serde_json::json!({"type": "pattern", "features": ["Slot"], "pattern": {"type": "circular", "origin": [0.0, 0.0, 0.0], "axis": [0.0, 0.0, 1.0], "count": "4", "angle": "360 deg"}}),
+    );
+    doc
+}
+
+/// The bodies as an evaluation from scratch makes them: names, volumes, face names.
+fn summary(st: &ModelState) -> Vec<(String, u64, i64, Vec<String>)> {
+    st.bodies
+        .iter()
+        .map(|b| {
+            let volume = measure(&b.body).unwrap().volume;
+            (b.name.clone(), b.component, (volume * 1e6).round() as i64, crate::naming::face_names(b).to_vec())
+        })
+        .collect()
+}
+
+fn from_scratch(doc: &Document) -> Vec<(String, u64, i64, Vec<String>)> {
+    let mut m = Model::new();
+    m.no_cache = true;
+    m.evaluate(doc);
+    summary(&m.state())
+}
+
+/// An edit in one component leaves another component's features after it as they were: they
+/// are restored, not recomputed, and give what evaluating from scratch gives.
+#[test]
+fn edit_in_one_component_keeps_the_others_results() {
+    let mut doc = two_parts(&[]);
+    let mut m = Model::new();
+    m.evaluate(&doc);
+    assert!(m.results.iter().all(|r| r.error.is_none()), "{:?}", m.results.iter().map(|r| &r.error).collect::<Vec<_>>());
+    assert_eq!(m.last_recomputed, 4);
+    doc.set_param("w", "50 mm", None, None).unwrap();
+    m.evaluate(&doc);
+    assert_eq!((m.last_recomputed, m.last_restored), (1, 3));
+    assert_eq!(summary(&m.state()), from_scratch(&doc));
+    // An edit in the rod's own component recomputes its features.
+    doc.set_param("slot", "1.5 mm", None, None).unwrap();
+    m.evaluate(&doc);
+    assert_eq!((m.last_recomputed, m.last_restored), (2, 0));
+    assert_eq!(summary(&m.state()), from_scratch(&doc));
+    doc.set_param("w", "60 mm", None, None).unwrap();
+    m.evaluate(&doc);
+    assert_eq!((m.last_recomputed, m.last_restored), (1, 3));
+    assert_eq!(summary(&m.state()), from_scratch(&doc));
+}
+
+/// A sketch on a fixed plane, the new body extruded from it and that body moved read nothing
+/// of another component either.
+#[test]
+fn sketch_extrude_and_move_keep_their_results() {
+    let mut doc = two_parts(&[]);
+    let rod = doc.find_component("Rod").unwrap();
+    let mut sk = Sketch::new();
+    sk.add_circle(Vec2::new(20.0, 0.0), 2.0, None, None).unwrap();
+    let id = doc.add_feature(FeatureKind::Sketch { plane: PlaneRef::Origin { name: "XY".into() }, sketch: sk }, Some("Peg sketch")).unwrap();
+    doc.feature_mut(id).unwrap().component = rod;
+    add_in(
+        &mut doc,
+        rod,
+        "Peg",
+        serde_json::json!({"type": "extrude", "sketch": id, "profiles": {"type": "all"}, "extent": {"convention": "total_distance", "direction": "positive", "distance": "8"}, "operation": "new_body"}),
+    );
+    if let Some(f) = doc.features.iter_mut().find(|f| f.name == "Peg") {
+        f.body_names = vec!["Peg".into()];
+    }
+    add_in(&mut doc, rod, "Peg up", serde_json::json!({"type": "move", "bodies": ["Peg"], "translate": ["0", "0", "slot * 3"]}));
+    let mut m = Model::new();
+    m.evaluate(&doc);
+    assert!(m.results.iter().all(|r| r.error.is_none()), "{:?}", m.results.iter().map(|r| &r.error).collect::<Vec<_>>());
+    doc.set_param("w", "50 mm", None, None).unwrap();
+    m.evaluate(&doc);
+    assert_eq!((m.last_recomputed, m.last_restored), (1, 6));
+    assert_eq!(summary(&m.state()), from_scratch(&doc));
+    // The move follows its own parameter.
+    doc.set_param("slot", "2 mm", None, None).unwrap();
+    m.evaluate(&doc);
+    assert_eq!((m.last_recomputed, m.last_restored), (3, 2));
+    assert_eq!(summary(&m.state()), from_scratch(&doc));
+}
+
+/// A feature that cuts a body of another component reads it: it is recomputed when that body
+/// changes, and so is what follows it in its own component.
+#[test]
+fn a_cut_of_another_components_body_follows_it() {
+    let mut doc = two_parts(&["Plate", "Rod"]);
+    let mut m = Model::new();
+    m.evaluate(&doc);
+    assert!(m.results.iter().all(|r| r.error.is_none()), "{:?}", m.results.iter().map(|r| &r.error).collect::<Vec<_>>());
+    doc.set_param("w", "50 mm", None, None).unwrap();
+    m.evaluate(&doc);
+    assert_eq!((m.last_recomputed, m.last_restored), (3, 1));
+    assert_eq!(summary(&m.state()), from_scratch(&doc));
+}
+
+/// A cut of several bodies cuts again only those that changed: the rod, which `w` does not
+/// move, keeps the very body its earlier cut gave, while the cap `w` sizes is cut again.
+#[test]
+fn a_cut_of_several_bodies_cuts_again_only_those_that_changed() {
+    let mut doc = Document::new("rod and cap");
+    doc.set_param("w", "6 mm", None, None).unwrap();
+    let rod = doc.add_component(Some("Rod"), 0).unwrap();
+    add_in(
+        &mut doc,
+        rod,
+        "Rod",
+        serde_json::json!({"type": "cylinder", "base": ["0", "0", "0"], "axis": [0.0, 0.0, 1.0], "radius": "4", "height": "20", "operation": "new_body"}),
+    );
+    add_in(
+        &mut doc,
+        rod,
+        "Cap",
+        serde_json::json!({"type": "box", "corner": ["-5", "-5", "20"], "length": "10", "width": "10", "height": "w", "operation": "new_body"}),
+    );
+    for f in doc.features.iter_mut().filter(|f| f.name == "Rod" || f.name == "Cap") {
+        f.body_names = vec![f.name.clone()];
+    }
+    // The slot runs through both: the component's bodies are its targets.
+    add_in(
+        &mut doc,
+        rod,
+        "Slot",
+        serde_json::json!({"type": "box", "corner": ["3", "-0.5", "2"], "length": "4", "width": "1", "height": "30", "operation": "cut"}),
+    );
+    let mut m = Model::new();
+    m.evaluate(&doc);
+    assert!(m.results.iter().all(|r| r.error.is_none()), "{:?}", m.results.iter().map(|r| &r.error).collect::<Vec<_>>());
+    let cut_rod = m.state().body("Rod").unwrap().body.clone();
+    doc.set_param("w", "8 mm", None, None).unwrap();
+    m.evaluate(&doc);
+    assert_eq!(m.last_recomputed, 2, "the cap and the slot");
+    let st = m.state();
+    assert!(st.body("Rod").unwrap().body.same(&cut_rod), "the rod's cut is the one made before");
+    assert_eq!(summary(&st), from_scratch(&doc));
+}
+
+/// A parameter that drives the first feature of the timeline, with the bodies after it each cut
+/// by a combine: only the first body and its cut are recomputed, every other cut is restored.
+#[test]
+fn a_combine_reads_only_its_target_and_tools() {
+    let mut doc = Document::new("rows");
+    doc.set_param("w", "20 mm", None, None).unwrap();
+    let c = doc.add_component(Some("Rows"), 0).unwrap();
+    for i in 0..3 {
+        let x = (i * 30) as f64;
+        let (body, tool, cut) = (format!("Body{i}"), format!("Tool{i}"), format!("Cut{i}"));
+        let length = if i == 0 { "w".to_string() } else { "20".to_string() };
+        add_in(
+            &mut doc,
+            c,
+            &body,
+            serde_json::json!({"type": "box", "corner": [x.to_string(), "0", "0"], "length": length, "width": "15", "height": "5", "operation": "new_body"}),
+        );
+        add_in(
+            &mut doc,
+            c,
+            &tool,
+            serde_json::json!({"type": "cylinder", "base": [(x + 7.0).to_string(), "7.5", "-1"], "axis": [0.0, 0.0, 1.0], "radius": "1.5", "height": "7", "operation": "new_body"}),
+        );
+        for f in doc.features.iter_mut().filter(|f| f.name == body || f.name == tool) {
+            f.body_names = vec![f.name.clone()];
+        }
+        add_in(&mut doc, c, &cut, serde_json::json!({"type": "combine", "target": body, "tools": [tool], "operation": "cut"}));
+    }
+    let mut m = Model::new();
+    m.evaluate(&doc);
+    assert!(m.results.iter().all(|r| r.error.is_none()), "{:?}", m.results.iter().map(|r| &r.error).collect::<Vec<_>>());
+    assert_eq!(m.last_recomputed, 9);
+    doc.set_param("w", "32 mm", None, None).unwrap();
+    m.evaluate(&doc);
+    assert_eq!((m.last_recomputed, m.last_restored), (2, 7), "the first body and its cut");
+    assert_eq!(summary(&m.state()), from_scratch(&doc));
+}
+
 #[test]
 fn box_fillet_cut_timeline() {
     let (mut doc, _) = plate_doc();

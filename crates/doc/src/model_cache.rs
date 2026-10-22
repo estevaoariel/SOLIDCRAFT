@@ -404,16 +404,17 @@ impl Model {
             // finds it again rather than evaluating the feature anew.
             if !result.skipped {
                 let local = fingerprint(0, f, &vals, false, &step_digests) ^ placement_digest(doc, f);
-                cache.put(
+                cache.states.put(
                     cache_key(f, prev, local, ctx, &before),
                     CachedEval {
                         error: None,
                         warning: result.warning.clone(),
                         boolean_diagnostics: result.boolean_diagnostics.clone(),
                         ms,
-                        bytes: result.state.retained_bytes(),
                         state: result.state.clone(),
                     },
+                    result.state.retained_bytes(),
+                    ms,
                 );
                 before = result.state.clone();
             }
