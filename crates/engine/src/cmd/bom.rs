@@ -10,8 +10,14 @@
 //! nothing inside it does; a purchased or inseparable component is one row, and of what an
 //! inseparable one holds only its purchased parts reach the parts-only list. One occurrence can
 //! count as another type (`occurrence.bom_type`), in its own rows.
+//!
+//! A row names the physical materials of its parts' bodies, and with `mass` what one of its parts
+//! weighs as the row stands for it: with what is placed inside it, except what the list shows as
+//! rows of their own beside it, so every list adds up to the assembly once (measured once per
+//! definition; a reference placement adds nothing).
 
 use std::collections::{BTreeMap, HashSet};
+use std::sync::Arc;
 
 use serde_json::{Map, Value, json};
 use solidcraft_doc::BomType;
@@ -45,12 +51,17 @@ pub static COMMANDS: &[CommandSpec] = &[
          subassemblies) | top (the component's direct children, subassemblies as one row each); group_by?: [\"part_number\"] \
          (default; components without a part number get a row per definition) | [\"definition\"]; group_children?: true (a component \
          with a part number is one row, the parts placed inside it listed under it as children: [{item, part_number, description, \
-         revision, each, count, definition}], not as rows of their own); path?: write a .csv or .json file (children as items 1.1, \
-         1.2…); format?: csv|json (default from the path). Each placement counts as its occurrence's bom_type, else its \
-         component's: phantom has no row (what it holds counts here), reference counts nowhere, purchased and inseparable are one \
-         row (in flat, an inseparable one's purchased parts are listed too); placements of one component that count as different \
-         types are different rows → rows: [{item, part_number, description, revision, bom_type, count, definition, components, \
-         properties, children?}] sorted by part number, total_occurrences (children included)",
+         revision, each, count, definition, material, mass_g?}], not as rows of their own); mass?: true (measures each part: \
+         mass_g, what one of the row's parts weighs in grams with what is placed inside it, except what the list shows as rows of \
+         their own beside it (in parts only a part's contents are rows of their own, but not a folded part's or a purchased one's, \
+         and of an inseparable one's only its purchased parts are), so the rows add up to the assembly; a reference placement \
+         adds nothing; null when nothing in it has a body, a body can't be measured or the row's definitions differ); path?: write \
+         a .csv or .json file (children as items 1.1, 1.2…); format?: csv|json (default from the path). Each placement counts as \
+         its occurrence's bom_type, else its component's: phantom has no row (what it holds counts here), reference counts \
+         nowhere, purchased and inseparable are one row (in flat, an inseparable one's purchased parts are listed too); placements \
+         of one component that count as different types are different rows → rows: [{item, part_number, description, revision, \
+         bom_type, count, definition, material (the physical materials of the definitions' own bodies, \"; \" between them), \
+         mass_g?, components, properties, children?}] sorted by part number, total_occurrences (children included)",
     ),
 ];
 
@@ -236,6 +247,8 @@ struct Options {
     group: Group,
     /// A part with a part number keeps its sub-parts in its row.
     fold: bool,
+    /// Each row's mass (measuring every part listed).
+    mass: bool,
 }
 
 fn options(p: &Value, cmd: &str) -> Result<Options> {
@@ -259,7 +272,12 @@ fn options(p: &Value, cmd: &str) -> Result<Options> {
         Some(Value::Bool(b)) => *b,
         Some(_) => return Err(bad(cmd, "`group_children` is true or false")),
     };
-    Ok(Options { levels, group, fold })
+    let mass = match p.get("mass") {
+        None | Some(Value::Null) => false,
+        Some(Value::Bool(b)) => *b,
+        Some(_) => return Err(bad(cmd, "`mass` is true or false")),
+    };
+    Ok(Options { levels, group, fold, mass })
 }
 
 /// A component as it is placed: its id, and the bill of materials type it counts as there.
@@ -270,10 +288,12 @@ struct Index {
     /// What each component places (by its id; 0 is the root), each with the type it counts as
     /// there: the occurrence's own, else its component's.
     children: BTreeMap<u64, Vec<Placed>>,
-    /// Components with bodies of their own.
-    owners: HashSet<u64>,
+    /// The bodies each component owns (positions in `state.bodies`); a component that owns none
+    /// isn't here.
+    bodies: BTreeMap<u64, Vec<usize>>,
     /// Components with a part number: with `group_children`, one row however much is inside.
     numbered: HashSet<u64>,
+    state: Arc<solidcraft_doc::ModelState>,
 }
 
 impl Index {
@@ -286,8 +306,127 @@ impl Index {
             children.entry(o.parent).or_default().push((o.component, bom_type));
         }
         let numbered = s.doc.components.iter().filter(|c| c.metadata.part_number().is_some_and(|n| !n.is_empty())).map(|c| c.id).collect();
-        Index { children, owners: s.doc.body_owners(&s.model.state()), numbered }
+        let state = s.model.state();
+        let mut bodies: BTreeMap<u64, Vec<usize>> = BTreeMap::new();
+        for (i, owner) in s.doc.body_owners(&state).into_iter().enumerate() {
+            bodies.entry(owner).or_default().push(i);
+        }
+        Index { children, bodies, numbered, state }
     }
+
+    /// The bodies a component owns.
+    fn own_bodies(&self, id: u64) -> impl Iterator<Item = &solidcraft_doc::ModelBody> {
+        self.bodies.get(&id).into_iter().flatten().filter_map(|&i| self.state.bodies.get(i))
+    }
+
+    /// The physical materials of the components' own bodies, each once, in body order, joined as
+    /// a row's definitions are.
+    fn material(&self, s: &Session, components: &[u64]) -> String {
+        let mut names: Vec<String> = Vec::new();
+        for body in components.iter().flat_map(|&c| self.own_bodies(c)) {
+            let name = s.doc.body_material(&body.name);
+            if !names.contains(&name) {
+                names.push(name);
+            }
+        }
+        names.join("; ")
+    }
+}
+
+/// What one of a component weighs: grams, and how many bodies that is (none: nothing to weigh).
+/// `None` when a body in it can't be measured, or measures inside out.
+type Weighed = Option<(f64, usize)>;
+
+/// What a row's part stands for when it is weighed, so that the rows of any list add up to the
+/// assembly once.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Holds {
+    /// Everything placed inside it.
+    All,
+    /// Its own bodies alone: what it holds is listed beside it.
+    Nothing,
+    /// Everything but its purchased parts, which are listed beside it.
+    AllButPurchased,
+}
+
+/// What a row of `bom_type` stands for in a list of `levels`. At the top level a row is the
+/// whole of what it holds. In parts only, what a part holds is listed beside it, except in a
+/// folded part (a kit's row), in a purchased part, and in an inseparable one, of which only the
+/// purchased parts are listed.
+fn holds(levels: Levels, bom_type: BomType, folded: bool) -> Holds {
+    match (levels, bom_type) {
+        (Levels::Top, _) | (_, BomType::Purchased) => Holds::All,
+        (Levels::Flat, BomType::Inseparable) => Holds::AllButPurchased,
+        (Levels::Flat, _) if folded => Holds::All,
+        (Levels::Flat, _) => Holds::Nothing,
+    }
+}
+
+/// One of `id`, as `holds` says: its own bodies, and what is placed inside it of any type but
+/// reference, which adds nothing (nor does anything inside it). Placements are rigid, so where a
+/// part is placed doesn't change what it weighs: each definition is weighed once for each kind
+/// of row (`done`), and each body is measured once.
+fn weigh(s: &Session, ix: &Index, id: u64, holds: Holds, depth: usize, done: &mut BTreeMap<(u64, Holds), Weighed>, cmd: &str) -> Result<Weighed> {
+    if let Some(&weighed) = done.get(&(id, holds)) {
+        return Ok(weighed);
+    }
+    if depth > MAX_DEPTH {
+        return Err(bad(cmd, format!("the assembly is deeper than {MAX_DEPTH} levels")));
+    }
+    let mut total: Weighed = Some((0.0, 0));
+    if holds == Holds::Nothing {
+        for body in ix.own_bodies(id) {
+            // Only the volume is needed: `measure_mass` skips the topology counts' tessellation.
+            let measured = match s.doc.model_body_offset(body) {
+                Some(offset) => solidcraft_kernel::transform_matrix(&body.body, *offset).and_then(|b| solidcraft_kernel::measure_mass(&b)),
+                None => solidcraft_kernel::measure_mass(&body.body),
+            };
+            // A negative volume (a body inside out) is unknown, never a negative mass.
+            add(&mut total, measured.ok().filter(|m| m.volume >= 0.0).map(|m| (m.volume * s.doc.density(&body.name) / 1000.0, 1)));
+        }
+    } else {
+        add(&mut total, weigh(s, ix, id, Holds::Nothing, depth, done, cmd)?);
+        for &(child, bom_type) in ix.children.get(&id).into_iter().flatten() {
+            let listed_beside = holds == Holds::AllButPurchased && bom_type == BomType::Purchased;
+            if bom_type != BomType::Reference && !listed_beside {
+                add(&mut total, weigh(s, ix, child, holds, depth + 1, done, cmd)?);
+            }
+        }
+    }
+    let weighed = total.filter(|(grams, _)| grams.is_finite());
+    done.insert((id, holds), weighed);
+    Ok(weighed)
+}
+
+/// `more` added to `total`; unknown when either is.
+fn add(total: &mut Weighed, more: Weighed) {
+    *total = total.zip(more).map(|((grams, bodies), (g, n))| (grams + g, bodies + n));
+}
+
+/// One of a row's parts weighed as the row stands for them: its mass in grams, or null.
+fn mass(s: &Session, ix: &Index, components: &[u64], holds: Holds, done: &mut BTreeMap<(u64, Holds), Weighed>, cmd: &str) -> Result<Value> {
+    for &c in components {
+        weigh(s, ix, c, holds, 0, done, cmd)?;
+    }
+    Ok(json!(row_mass(components, holds, done)))
+}
+
+/// One of a row's parts in grams, or `None` when that isn't known: a definition can't be
+/// measured or has nothing to weigh, or the row's definitions (one part number) weigh differently.
+fn row_mass(components: &[u64], holds: Holds, weighed: &BTreeMap<(u64, Holds), Weighed>) -> Option<f64> {
+    let mut mass = None;
+    for c in components {
+        let (grams, bodies) = weighed.get(&(*c, holds)).copied().flatten()?;
+        if bodies == 0 {
+            return None;
+        }
+        match mass {
+            None => mass = Some(grams),
+            Some(first) if (grams - first).abs() > 1e-9 * first.abs() => return None,
+            Some(_) => {}
+        }
+    }
+    mass
 }
 
 /// What a walk below a component lists.
@@ -343,7 +482,7 @@ fn counts(ix: &Index, root: u64, levels: Levels, fold: bool, cmd: &str) -> Resul
                     // Parts only: a subassembly is listed through its parts, unless it has bodies
                     // of its own (or, folding, a part number).
                     let folded = fold && ix.numbered.contains(&child);
-                    if levels == Levels::Top || !inside || folded || ix.owners.contains(&child) {
+                    if levels == Levels::Top || !inside || folded || ix.bodies.contains_key(&child) {
                         *out.entry((child, bom_type)).or_default() += 1;
                     }
                     if levels == Levels::Flat && inside && !folded {
@@ -465,37 +604,42 @@ fn bom(s: &mut Session, p: &Value) -> Result<Value> {
             }
         }
     }
+    let mut weighed: BTreeMap<(u64, Holds), Weighed> = BTreeMap::new();
     let mut total: u64 = 0;
-    let rows: Vec<Value> = rows(s, &counts, o.group, &kits)
-        .into_iter()
-        .enumerate()
-        .map(|(i, r)| {
-            total += r.count;
-            let mut v = json!({"item": i + 1, "part_number": r.part_number, "description": r.description, "revision": r.revision,
-                "bom_type": r.bom_type.as_str(), "count": r.count, "definition": r.names.join("; "), "components": r.components,
-                "properties": r.properties});
-            if !r.kit.is_empty() {
-                let children: Vec<Value> = self::rows(s, &r.kit, Group::PartNumber, &BTreeMap::new())
-                    .into_iter()
-                    .enumerate()
-                    .map(|(j, c)| {
-                        let count = c.count.saturating_mul(r.count);
-                        total += count;
-                        json!({"item": format!("{}.{}", i + 1, j + 1), "part_number": c.part_number, "description": c.description,
-                            "revision": c.revision, "bom_type": c.bom_type.as_str(), "each": c.count, "count": count,
-                            "definition": c.names.join("; ")})
-                    })
-                    .collect();
-                v["children"] = Value::Array(children);
+    let mut rows = Vec::new();
+    for (i, r) in self::rows(s, &counts, o.group, &kits).into_iter().enumerate() {
+        total += r.count;
+        let mut v = json!({"item": i + 1, "part_number": r.part_number, "description": r.description, "revision": r.revision,
+            "bom_type": r.bom_type.as_str(), "count": r.count, "definition": r.names.join("; "),
+            "material": ix.material(s, &r.components), "components": r.components, "properties": r.properties});
+        if o.mass {
+            let folded = !r.kit.is_empty();
+            v["mass_g"] = mass(s, &ix, &r.components, holds(o.levels, r.bom_type, folded), &mut weighed, cmd)?;
+        }
+        if !r.kit.is_empty() {
+            let mut children = Vec::new();
+            // What a folded part holds, as parts only lists it.
+            for (j, c) in self::rows(s, &r.kit, Group::PartNumber, &BTreeMap::new()).into_iter().enumerate() {
+                let count = c.count.saturating_mul(r.count);
+                total += count;
+                let mut child = json!({"item": format!("{}.{}", i + 1, j + 1), "part_number": c.part_number,
+                    "description": c.description, "revision": c.revision, "bom_type": c.bom_type.as_str(), "each": c.count,
+                    "count": count, "definition": c.names.join("; "), "material": ix.material(s, &c.components)});
+                if o.mass {
+                    child["mass_g"] = mass(s, &ix, &c.components, holds(Levels::Flat, c.bom_type, false), &mut weighed, cmd)?;
+                }
+                children.push(child);
             }
-            v
-        })
-        .collect();
+            v["children"] = Value::Array(children);
+        }
+        rows.push(v);
+    }
     let mut out = Map::new();
     out.insert("component".into(), json!(root));
     out.insert("levels".into(), json!(if o.levels == Levels::Top { "top" } else { "flat" }));
     out.insert("group_by".into(), json!([if o.group == Group::Definition { "definition" } else { "part_number" }]));
     out.insert("group_children".into(), json!(o.fold));
+    out.insert("mass".into(), json!(o.mass));
     if let Some(path) = str_(p, "path") {
         let format = match str_(p, "format").map(str::to_ascii_lowercase) {
             Some(f) => f,

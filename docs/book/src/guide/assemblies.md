@@ -375,8 +375,18 @@ wherever the subassembly is placed. Paste New keeps the types of the occurrences
 Paste (Instance) places one that counts as its component.
 
 Rows are sorted by part number (rows without one come last) and hold `item`, `part_number`,
-`description`, `revision`, `bom_type`, `count`, `definition` (the component names), `components` (their ids)
-and `properties`, with `total_occurrences` beside them. `path` writes them to a `.csv` file
+`description`, `revision`, `bom_type`, `count`, `definition` (the component names), `material`,
+`components` (their ids) and `properties`, with `total_occurrences` beside them. `material` names the
+physical materials of the definition's own bodies (`Physical Material`, the ones mass is worked out from;
+an unassigned body's is `Default`), with `; ` between several; a free property such as a material grade
+stays in `properties`. `mass: true` adds `mass_g`: what one of the row's parts weighs in grams, with
+what is placed inside it except what the list shows as rows of their own beside it, so the rows of any
+list add up to the assembly. At the top level a row weighs all it holds. In parts only a part's contents
+are rows of their own, so it weighs its own bodies, except a folded part (its row is the kit), a purchased
+one (all it holds) and an inseparable one (all but its purchased parts). A reference placement adds
+nothing. Every part is measured for it, once per definition, so it takes longer. It is `null` when nothing
+in the part has a body, a body can't be measured, or the definitions sharing the row's part number weigh
+differently. `path` writes them to a `.csv` file
 (the columns item, part_number, description, revision, count and definition, every field
 quoted; children follow their row) or a `.json` file. The window lists the same rows, switches
 between the levels and groupings and shows children under their part, edits a picked row's part

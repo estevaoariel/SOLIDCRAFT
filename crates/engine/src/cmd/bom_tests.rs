@@ -195,7 +195,14 @@ fn hostile_part_properties_are_refused_without_a_change() {
     assert_eq!(s.undo.len(), undo);
     let pin = run(&mut s, "component.metadata", json!({"component": "Pin"}));
     assert_eq!(pin["part_number"], "PN-040", "all or nothing");
-    for p in [json!({"levels": "deep"}), json!({"group_by": ["colour"]}), json!({"group_by": 3}), json!({"component": "Nope"})] {
+    for p in [
+        json!({"levels": "deep"}),
+        json!({"group_by": ["colour"]}),
+        json!({"group_by": 3}),
+        json!({"component": "Nope"}),
+        json!({"mass": "yes"}),
+        json!({"mass": 1}),
+    ] {
         assert!(s.execute("assembly.bom", &p).is_err(), "{p}");
     }
     // The root reads as the design's own properties.
@@ -268,11 +275,20 @@ fn changing_part_properties_does_not_evaluate_the_model_again() {
 
 #[test]
 fn body_owners_match_each_bodys_component() {
-    for s in [assembly(), bolts()] {
+    // A body made in the design and moved into a component belongs to it.
+    let mut moved = assembly();
+    let target = run(&mut moved, "component.create", json!({"name": "Target"}))["component"].as_u64().unwrap();
+    run(&mut moved, "component.activate", json!({"component": 0}));
+    run(&mut moved, "solid.box", json!({"length": 5, "width": 5, "height": 5, "corner": [0, -30, 0], "body_name": "Moved"}));
+    run(&mut moved, "component.move_bodies", json!({"bodies": ["Moved"], "component": target}));
+    let st = moved.model.state();
+    let owner = st.bodies.iter().position(|b| b.name == "Moved").map(|i| moved.doc.body_owners(&st)[i]);
+    assert_eq!(owner, Some(target));
+    for s in [assembly(), bolts(), moved] {
         let st = s.model.state();
-        let each: std::collections::HashSet<u64> = st.bodies.iter().map(|b| s.doc.model_body_component(b)).collect();
+        let each: Vec<u64> = st.bodies.iter().map(|b| s.doc.model_body_component(b)).collect();
         assert_eq!(s.doc.body_owners(&st), each);
-        assert!(each.len() > 1);
+        assert!(each.iter().collect::<std::collections::HashSet<_>>().len() > 1);
     }
 }
 
@@ -658,4 +674,222 @@ fn hostile_occurrence_types_are_refused_without_a_change() {
     let id = s.doc.occurrences.iter().find(|o| o.name == "Gearbox:1").unwrap().id;
     run(&mut s, "occurrence.bom_type", json!({"occurrence": id, "path": [id], "bom_type": "inseparable"}));
     assert_eq!(occurrence_type(&s, "Gearbox:1"), Some(solidcraft_doc::BomType::Inseparable));
+}
+
+/// A frame (no bodies of its own) holding two steel blocks, 100 x 50 x 10 (50,000 mm³ at
+/// 7.85 g/cm³: 392.5 g each), and a bracket: an aluminium plate, 40 x 20 x 3 (2,400 mm³ at
+/// 2.70: 6.48 g), and a steel cube of 10 (7.85 g), 14.33 g in all; 799.33 g together. A second
+/// bracket, a spacer with no material assigned (a cube of 10 at the default 1.29: 1.29 g) and
+/// grease (no bodies) are placed in the design.
+fn frame() -> Session {
+    let mut s = Session::default();
+    run(&mut s, "component.create", json!({"name": "Frame", "activate": false}));
+    run(&mut s, "component.create", json!({"name": "Block", "parent": "Frame"}));
+    run(&mut s, "solid.box", json!({"length": 100, "width": 50, "height": 10, "body_name": "Block"}));
+    run(&mut s, "component.activate", json!({"component": 0}));
+    run(&mut s, "occurrence.copy", json!({"component": "Block", "parent": "Frame", "translate": [0, 60, 0]}));
+    run(&mut s, "component.create", json!({"name": "Bracket", "parent": "Frame"}));
+    run(&mut s, "solid.box", json!({"length": 40, "width": 20, "height": 3, "body_name": "Plate"}));
+    run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "corner": [100, 0, 0], "operation": "new", "body_name": "Cube"}));
+    run(&mut s, "component.activate", json!({"component": 0}));
+    run(&mut s, "occurrence.copy", json!({"component": "Bracket", "parent": 0, "translate": [0, -60, 0]}));
+    run(&mut s, "component.create", json!({"name": "Spacer"}));
+    run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "body_name": "Spacer"}));
+    run(&mut s, "component.activate", json!({"component": 0}));
+    run(&mut s, "component.create", json!({"name": "Grease", "activate": false}));
+    for (body, material) in [("Block", "Steel"), ("Plate", "Aluminum"), ("Cube", "Steel")] {
+        run(&mut s, "material.assign", json!({"bodies": [body], "material": material}));
+    }
+    s
+}
+
+/// A row's mass, to the microgram (`None`: null).
+fn grams(row: &Value) -> Option<f64> {
+    row["mass_g"].as_f64().map(|g| (g * 1e6).round() / 1e6)
+}
+
+/// Each row's definition, material and mass.
+fn weights(r: &Value) -> Vec<(String, String, Option<f64>)> {
+    let rows = r["rows"].as_array().or_else(|| r.as_array()).unwrap();
+    rows.iter().map(|r| (r["definition"].as_str().unwrap().into(), r["material"].as_str().unwrap().into(), grams(r))).collect()
+}
+
+fn weight(definition: &str, material: &str, grams: Option<f64>) -> (String, String, Option<f64>) {
+    (definition.into(), material.into(), grams)
+}
+
+#[test]
+fn rows_name_their_materials_and_with_mass_weigh_one_part() {
+    let mut s = frame();
+    let flat = run(&mut s, "assembly.bom", json!({"mass": true}));
+    assert_eq!(
+        weights(&flat),
+        [
+            weight("Block", "Steel", Some(392.5)),
+            weight("Bracket", "Aluminum; Steel", Some(14.33)),
+            weight("Grease", "", None),
+            weight("Spacer", "Default", Some(1.29)),
+        ],
+        "one of each, whatever the count: {flat}"
+    );
+    // The frame as one row holds its parts and has no material of its own.
+    let top = run(&mut s, "assembly.bom", json!({"levels": "top", "mass": true}));
+    assert_eq!(weights(&top)[1], weight("Frame", "", Some(799.33)), "{top}");
+    // Weighing measures every part, so it is asked for; materials come without it.
+    let plain = run(&mut s, "assembly.bom", json!({}));
+    assert_eq!((&plain["mass"], &plain["rows"][1]["material"]), (&json!(false), &json!("Aluminum; Steel")));
+    assert!(plain["rows"].as_array().unwrap().iter().all(|r| r.get("mass_g").is_none()), "{plain}");
+    // Parts folded into a numbered frame's row carry theirs too.
+    run(&mut s, "component.metadata.set", json!({"component": "Frame", "part_number": "FR-1"}));
+    let kit = run(&mut s, "assembly.bom", json!({"group_children": true, "mass": true}));
+    let frame = &kit["rows"][0];
+    assert_eq!((frame["part_number"].as_str(), grams(frame)), (Some("FR-1"), Some(799.33)), "{kit}");
+    assert_eq!(weights(&frame["children"]), [weight("Block", "Steel", Some(392.5)), weight("Bracket", "Aluminum; Steel", Some(14.33))]);
+}
+
+#[test]
+fn a_reference_placement_adds_nothing_to_what_its_assembly_weighs() {
+    let mut s = frame();
+    let frame = |s: &mut Session| {
+        let top = run(s, "assembly.bom", json!({"levels": "top", "mass": true}));
+        top["rows"].as_array().unwrap().iter().find(|r| r["definition"] == "Frame").and_then(grams)
+    };
+    assert_eq!(frame(&mut s), Some(799.33));
+    // One block kept only for context.
+    set_occurrence(&mut s, "Block:2", json!("reference"));
+    assert_eq!(frame(&mut s), Some(406.83));
+    // Phantom, purchased and inseparable parts weigh what they weigh, wherever they are listed.
+    for bom_type in ["phantom", "purchased", "inseparable"] {
+        set_type(&mut s, "Bracket", bom_type);
+        assert_eq!(frame(&mut s), Some(406.83), "{bom_type}");
+    }
+    set_type(&mut s, "Bracket", "reference");
+    assert_eq!(frame(&mut s), Some(392.5));
+    // Holding only reference parts, it has nothing to weigh.
+    set_occurrence(&mut s, "Block:1", json!("reference"));
+    assert_eq!(frame(&mut s), None);
+}
+
+#[test]
+fn a_row_has_a_mass_only_when_its_definitions_are_weighed_and_agree() {
+    use super::Holds::{All, Nothing};
+    let weighed = std::collections::BTreeMap::from([
+        ((1, All), Some((392.5, 1))),
+        ((2, All), Some((392.5, 1))),
+        ((3, All), Some((6.48, 1))),
+        ((4, All), Some((0.0, 1))),
+        ((5, All), Some((0.0, 0))),
+        ((6, All), None),
+    ]);
+    let row_mass = |components: &[u64]| super::row_mass(components, All, &weighed);
+    assert_eq!(row_mass(&[1, 2]), Some(392.5));
+    assert_eq!(row_mass(&[1, 3]), None);
+    assert_eq!(row_mass(&[4, 4]), Some(0.0), "a body that weighs nothing (a surface) is weighed");
+    assert_eq!(row_mass(&[4, 1]), None);
+    assert_eq!(row_mass(&[5]), None, "nothing to weigh");
+    assert_eq!(row_mass(&[6]), None, "not measured");
+    assert_eq!(row_mass(&[7]), None, "never weighed");
+    assert_eq!(super::row_mass(&[1], Nothing, &weighed), None, "weighed for another kind of row");
+}
+
+/// Every list's rows add up to the assembly once: in parts only, what a part holds is listed
+/// beside it, so it isn't weighed again with the part.
+#[test]
+fn the_rows_of_every_list_add_up_to_the_assembly() {
+    let (flat, top, folded) = (json!({"mass": true}), json!({"levels": "top", "mass": true}), json!({"group_children": true, "mass": true}));
+    let check = |s: &mut Session, what: &str, lists: &[&Value]| {
+        let assembly = run(s, "component.properties", json!({"component": "root"}))["total"]["mass_g"].as_f64().unwrap();
+        for &p in lists {
+            let r = run(s, "assembly.bom", p.clone());
+            let rows = r["rows"].as_array().unwrap();
+            let listed: f64 = rows.iter().map(|row| row["count"].as_f64().unwrap() * row["mass_g"].as_f64().unwrap_or(0.0)).sum();
+            assert!((listed - assembly).abs() < 1e-6 * assembly, "{what} {p}: {listed} g listed, {assembly} g in all: {r}");
+        }
+    };
+    // Bolts with a washer and a nut placed inside them, and one alone. In parts only the bolts'
+    // row weighs one bolt, and both kinds agree; folded, a bolt's row weighs the kit.
+    let mut s = bolts();
+    check(&mut s, "bolts", &[&flat, &folded]);
+    let bolt = run(&mut s, "assembly.bom", flat.clone())["rows"][0]["mass_g"].as_f64().unwrap();
+    let kit = run(&mut s, "assembly.bom", folded.clone())["rows"][0]["mass_g"].as_f64().unwrap();
+    assert!(kit > bolt, "a bolt with its washer and nut ({kit} g) weighs more than the bolt ({bolt} g)");
+    // At the top level one row holds the bolts with and without a washer and nut: they weigh
+    // differently, so the row has no one mass.
+    assert!(run(&mut s, "assembly.bom", top.clone())["rows"][0]["mass_g"].is_null());
+    // An inseparable frame holding purchased brackets: in parts only, the frame weighs all but
+    // the brackets, which are listed beside it.
+    let mut s = frame();
+    check(&mut s, "frame", &[&flat, &top, &folded]);
+    set_type(&mut s, "Frame", "inseparable");
+    set_type(&mut s, "Bracket", "purchased");
+    check(&mut s, "an inseparable frame with purchased brackets", &[&flat, &top, &folded]);
+    let frame = run(&mut s, "assembly.bom", json!({"mass": true}));
+    assert_eq!(weights(&frame)[1], weight("Frame", "", Some(785.0)), "{frame}");
+}
+
+#[test]
+fn one_part_number_has_one_mass_only_when_its_definitions_agree() {
+    let mut s = frame();
+    run(&mut s, "component.metadata.set", json!({"component": "Block", "part_number": "BL-1"}));
+    // An independent copy keeps the part properties and the material: the same part, the same mass.
+    run(&mut s, "component.paste_new", json!({"component": "Block", "translate": [0, 200, 0]}));
+    let r = run(&mut s, "assembly.bom", json!({"mass": true}));
+    let block = &r["rows"][0];
+    assert_eq!((block["components"].as_array().map(Vec::len), grams(block)), (Some(2), Some(392.5)), "{r}");
+    // The spacer given the same number weighs differently: no one mass for the row.
+    run(&mut s, "component.metadata.set", json!({"component": "Spacer", "part_number": "BL-1"}));
+    let r = run(&mut s, "assembly.bom", json!({"mass": true}));
+    let block = &r["rows"][0];
+    assert_eq!((block["components"].as_array().map(Vec::len), grams(block)), (Some(3), None), "{r}");
+    assert_eq!(block["material"], "Steel; Default");
+}
+
+/// A row names the material its mass is worked out with, as the library or the design spells it:
+/// a damaged file's material that doesn't exist, or whose density can't be used, weighs and reads
+/// as the default, and a hand-edited spelling reads as the material's own.
+#[test]
+fn a_row_names_the_material_its_mass_is_worked_out_with() {
+    let mut s = frame();
+    let row = |s: &mut Session, definition: &str| {
+        let r = run(s, "assembly.bom", json!({"mass": true}));
+        weights(&r).into_iter().find(|(d, ..)| d == definition)
+    };
+    // The spacer, a cube of 10 (1000 mm³), in a design's own material.
+    run(&mut s, "material.create", json!({"name": "Walnut", "density_g_cm3": 0.65}));
+    run(&mut s, "material.assign", json!({"bodies": ["Spacer"], "material": "Walnut"}));
+    assert_eq!(row(&mut s, "Spacer"), Some(weight("Spacer", "Walnut", Some(0.65))));
+    s.doc_mut().materials.insert("Spacer".into(), "Unobtainium".into());
+    assert_eq!(row(&mut s, "Spacer"), Some(weight("Spacer", "Default", Some(1.29))), "a material the design doesn't have");
+    s.doc_mut().user_materials.push(solidcraft_doc::UserMaterial { name: "Broken".into(), density: -3.0, appearance: None });
+    s.doc_mut().materials.insert("Spacer".into(), "Broken".into());
+    assert_eq!(row(&mut s, "Spacer"), Some(weight("Spacer", "Default", Some(1.29))), "a design material with an unusable density");
+    // The bracket's plate stored as "steel" beside its cube in "Steel": one material, and both
+    // weigh as steel (2,400 + 1,000 mm³ at 7.85 g/cm³).
+    s.doc_mut().materials.insert("Plate".into(), "steel".into());
+    assert_eq!(row(&mut s, "Bracket"), Some(weight("Bracket", "Steel", Some(26.69))));
+}
+
+/// A mesh's measured volume is signed: an open one facing the origin measures less than nothing,
+/// and that is unknown, never a negative mass. A flat one through the origin measures exactly
+/// nothing, and weighs 0 g.
+#[test]
+fn a_body_that_measures_inside_out_has_no_mass() {
+    let dir = scratch("inside-out");
+    // A 10 mm square at z = 10 facing down (the cone to the origin: -333.3 mm³), and one at z = 0.
+    let square = |z: i32, corners: [[i32; 2]; 4]| {
+        let facet = |t: [usize; 3]| {
+            let v: String = t.iter().map(|&i| format!("vertex {} {} {z}\n", corners[i][0], corners[i][1])).collect();
+            format!("facet normal 0 0 0\nouter loop\n{v}endloop\nendfacet\n")
+        };
+        format!("solid square\n{}{}endsolid square\n", facet([0, 1, 2]), facet([0, 2, 3]))
+    };
+    let mut s = Session::default();
+    for (name, z, corners) in [("Facing down", 10, [[0, 0], [0, 10], [10, 10], [10, 0]]), ("Flat", 0, [[0, 0], [10, 0], [10, 10], [0, 10]])] {
+        let path = dir.join(format!("{name}.stl"));
+        std::fs::write(&path, square(z, corners)).unwrap();
+        run(&mut s, "file.insert_mesh", json!({"path": path}));
+    }
+    let r = run(&mut s, "assembly.bom", json!({"mass": true}));
+    assert_eq!(weights(&r), [weight("Facing down", "Default", None), weight("Flat", "Default", Some(0.0))], "{r}");
+    let _ = std::fs::remove_dir_all(&dir);
 }
