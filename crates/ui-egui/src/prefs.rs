@@ -2778,6 +2778,83 @@ mod tests {
         }
     }
 
+    /// The section's buttons keep inside the page in every language, at the dialog's width (which the
+    /// window does not narrow): the arming Restore button, Reset axis assignment, Reset View under the
+    /// test model, and the buttons' own reset.
+    #[test]
+    fn the_3d_mouse_buttons_fit_the_page_in_every_language() {
+        let keys = ["ui.space_mouse_restore", "ui.space_mouse_reset_axes", "ui.space_mouse_reset_view", "ui.space_mouse_buttons_reset"];
+        let mut too_wide = Vec::new();
+        for catalog in crate::i18n::LOCALES {
+            let mut h = crate::scenario::Harness::new();
+            h.app.home.open = false;
+            h.app.preferences.language = catalog.id.to_string();
+            h.app.space_mouse.device = Some("hid 046d:c62b".into());
+            let axes = std::array::from_fn(|source| solidcraft_space_mouse::AxisCalibration {
+                source,
+                reversed: false,
+                rest: 0,
+                dead_zone: 0,
+                full: [350; 2],
+            });
+            h.app.preferences.space_mouse_calibrations.insert(
+                "hid 046d:c62b".into(),
+                solidcraft_space_mouse::Calibration { dead_zone_share: 0.0, kind: solidcraft_space_mouse::Kind::ReturnToCenter, axes },
+            );
+            h.app.preferences.space_mouse_buttons.insert("hid 046d:c62b".into(), [(1, crate::space_mouse::ButtonJob::Settings)].into());
+            // The axis assignment is changed, so its reset button is enabled and drawn.
+            h.app.preferences.space_mouse_axis_source = [1, 0, 2, 3, 4, 5];
+            h.call("ui.resize", serde_json::json!({"width": 1600, "height": 4000}));
+            crate::prefs::open_at(&mut h.app, 1);
+            h.frames(6);
+            // The frame's language is only set while it runs, so the texts come from the catalog itself.
+            let text = |key: &str| crate::i18n::Locale::for_language(catalog.id).text(key).to_string();
+            let section = format!("dialog:section:{}", text("ui.space_mouse_section"));
+            scroll_to_and_click(&mut h, &section);
+            h.frames(30);
+            let body = crate::scenario::rect_of("prefs:page_body").expect("the page body");
+            for key in keys {
+                let label = text(key);
+                let Some(rect) = crate::scenario::rect_of(&format!("dialog:button::{label}")) else {
+                    too_wide.push(format!("{} {key}: not drawn", catalog.id));
+                    continue;
+                };
+                if rect.right() > body.right() + 0.5 || rect.left() < body.left() - 0.5 {
+                    too_wide.push(format!(
+                        "{} {key} \"{label}\": {:.0}..{:.0} outside the page {:.0}..{:.0}",
+                        catalog.id,
+                        rect.left(),
+                        rect.right(),
+                        body.left(),
+                        body.right()
+                    ));
+                }
+            }
+        }
+        assert!(too_wide.is_empty(), "{}", too_wide.join("\n"));
+    }
+
+    /// The widest of the card's button labels stays well inside the narrowest card (346 px wide at a 760 px
+    /// window, less its padding) in every language, so a button never has to be wider than its card.
+    #[test]
+    fn the_offers_buttons_fit_the_narrowest_card_in_every_language() {
+        let ctx = crate::fonts::test_context();
+        ctx.run_ui(egui::RawInput::default(), |_| {}).textures_delta.clear();
+        let font = egui::FontId::proportional(crate::theme::Tokens::get().font_label);
+        let mut wide = Vec::new();
+        for catalog in crate::i18n::LOCALES {
+            use crate::space_mouse_offer::Action;
+            for key in [Action::Swap, Action::Calibrate, Action::Never, Action::Close].map(|action| action.label()) {
+                let label = crate::i18n::Locale::for_language(catalog.id).text(key).to_string();
+                let width = ctx.fonts_mut(|fonts| fonts.layout_no_wrap(label.clone(), font.clone(), egui::Color32::WHITE).size().x);
+                if width > 250.0 {
+                    wide.push(format!("{} {key} \"{label}\" is {width:.0} px", catalog.id));
+                }
+            }
+        }
+        assert!(wide.is_empty(), "{}", wide.join("\n"));
+    }
+
     /// The circles' tooltips come from the one function the rows' labels come from, after a
     /// reassignment, for both kinds of driver mapping (and none), and an inverted axis reads the same.
     #[test]
