@@ -152,6 +152,7 @@ They cover the workflow, the command shapes, how to verify with `measure`, and t
 
 | Tool | Arguments | What it does |
 |---|---|---|
+| `version` | — | Which SolidCraft this session drives: `version`, `commit`, `built` and `mode` (`app` when the server is bridged to a running app, `headless` when it runs its own session). Bridged, the version is the app's own (that binary may be older than the server); headless, the server's own. |
 | `list_commands` | `filter?` | The command catalog: id, label, tab/panel, shortcut, parameter docs, enabled now. `filter` matches id, label, tab and panel. |
 | `describe_command` | `id` | One command's parameter docs (`params`) and, for commands with a typed contract (`solid.box`, `solid.extrude` and `engine.describe` so far), the JSON Schemas (2020-12) of its parameters (`input`) and of a successful result (`output`); `null` for the others. The same as `execute` `engine.describe {command}`. |
 | `execute` | `command`, `params?`, `verbose?` (default true) | Run any command with JSON parameters (`list_commands` shows them). Failures leave the design unchanged. A feature command replies with the feature (`feature`, `name`), every body (`bodies`) and the bodies it created, changed and removed (`created_bodies`, `changed_bodies`, `removed_bodies`). `verbose: false` uses the same compact reply as `batch`. |

@@ -62,6 +62,15 @@ fn string(desc: &str) -> Value {
 pub fn tool_definitions() -> Vec<Value> {
     vec![
         tool(
+            "version",
+            "SolidCraft version",
+            "Which SolidCraft this session drives: {version, commit, built, mode}. version is the app's own version when the \
+             server is bridged to a running app (that binary may be older than the server), the server's own when it runs \
+             headless; mode is app or headless. Use it to tell whether a command exists in the SolidCraft on the PATH.",
+            obj(json!({}), &[]),
+            Effect::ReadOnly,
+        ),
+        tool(
             "list_commands",
             "List commands",
             "The command catalog: id, label, toolbar tab/panel, shortcut, one-line parameter docs and whether the command is \
@@ -398,8 +407,27 @@ fn str_arg<'a>(a: &'a Map<String, Value>, k: &str) -> Option<&'a str> {
     a.get(k).and_then(Value::as_str)
 }
 
+/// Which SolidCraft this session drives: the running app's own version (that binary may be
+/// older than this server), or the server's own when it runs headless, and which of the two it is.
+fn version(b: &mut dyn Backend) -> Value {
+    let mode = if b.has_ui() { "app" } else { "headless" };
+    // The app knows its own build; it may not be running yet, and then the server's own is
+    // the best answer there is.
+    let app = if b.has_ui() { b.call("ui.help", json!({})).ok() } else { None };
+    let (version, commit, built) = match &app {
+        Some(h) => (
+            h["version"].as_str().unwrap_or(env!("CARGO_PKG_VERSION")).to_string(),
+            h["commit"].as_str().unwrap_or("unknown").to_string(),
+            h["built"].as_str().unwrap_or("unknown").to_string(),
+        ),
+        None => (env!("CARGO_PKG_VERSION").to_string(), env!("SOLIDCRAFT_COMMIT").to_string(), env!("SOLIDCRAFT_BUILD_DATE").to_string()),
+    };
+    json!({"version": version, "commit": commit, "built": built, "mode": mode})
+}
+
 fn dispatch(b: &mut dyn Backend, name: &str, a: &Map<String, Value>) -> Result<Value, String> {
     match name {
+        "version" => Ok(version(b)),
         "list_commands" => {
             let all = b.call("engine.commands", json!({}))?;
             let Some(f) = str_arg(a, "filter").map(str::to_lowercase).filter(|f| !f.is_empty()) else { return Ok(all) };
@@ -436,6 +464,8 @@ fn dispatch(b: &mut dyn Backend, name: &str, a: &Map<String, Value>) -> Result<V
             {
                 d["joints"] = j["joints"].clone();
             }
+            // Which SolidCraft this is: the app's version, or the server's own (headless).
+            d["version"] = version(b);
             Ok(d)
         }
         "measure" => {
