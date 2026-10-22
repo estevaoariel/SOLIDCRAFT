@@ -420,6 +420,9 @@ preference_settings! {
     /// The grid turns to the upright origin plane facing a side view (#1470). Off by default: the
     /// grid stays on the ground plane (XY) whatever the view.
     grid_follows_view: bool = false => check("Grid follows the view", "Side views show the grid on the upright plane facing them instead of the ground");
+    /// Draw reference geometry such as inactive sketches and datum planes through shaded bodies.
+    /// Off by default to preserve the depth-tested viewport behaviour.
+    reference_geometry_through_bodies: bool = false, PAGE_GRAPHICS => check_id("settings.reference_geometry_through_bodies");
     /// How finely the viewport tessellates curved faces and edges: `coarse`, `normal`, `fine` or
     /// `ultra` (#1287). Only the display plan the viewport draws; never the design or exports.
     display_quality: String = "normal".into(), PAGE_GRAPHICS;
@@ -1474,6 +1477,7 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             ui.add_enabled_ui(app.ui.show_grid, |ui| {
                 setting::grid_follows_view(app, ui);
             });
+            setting::reference_geometry_through_bodies(app, ui).on_hover_text(app.tr("settings.reference_geometry_through_bodies_help"));
             ui_kit::checkbox(ui, crate::i18n::tr_label("Ground shadow"), &mut app.ui.ground_shadow);
             ambient_occlusion_checkbox(app, ui, "Ambient occlusion");
             ui_kit::checkbox(ui, crate::i18n::tr_label("Perspective view"), &mut app.ui.perspective);

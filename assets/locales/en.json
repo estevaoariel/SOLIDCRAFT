@@ -1062,6 +1062,8 @@
   "settings.msaa_applies_on_restart": "Anti-aliasing applies the next time SolidCraft starts",
   "settings.msaa_reset": "{setting}: {requested}× isn't supported by this graphics device; it is now {reset}× (supported: {supported}).",
   "settings.msaa_unsupported": "Not supported by this graphics device",
+  "settings.reference_geometry_through_bodies": "Show reference geometry through bodies",
+  "settings.reference_geometry_through_bodies_help": "Draw inactive sketch contours and datum planes over shaded bodies",
   "settings.reset_intro": "These settings don't work on this computer and would keep SolidCraft from starting, so they were changed:",
   "settings.reset_title": "Settings were changed",
   "settings.supersampling_note": "Draws the view at a higher resolution and filters it down: smoother edges, lines and grid on screens below 4K. It costs GPU time: about 2.25× the pixels at 1.5× and 4× at 2×.",

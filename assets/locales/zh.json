@@ -1062,6 +1062,8 @@
   "settings.msaa_applies_on_restart": "抗锯齿将在下次启动 SolidCraft 时生效",
   "settings.msaa_reset": "{setting}: {requested}× 不受此图形设备支持；已重置为 {reset}× (支持: {supported})。",
   "settings.msaa_unsupported": "此图形设备不支持",
+  "settings.reference_geometry_through_bodies": "在实体后方显示参考几何体",
+  "settings.reference_geometry_through_bodies_help": "将非活动草图轮廓和基准平面绘制在着色实体上方",
   "settings.reset_intro": "这些设置在此计算机上无法正常工作，会导致 SolidCraft 无法启动，因此已更改：",
   "settings.reset_title": "设置已更改",
   "settings.supersampling_note": "以更高分辨率绘制视图再缩小：在低于 4K 的屏幕上边、线和网格更平滑。会消耗 GPU 时间：1.5× 时约 2.25 倍像素，2× 时 4 倍。",

@@ -1028,6 +1028,8 @@
   "settings.msaa_applies_on_restart": "Wygładzanie krawędzi zadziała po ponownym uruchomieniu SolidCraft",
   "settings.msaa_reset": "{setting}: {requested}× nie jest obsługiwane przez to urządzenie graficzne; ustawiono {reset}× (obsługiwane: {supported}).",
   "settings.msaa_unsupported": "Nieobsługiwane przez to urządzenie graficzne",
+  "settings.reference_geometry_through_bodies": "Pokaż geometrię odniesienia przez bryły",
+  "settings.reference_geometry_through_bodies_help": "Rysuj kontury nieaktywnych szkiców i płaszczyzny odniesienia na cieniowanych bryłach",
   "settings.reset_intro": "Te ustawienia nie działają na tym komputerze i uniemożliwiłyby uruchomienie SolidCraft, więc zostały zmienione:",
   "settings.reset_title": "Zmieniono ustawienia",
   "settings.supersampling_note": "Rysuje widok w wyższej rozdzielczości i go zmniejsza: gładsze krawędzie, linie i siatka na ekranach poniżej 4K. Kosztuje czas GPU: ok. 2,25× więcej pikseli przy 1,5× i 4× przy 2×.",
