@@ -17,7 +17,6 @@
 use solidcraft_geom::Mesh;
 use solidcraft_geom::Vec3;
 use solidcraft_geom::tess::{EvalCurve, EvalSurface, TessPlan};
-use wgpu::util::DeviceExt;
 
 pub mod capture;
 mod pbr;
@@ -56,6 +55,61 @@ fn popped(f: impl std::future::Future<Output = Option<wgpu::Error>>) -> Option<w
         std::task::Poll::Ready(e) => e,
         std::task::Poll::Pending => None,
     }
+}
+
+/// Error scopes catching resource allocation and upload failures (popped by [`caught`]).
+fn error_scopes(device: &wgpu::Device) -> [wgpu::ErrorScopeGuard; 3] {
+    [wgpu::ErrorFilter::OutOfMemory, wgpu::ErrorFilter::Internal, wgpu::ErrorFilter::Validation].map(|f| device.push_error_scope(f))
+}
+
+/// Prefer allocation exhaustion to secondary validation errors from invalid resources.
+fn caught(scopes: [wgpu::ErrorScopeGuard; 3]) -> Option<String> {
+    let mut failed = None;
+    for scope in scopes.into_iter().rev() {
+        if let Some(e) = popped(scope.pop()) {
+            match e {
+                wgpu::Error::OutOfMemory { .. } => failed = Some("GPU out of memory".into()),
+                e => {
+                    failed.get_or_insert_with(|| e.to_string());
+                }
+            }
+        }
+    }
+    failed
+}
+
+/// As `create_buffer_init`, without its panic when the device refuses the buffer (out of memory,
+/// or a lost device): the buffer is created unmapped and filled through `queue`, under error
+/// scopes, so a refusal is an error. `usage` gains `COPY_DST`; the size is padded to
+/// [`wgpu::COPY_BUFFER_ALIGNMENT`] (at least one word) as `create_buffer_init` pads it.
+fn buffer_init(device: &wgpu::Device, queue: &wgpu::Queue, label: &str, contents: &[u8], usage: wgpu::BufferUsages) -> Result<wgpu::Buffer> {
+    let scopes = error_scopes(device);
+    let len = contents.len() as u64;
+    let size = (len.div_ceil(wgpu::COPY_BUFFER_ALIGNMENT) * wgpu::COPY_BUFFER_ALIGNMENT).max(wgpu::COPY_BUFFER_ALIGNMENT);
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some(label),
+        size,
+        usage: usage | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    // Inspect allocation errors before writing to a buffer the device may have refused.
+    if let Some(e) = caught(scopes) {
+        return Err(GpuError::Render(e));
+    }
+    let scopes = error_scopes(device);
+    if !contents.is_empty() {
+        if size == len {
+            queue.write_buffer(&buffer, 0, contents);
+        } else {
+            let mut padded = contents.to_vec();
+            padded.resize(size as usize, 0);
+            queue.write_buffer(&buffer, 0, &padded);
+        }
+    }
+    if let Some(e) = caught(scopes) {
+        return Err(GpuError::Render(e));
+    }
+    Ok(buffer)
 }
 
 /// An adapter and device without a window (native only): the adapter [`select::pick`] chooses
@@ -134,8 +188,7 @@ pub struct Part {
 pub struct TessGpu {
     adapter: String,
     device: wgpu::Device,
-    /// For the blocking [`TessGpu::evaluate`] (native only).
-    #[cfg(not(target_arch = "wasm32"))]
+    /// Fills the input buffers, and runs the blocking [`TessGpu::evaluate`] (native only).
     queue: wgpu::Queue,
     pipeline: wgpu::ComputePipeline,
     layout: wgpu::BindGroupLayout,
@@ -166,17 +219,7 @@ impl TessGpu {
         if let Some(e) = failed {
             return Err(GpuError::Pipeline(e));
         }
-        // A viewport records the evaluation into its own frame (see `TessGpu::record`).
-        #[cfg(target_arch = "wasm32")]
-        let _ = queue;
-        Ok(TessGpu {
-            adapter: adapter.into(),
-            device,
-            #[cfg(not(target_arch = "wasm32"))]
-            queue,
-            pipeline,
-            layout,
-        })
+        Ok(TessGpu { adapter: adapter.into(), device, queue, pipeline, layout })
     }
 
     fn build(device: &wgpu::Device, shader: &str) -> (wgpu::ComputePipeline, wgpu::BindGroupLayout) {
@@ -291,14 +334,14 @@ impl TessGpu {
         let init = |label: &str, contents: &[u8], usage| {
             // wgpu rejects empty bindings: pad to one word.
             let contents = if contents.is_empty() { &[0u8; 16][..] } else { contents };
-            d.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some(label), contents, usage })
+            buffer_init(d, &self.queue, label, contents, usage)
         };
         let words = |v: &[u32]| v.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>();
         let floats = |v: &[f32]| v.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>();
-        let params = init("tess params", &words(&[count, 0, 0, 0]), wgpu::BufferUsages::UNIFORM);
-        let surfaces = init("tess surfaces", &words(&packed.surfaces), wgpu::BufferUsages::STORAGE);
-        let data = init("tess data", &floats(&packed.data), wgpu::BufferUsages::STORAGE);
-        let verts = init("tess vertices", &words(&packed.vertices), wgpu::BufferUsages::STORAGE);
+        let params = init("tess params", &words(&[count, 0, 0, 0]), wgpu::BufferUsages::UNIFORM)?;
+        let surfaces = init("tess surfaces", &words(&packed.surfaces), wgpu::BufferUsages::STORAGE)?;
+        let data = init("tess data", &floats(&packed.data), wgpu::BufferUsages::STORAGE)?;
+        let verts = init("tess vertices", &words(&packed.vertices), wgpu::BufferUsages::STORAGE)?;
         let vertices = d.create_buffer(&wgpu::BufferDescriptor {
             label: Some("tess mesh vertices"),
             size: (packed.count.max(1) as u64) * VERTEX_STRIDE,
@@ -321,7 +364,7 @@ impl TessGpu {
             }
             parts.push(Part { vertices: v0..offset, indices: i0..word(tri.len())? });
         }
-        let indices = init("tess mesh indices", &words(&tri), wgpu::BufferUsages::INDEX);
+        let indices = init("tess mesh indices", &words(&tri), wgpu::BufferUsages::INDEX)?;
         let bind = d.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("tess mesh"),
             layout: &self.layout,
@@ -363,12 +406,12 @@ impl TessGpu {
         let init = |label: &str, contents: &[u8], usage| {
             // wgpu rejects empty bindings: pad to one word.
             let contents = if contents.is_empty() { &[0u8; 16][..] } else { contents };
-            d.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some(label), contents, usage })
+            buffer_init(d, &self.queue, label, contents, usage)
         };
-        let params = init("tess params", &bytes_u32(&[count, 0, 0, 0]), wgpu::BufferUsages::UNIFORM);
-        let surfaces = init("tess surfaces", &bytes_u32(&packed.surfaces), wgpu::BufferUsages::STORAGE);
-        let data = init("tess data", &bytes_f32(&packed.data), wgpu::BufferUsages::STORAGE);
-        let verts = init("tess vertices", &bytes_u32(vertices), wgpu::BufferUsages::STORAGE);
+        let params = init("tess params", &bytes_u32(&[count, 0, 0, 0]), wgpu::BufferUsages::UNIFORM)?;
+        let surfaces = init("tess surfaces", &bytes_u32(&packed.surfaces), wgpu::BufferUsages::STORAGE)?;
+        let data = init("tess data", &bytes_f32(&packed.data), wgpu::BufferUsages::STORAGE)?;
+        let verts = init("tess vertices", &bytes_u32(vertices), wgpu::BufferUsages::STORAGE)?;
         let size = (n.max(1) * 32) as u64;
         let out = d.create_buffer(&wgpu::BufferDescriptor {
             label: Some("tess out"),
