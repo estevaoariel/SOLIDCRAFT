@@ -96,6 +96,16 @@ pub fn is_iges_path(path: &str) -> bool {
     std::path::Path::new(path).extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("igs") || e.eq_ignore_ascii_case("iges"))
 }
 
+/// Is this a sketch drawing file name (`.dxf` / `.svg`, any case)?
+pub fn is_drawing_path(path: &str) -> bool {
+    std::path::Path::new(path).extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("dxf") || e.eq_ignore_ascii_case("svg"))
+}
+
+/// Is this an SVG drawing file name (`.svg`, any case)?
+pub fn is_svg_path(path: &str) -> bool {
+    std::path::Path::new(path).extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("svg"))
+}
+
 /// What the bodies of an imported STEP file are named after. Files from different CAD systems
 /// fill the solid's own name with different things (the part's name, the last feature's name,
 /// nothing), so the caller chooses.
