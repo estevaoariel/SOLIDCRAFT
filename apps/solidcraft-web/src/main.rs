@@ -238,7 +238,7 @@ mod web {
                             files::pick_from_disk(&self.files, Intent::Open);
                         }
                         if ui_kit::button(ui, "Insert from computer…", ui_kit::Button::Normal)
-                            .on_hover_text("STEP, 3MF or STL into the open design")
+                            .on_hover_text("CAD files, meshes, DXF or SVG into the open design")
                             .clicked()
                         {
                             files::pick_from_disk(&self.files, Intent::Insert);
@@ -291,7 +291,7 @@ mod web {
                                     let design = solidcraft_engine::io::is_design_path(&e.name);
                                     if !design
                                         && ui_kit::button(ui, "Insert", ui_kit::Button::Small)
-                                            .on_hover_text("Into the open design (STEP, 3MF, STL)")
+                                            .on_hover_text("Into the open design (CAD files, meshes, DXF, SVG)")
                                             .clicked()
                                     {
                                         act = Some(("insert", e.name.clone()));
