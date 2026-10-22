@@ -1801,7 +1801,7 @@
   "ui.space_mouse_motion_translation_x": "Forskydning X",
   "ui.space_mouse_motion_translation_y": "Forskydning Y",
   "ui.space_mouse_motion_translation_z": "Forskydning Z",
-  "ui.space_mouse_navigate": "Navigér med SpaceNavigator / SpaceMouse",
+  "ui.space_mouse_navigate": "Navigér med 3D-musen",
   "ui.space_mouse_none": "Ingen 3D-mus fundet",
   "ui.space_mouse_not_calibrated": "Ikke kalibreret",
   "ui.space_mouse_offer": "Kalibrering af din 3D-mus retter ombyttede eller vendte akser og indstiller dens hastighed og fornemmelse.",

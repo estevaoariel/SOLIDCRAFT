@@ -1801,7 +1801,7 @@
   "ui.space_mouse_motion_translation_x": "Posun X",
   "ui.space_mouse_motion_translation_y": "Posun Y",
   "ui.space_mouse_motion_translation_z": "Posun Z",
-  "ui.space_mouse_navigate": "Navigace pomocí SpaceNavigator / SpaceMouse",
+  "ui.space_mouse_navigate": "Navigace pomocí 3D myši",
   "ui.space_mouse_none": "3D myš nenalezena",
   "ui.space_mouse_not_calibrated": "Nezkalibrováno",
   "ui.space_mouse_offer": "Kalibrace 3D myši opraví prohozené nebo obrácené osy a nastaví její rychlost a pocit z ovládání.",

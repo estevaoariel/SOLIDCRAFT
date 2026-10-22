@@ -1773,7 +1773,7 @@
   "ui.space_mouse_ghost_position": "Placering",
   "ui.space_mouse_ghost_right_viewport": "Vyn höger",
   "ui.space_mouse_hint": "Flytta och rotera vyn tillsammans; skisser använder endast panorering och zoom.",
-  "ui.space_mouse_navigate": "Navigera med SpaceNavigator / SpaceMouse",
+  "ui.space_mouse_navigate": "Navigera med 3D-musen",
   "ui.space_mouse_none": "Ingen 3D-mus hittades",
   "ui.space_mouse_not_calibrated": "Inte kalibrerad",
   "ui.space_mouse_offer": "Att kalibrera din 3D-mus rättar förväxlade eller omvända axlar och ställer in hastighet och känsla.",

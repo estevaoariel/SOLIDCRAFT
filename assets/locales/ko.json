@@ -1805,7 +1805,7 @@
   "ui.space_mouse_motion_translation_x": "이동 X",
   "ui.space_mouse_motion_translation_y": "이동 Y",
   "ui.space_mouse_motion_translation_z": "이동 Z",
-  "ui.space_mouse_navigate": "SpaceNavigator / SpaceMouse로 탐색",
+  "ui.space_mouse_navigate": "3D 마우스로 탐색",
   "ui.space_mouse_none": "3D 마우스를 찾을 수 없음",
   "ui.space_mouse_not_calibrated": "보정 안 됨",
   "ui.space_mouse_offer": "3D 마우스를 보정하면 바뀌거나 반전된 축이 바로잡히고 속도와 조작감이 맞춰집니다.",

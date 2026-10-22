@@ -1844,7 +1844,7 @@
   "ui.space_mouse_motion_translation_x": "平移 X",
   "ui.space_mouse_motion_translation_y": "平移 Y",
   "ui.space_mouse_motion_translation_z": "平移 Z",
-  "ui.space_mouse_navigate": "使用 SpaceNavigator / SpaceMouse 导航",
+  "ui.space_mouse_navigate": "使用 3D 鼠标导航",
   "ui.space_mouse_none": "未找到 3D 鼠标",
   "ui.space_mouse_not_calibrated": "未校准",
   "ui.space_mouse_offer": "校准 3D 鼠标可以修正互换或反向的轴，并调整它的速度和手感。",

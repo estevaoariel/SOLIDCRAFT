@@ -1800,7 +1800,7 @@
   "ui.space_mouse_motion_translation_x": "Смещение X",
   "ui.space_mouse_motion_translation_y": "Смещение Y",
   "ui.space_mouse_motion_translation_z": "Смещение Z",
-  "ui.space_mouse_navigate": "Навигация через SpaceNavigator / SpaceMouse",
+  "ui.space_mouse_navigate": "Навигация с помощью 3D-мыши",
   "ui.space_mouse_none": "3D-мышь не найдена",
   "ui.space_mouse_not_calibrated": "Не откалибрована",
   "ui.space_mouse_offer": "Калибровка 3D-мыши исправляет перепутанные или перевёрнутые оси и настраивает скорость и ощущения.",

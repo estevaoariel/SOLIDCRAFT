@@ -1801,7 +1801,7 @@
   "ui.space_mouse_motion_translation_x": "Anjakan X",
   "ui.space_mouse_motion_translation_y": "Anjakan Y",
   "ui.space_mouse_motion_translation_z": "Anjakan Z",
-  "ui.space_mouse_navigate": "Navigasi dengan SpaceNavigator / SpaceMouse",
+  "ui.space_mouse_navigate": "Navigasi dengan tetikus 3D",
   "ui.space_mouse_none": "Tiada tetikus 3D ditemui",
   "ui.space_mouse_not_calibrated": "Belum ditentukur",
   "ui.space_mouse_offer": "Menentukur tetikus 3D membetulkan paksi yang bertukar atau terbalik dan menetapkan kelajuan serta rasanya.",

@@ -1805,7 +1805,7 @@
   "ui.space_mouse_motion_translation_x": "Translation X",
   "ui.space_mouse_motion_translation_y": "Translation Y",
   "ui.space_mouse_motion_translation_z": "Translation Z",
-  "ui.space_mouse_navigate": "Mit SpaceNavigator / SpaceMouse navigieren",
+  "ui.space_mouse_navigate": "Mit der 3D-Maus navigieren",
   "ui.space_mouse_none": "Keine 3D-Maus gefunden",
   "ui.space_mouse_not_calibrated": "Nicht kalibriert",
   "ui.space_mouse_offer": "Die Kalibrierung Ihrer 3D-Maus behebt vertauschte oder umgekehrte Achsen und stellt Geschwindigkeit und Gefühl ein.",

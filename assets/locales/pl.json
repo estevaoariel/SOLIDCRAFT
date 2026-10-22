@@ -1801,7 +1801,7 @@
   "ui.space_mouse_motion_translation_x": "Przesunięcie X",
   "ui.space_mouse_motion_translation_y": "Przesunięcie Y",
   "ui.space_mouse_motion_translation_z": "Przesunięcie Z",
-  "ui.space_mouse_navigate": "Nawiguj za pomocą SpaceNavigator / SpaceMouse",
+  "ui.space_mouse_navigate": "Nawiguj za pomocą myszy 3D",
   "ui.space_mouse_none": "Nie znaleziono myszy 3D",
   "ui.space_mouse_not_calibrated": "Nieskalibrowano",
   "ui.space_mouse_offer": "Kalibracja myszy 3D naprawia zamienione lub odwrócone osie oraz ustawia jej szybkość i odczucie.",

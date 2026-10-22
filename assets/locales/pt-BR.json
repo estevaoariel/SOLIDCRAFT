@@ -1801,7 +1801,7 @@
   "ui.space_mouse_motion_translation_x": "Translação X",
   "ui.space_mouse_motion_translation_y": "Translação Y",
   "ui.space_mouse_motion_translation_z": "Translação Z",
-  "ui.space_mouse_navigate": "Navegar com SpaceNavigator / SpaceMouse",
+  "ui.space_mouse_navigate": "Navegar com o mouse 3D",
   "ui.space_mouse_none": "Nenhum mouse 3D encontrado",
   "ui.space_mouse_not_calibrated": "Não calibrado",
   "ui.space_mouse_offer": "Calibrar o mouse 3D corrige eixos trocados ou invertidos e ajusta a velocidade e a sensação.",

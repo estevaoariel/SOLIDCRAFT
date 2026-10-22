@@ -1844,7 +1844,7 @@
   "ui.space_mouse_motion_translation_x": "平行移動 X",
   "ui.space_mouse_motion_translation_y": "平行移動 Y",
   "ui.space_mouse_motion_translation_z": "平行移動 Z",
-  "ui.space_mouse_navigate": "SpaceNavigator / SpaceMouseで視点を操作",
+  "ui.space_mouse_navigate": "3Dマウスで視点を操作",
   "ui.space_mouse_none": "3Dマウスが見つかりません",
   "ui.space_mouse_not_calibrated": "未キャリブレーション",
   "ui.space_mouse_offer": "3Dマウスをキャリブレーションすると、入れ替わった軸や反転した軸が直り、速度と操作感も整います。",

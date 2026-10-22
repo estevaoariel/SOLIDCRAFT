@@ -1800,7 +1800,7 @@
   "ui.space_mouse_motion_translation_x": "Öteleme X",
   "ui.space_mouse_motion_translation_y": "Öteleme Y",
   "ui.space_mouse_motion_translation_z": "Öteleme Z",
-  "ui.space_mouse_navigate": "SpaceNavigator / SpaceMouse ile gezin",
+  "ui.space_mouse_navigate": "3D fare ile gezin",
   "ui.space_mouse_none": "3B fare bulunamadı",
   "ui.space_mouse_not_calibrated": "Kalibre edilmedi",
   "ui.space_mouse_offer": "3D farenizi kalibre etmek, yer değiştirmiş veya ters dönmüş eksenleri düzeltir; hızını ve hissini ayarlar.",

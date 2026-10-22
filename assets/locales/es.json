@@ -1801,7 +1801,7 @@
   "ui.space_mouse_motion_translation_x": "Traslación X",
   "ui.space_mouse_motion_translation_y": "Traslación Y",
   "ui.space_mouse_motion_translation_z": "Traslación Z",
-  "ui.space_mouse_navigate": "Navegar con SpaceNavigator / SpaceMouse",
+  "ui.space_mouse_navigate": "Navegar con el ratón 3D",
   "ui.space_mouse_none": "No se encontró ningún ratón 3D",
   "ui.space_mouse_not_calibrated": "Sin calibrar",
   "ui.space_mouse_offer": "Calibrar tu ratón 3D corrige los ejes intercambiados o invertidos y ajusta su velocidad y sensación.",

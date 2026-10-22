@@ -1801,7 +1801,7 @@
   "ui.space_mouse_motion_translation_x": "Tịnh tiến X",
   "ui.space_mouse_motion_translation_y": "Tịnh tiến Y",
   "ui.space_mouse_motion_translation_z": "Tịnh tiến Z",
-  "ui.space_mouse_navigate": "Điều hướng bằng SpaceNavigator / SpaceMouse",
+  "ui.space_mouse_navigate": "Điều hướng bằng chuột 3D",
   "ui.space_mouse_none": "Không tìm thấy chuột 3D",
   "ui.space_mouse_not_calibrated": "Chưa hiệu chuẩn",
   "ui.space_mouse_offer": "Hiệu chuẩn chuột 3D sẽ sửa các trục bị hoán đổi hoặc đảo ngược và chỉnh tốc độ cũng như cảm giác.",

@@ -1773,7 +1773,7 @@
   "ui.space_mouse_ghost_position": "Posisi",
   "ui.space_mouse_ghost_right_viewport": "Viewport kanan",
   "ui.space_mouse_hint": "Gerakkan dan putar tampilan bersama; sketsa hanya memakai pan dan zoom.",
-  "ui.space_mouse_navigate": "Navigasi dengan SpaceNavigator / SpaceMouse",
+  "ui.space_mouse_navigate": "Navigasi dengan mouse 3D",
   "ui.space_mouse_none": "Mouse 3D tidak ditemukan",
   "ui.space_mouse_not_calibrated": "Belum dikalibrasi",
   "ui.space_mouse_offer": "Mengkalibrasi mouse 3D memperbaiki sumbu yang tertukar atau terbalik dan mengatur kecepatan serta rasanya.",

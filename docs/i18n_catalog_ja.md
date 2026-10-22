@@ -490,7 +490,7 @@
 | Name | 名前 | `Name` |
 | Named Views | 名前付きビュー | `ui.named_views` |
 | Navigate View | ビューナビゲーション | `cmd.view_navigate` |
-| Navigate with SpaceNavigator / SpaceMouse | SpaceNavigator / SpaceMouseで視点を操作 | `ui.space_mouse_navigate` |
+| Navigate with the 3D mouse | 3Dマウスで視点を操作 | `ui.space_mouse_navigate` |
 | Navigation | ナビゲーション | `ui.navigation` |
 | needs two joints | 2つのジョイントが必要 | `needs two joints` |
 | New Body | 新規ボディ | `ui.new_body` |

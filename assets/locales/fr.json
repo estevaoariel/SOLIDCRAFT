@@ -1807,7 +1807,7 @@
   "ui.space_mouse_motion_translation_x": "Translation X",
   "ui.space_mouse_motion_translation_y": "Translation Y",
   "ui.space_mouse_motion_translation_z": "Translation Z",
-  "ui.space_mouse_navigate": "Naviguer avec SpaceNavigator / SpaceMouse",
+  "ui.space_mouse_navigate": "Naviguer avec la souris 3D",
   "ui.space_mouse_none": "Aucune souris 3D trouvée",
   "ui.space_mouse_not_calibrated": "Non calibrée",
   "ui.space_mouse_offer": "Calibrer votre souris 3D corrige les axes échangés ou inversés et règle sa vitesse et sa sensation.",

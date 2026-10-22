@@ -1773,7 +1773,7 @@
   "ui.space_mouse_ghost_position": "Helyzet",
   "ui.space_mouse_ghost_right_viewport": "Jobb nézet",
   "ui.space_mouse_hint": "A nézetet együtt mozgatja és forgatja; a vázlatok csak pásztázást és nagyítást használnak.",
-  "ui.space_mouse_navigate": "Navigálás SpaceNavigator / SpaceMouse eszközzel",
+  "ui.space_mouse_navigate": "Navigálás a 3D-egérrel",
   "ui.space_mouse_none": "Nem található 3D-egér",
   "ui.space_mouse_not_calibrated": "Nincs kalibrálva",
   "ui.space_mouse_offer": "A 3D-egér kalibrálása kijavítja a felcserélt vagy megfordított tengelyeket, és beállítja a sebességét és az érzetét.",

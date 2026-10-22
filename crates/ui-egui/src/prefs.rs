@@ -418,7 +418,7 @@ preference_settings! {
     /// read, so an existing choice survives the upgrade; this version only writes `false`.
     orbit_cursor: bool = false, 1;
     /// Whether a connected 3D mouse moves the view.
-    space_mouse_enabled: bool = true, 1 => check("Navigate with SpaceNavigator / SpaceMouse");
+    space_mouse_enabled: bool = true, 1 => check("Navigate with the 3D mouse");
     /// Whether a picture of the connected 3D mouse, moving as it does, sits in the 3D view's lower
     /// left corner. Off by default.
     space_mouse_in_view: bool = false, 1 => check_id("ui.space_mouse_show_in_view");

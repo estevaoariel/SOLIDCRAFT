@@ -1773,7 +1773,7 @@
   "ui.space_mouse_ghost_position": "Poziție",
   "ui.space_mouse_ghost_right_viewport": "Viewport dreapta",
   "ui.space_mouse_hint": "Mută și rotește vizualizarea împreună; schițele folosesc doar panoramare și zoom.",
-  "ui.space_mouse_navigate": "Navighează cu SpaceNavigator / SpaceMouse",
+  "ui.space_mouse_navigate": "Navighează cu mouse-ul 3D",
   "ui.space_mouse_none": "Niciun mouse 3D găsit",
   "ui.space_mouse_not_calibrated": "Necalibrat",
   "ui.space_mouse_offer": "Calibrarea mouse-ului 3D corectează axele inversate sau schimbate între ele și îi reglează viteza și senzația.",
