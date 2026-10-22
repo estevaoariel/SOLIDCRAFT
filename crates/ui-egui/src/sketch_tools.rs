@@ -410,7 +410,8 @@ pub fn refine_snap(
         }
         None => PREV.with(Cell::get),
     };
-    // Line tool: the tangent point of a circle or arc (before plain "on the curve").
+    // Line tool: the tangent point of a circle or arc, then a line through its centre
+    // (before plain "on the curve", which would leave a chord free to miss the centre).
     let line_tool = app.tool.as_ref().is_none_or(|t| t.cmd == "sketch.line");
     if !mid_only
         && best.is_none()
@@ -419,6 +420,15 @@ pub fn refine_snap(
         && let Some(i) = crate::inference::tangent(sk, prev, lp, tol)
     {
         best = Some((i.dist, i.label(), i.at));
+    }
+    if !mid_only
+        && best.is_none()
+        && line_tool
+        && let Some(prev) = prev
+        && let Some(i) = crate::inference::through_center(sk, prev, lp, tol)
+    {
+        best = Some((i.dist, i.label(), i.at));
+        mid_of = i.arg;
     }
     // On a curve (coincident with it).
     if !mid_only && best.is_none() {
@@ -461,6 +471,8 @@ pub fn refine_snap(
         let arg = match l {
             "Mid" => mid_of.map(|m| format!("mid:{m}")),
             "On" => mid_of.map(|m| format!("on:{m}")),
+            // Already a point argument (`<id>.center` or `on:<id>:x,y`), or none for a free point.
+            "Ctr" => mid_of,
             _ => None,
         };
         (p, arg)

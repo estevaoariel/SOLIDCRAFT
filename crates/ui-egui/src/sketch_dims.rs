@@ -113,7 +113,20 @@ pub fn effective(app: &SolveApp, t: &Tool, h: Vec2) -> Vec2 {
 /// sketch geometry stays there, and one on a curve slides along it to where the axis crosses.
 pub fn placed(app: &SolveApp, t: &Tool, p: &(Vec2, Option<String>)) -> (Vec2, Option<String>) {
     let line = t.cmd == "sketch.line";
-    if t.dims.iter().any(|b| b.locked) || (line && p.1.is_none()) {
+    // A typed length or angle wins over every snap.
+    if t.dims.iter().any(|b| b.locked) {
+        return (effective(app, t, p.0), None);
+    }
+    // A line snapped through a circle's centre stays on that radial line. The axis snap would
+    // pull a near-horizontal diameter off the centre.
+    if line
+        && let Some(i) = crate::inference::current()
+        && i.kind == crate::inference::Kind::Center
+        && i.at.dist(p.0) < 1e-9
+    {
+        return p.clone();
+    }
+    if line && p.1.is_none() {
         return (effective(app, t, p.0), None);
     }
     if line && let Some(q) = on_curve_axis(app, t, p) {
