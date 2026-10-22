@@ -163,6 +163,50 @@ impl ModelBody {
             .clone()
     }
 
+    /// Identity of this body's display geometry, without meshing it: the cell its mesh is kept
+    /// in, shared by every clone of the body (timeline snapshots, world states that place it
+    /// unchanged) and, while it is held, by no other body.
+    pub fn display_identity(&self) -> Arc<dyn std::any::Any + Send + Sync> {
+        self.mesh.clone()
+    }
+
+    /// [`ModelBody::mesh`] as a shared mesh and the move that places it: for a rigid placement
+    /// of a definition, the definition's own mesh (the same one for every placement of it) and
+    /// the placement; for any other body its own mesh, unmoved. The mesh moved by the matrix is
+    /// `mesh()`, so a viewport can draw every placement of a part from one copy of its
+    /// triangles, without making the moved copies.
+    pub fn mesh_in_place(&self) -> (Arc<Mesh>, crate::Mat) {
+        match self.mesh_placement.as_deref() {
+            Some(placed) => placed.source_mesh(),
+            None => (self.mesh(), crate::IDENTITY),
+        }
+    }
+
+    /// The box of [`ModelBody::mesh`] without making a placement's moved copy: the shared mesh's
+    /// points, moved.
+    pub fn mesh_bounds(&self) -> solidcraft_geom::Aabb3 {
+        if let Some(mesh) = self.cached_mesh() {
+            return mesh.bounds();
+        }
+        let (mesh, m) = self.mesh_in_place();
+        if crate::is_identity(&m) {
+            return mesh.bounds();
+        }
+        mesh.positions.iter().fold(solidcraft_geom::Aabb3::EMPTY, |mut b, p| {
+            b.add(crate::apply_point(&m, *p));
+            b
+        })
+    }
+
+    /// [`ModelBody::plan_mesh_at`] as a shared mesh and the move that places it, as
+    /// [`ModelBody::mesh_in_place`] does for the reference mesh.
+    pub fn plan_mesh_in_place_at(&self, q: crate::display_quality::DisplayQuality) -> Option<(Arc<Mesh>, crate::Mat)> {
+        match self.mesh_placement.as_deref() {
+            Some(placed) => placed.source_plan_mesh(q, &self.name),
+            None => Some((self.plan_mesh_at(q)?, crate::IDENTITY)),
+        }
+    }
+
     /// [`ModelBody::plan_mesh`] if it is made already; otherwise it is made on a worker thread
     /// (once, however often this is asked) and `None` comes back meanwhile, so a caller drawing a
     /// frame (a face highlighted under the pointer) is not held up by a large body's plan

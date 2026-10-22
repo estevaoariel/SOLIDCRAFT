@@ -2,9 +2,16 @@
 
 `crates/ui-egui/src/ui_kit/` contains the tokenised controls used by feature dialogs,
 preferences, manager cards, prompts, context menus and the sketch palette. Import through
-`crate::ui_kit::{...}`. The API is crate-visible; implementation modules are private.
+`crate::ui_kit::{...}`. Most controls are crate-visible; the container API is public so platform apps use the same hosts.
 
 ## Composition and rules
+
+- Every outer host uses `ui_kit::Container` with a semantic `Surface`. The shell
+  publishes the layout once per frame; `Container::floating()` and `frame()` own
+  adaptive placement policy and chrome. `Panel`, `Window`, `Confirm` and `Menu`
+  compose it. Raw egui hosts and outer shadows are rejected recursively, including
+  platform apps. The mandatory `cargo xtask ui-containers` gate runs in fast CI and
+  scans new crates/apps automatically, including macro bodies and alias chains. See the [container audit and migration inventory](ui-container-audit.md).
 
 - Colours, typography, dimensions and spacing come from `theme::Tokens`.
 - Sliders only via `ui_kit::slider`; `Slider` options change behaviour, never appearance.
@@ -24,9 +31,10 @@ preferences, manager cards, prompts, context menus and the sketch palette. Impor
 - `Window` composes the shared Panel frame with a 40 pt icon/title/close header,
   padded content and optional 48 pt footer. `show_with_left` pins a left action beside
   the right-aligned buttons. `show_pages` accepts declarative `WindowPage` entries
-  (existing icon, i18n label key, stable handle, scroll policy and draw callback).
+  (icon, i18n label key, optional group heading, stable handle, scroll policy and draw callback).
   Its 188 pt soft page list has 32 pt icon/label rows, selected tint/ink and a divider.
-  All nine existing Preferences pages retain their order, settings and handles.
+  Preferences has nine grouped pages; legacy control-channel page names remain aliases.
+  `page_rows` opts into a taller body while preserving viewport bounds.
   `actions`, `anchor`/`placed`, `cards`, `fields` and `keep_open_on_escape` retain
   existing window behavior. Empty action labels omit the footer.
 - `Confirm` is an input-blocking modal using the same card frame and footer controls.
@@ -49,6 +57,14 @@ preferences, manager cards, prompts, context menus and the sketch palette. Impor
 - Scenario handles and accessible labels are API. Consolidated options preserve
   the former geometry, wrapping, native metadata and publication keys.
 
+Preference compositions use `settings_heading`, shared disclosure `settings_section` headings and
+`settings_pair` for responsive controls beside one specimen. `option_card` supplies the
+shared illustrated radio control. `settings_form` and `settings_block_hint` define aligned label grids; `theme_rail` keeps the import tile fixed beside a scrollbar-free scrolling row. `PreferenceFigure` owns theme swatches, orbit pivots,
+quality, anti-aliasing, contact shading and up-axis figures. `layout_preview` follows the
+four workspace choices without opening another viewport. Scale, palette, autosave, mouse
+and live-axis specimens share tokens and the gallery; live bars show actual calibrated
+input and introduce no repaint timer.
+
 ## Elements
 
 Module names below describe implementation locations, not caller import paths.
@@ -57,6 +73,7 @@ table. Panel/Window/Confirm compositions also have dedicated geometry and intera
 
 | Module / element | Use and options | Main tokens |
 | --- | --- | --- |
+| assistant: `assistant_header`, `assistant_controls`, `assistant_badge`, `assistant_bubble`, `assistant_prose`, `assistant_tool_frame/row/detail/status`, `AssistantToolState`, `assistant_approval/actions`, `assistant_composer/footer`, `assistant_input`, `assistant_send`, `assistant_empty`, `assistant_banner`, `AssistantTone` | Shared Assistant presentation: 40 pt header, 22 pt state pill, right-aligned user messages limited to 86% width, unboxed assistant prose, bordered tool groups and command detail, tinted approval heading, rounded focused composer with one unframed growing editor and pinned footer, centred setup copy and semantic notices. Closures preserve existing permission choices, protocol routing, queue actions and scenario handles. | `form_header_height/close_size`, `font_label/small/body`, `dialog_body/footer/rule`, `control_fill/border/radius`, `form_ink/dim/primary/success/error`, `accent_soft/selected_ink`, `warning`, radii and spacing |
 | history: `HistoryChip`, `HistoryStyle`, `history_drop_bar`, `history_marker`, `HistorySeam`, `history_seam` | One painter family for bottom chips, 38 pt vertical icon chips and single-line 26 pt name rows (the browser's shared `TREE_ROW_HEIGHT`). Selected items use the active tab tint/ink/border; all variants retain multi-tone feature artwork using one shared kind-to-accent rule (Sketch green, Surface orange, Mesh yellow, Form purple, solids base blue); rolled-back items have 42% opacity. Error/warning badges, suppression strikes, horizontal/vertical drop bars and rollback line/hollow circle are shared. No connector lines. | `control_height`, `space_2/3/4/6/8/10/12/14/16/24`, radii, typography, `TabAccent`, `timeline_item`, `control_border`, `text/dim`, `form_error/fill` |
 | search: `CommandSearch`, `MenuItem::search_row` | Ribbon search composition: one persistent ribbon editor expands from 28 to 40 pt and to 520 pt wide with its right edge anchored, magnifier and S/Esc keycap, 38 pt two-line menu row with 26 pt icon tile, accent bold substring, path, shortcut/kind keycap, counts, JSON detail box and footer. The ordinary 30 pt menu row cannot fit a second line; this variant keeps its enabled/selected states and scenario IDs. Ranking and dispatch stay with the caller. | `form_card_width × 2 − space_8` (520 pt), `control_height`, `space_2/3/4/6/8/10/12/14/16/24`, `radius_xl/control_radius`, `control_fill`, `dialog_body/footer/rule/border`, `form_ink/dim/primary/error/error_fill/success/success_fill`, `selected_ink`, `accent_soft`, typography |
 | menu: `Menu`, `MenuItem` | Shared popup, 30 pt rows, 28 pt icon column, clipped labels, right-aligned mono shortcuts, submenu chevrons, checked/unchecked and document swatches, inert 40% disabled rows and danger ink; headings and separators; ribbon drag/pin targets retained | `dialog_body/border/rule`, `radius_xl`, `control_height/radius`, `form_ink/dim/primary/error`, `accent_soft`, typography and spacing |
@@ -95,6 +112,7 @@ table. Panel/Window/Confirm compositions also have dedicated geometry and intera
 | `list_picker` | Selectable row with caller identity and native checked state | `control_height`, form selection tokens |
 | `popup_list`, `PopupOption` | Focus-neutral suggestions; owner retains keyboard routing | `space_2`, `form_label_width`, `control_height`, form tokens |
 | `color_swatch`, `swatch_grid`, `color_thumbnail` | 30 pt draggable samples, 6 pt grid step gap, selected outer ring and checker pattern under transparent colours; caller payloads retained; local-library thumbnails use 16 pt | `control_height/radius`, `border`, `form_primary`, `control_fill`, `space_2/6/8` |
+| `assistant_entry`, `AssistantEntryState` | Application-bar chat icon with quiet, ready, busy, auth, stopped and approval count marks; caller owns state and target | `app_bar`, `agent_ok/busy`, `warning/error`, `font_badge` |
 | actions: `button`, `Button` | Secondary action: `Normal`, `Small`, or `Enabled(bool)` | native sizing, form font/control tokens |
 | `primary_button` | Accent action outside a footer | `accent`, `on_accent`, form tokens |
 | `icon_button_at` | Icon action inside a supplied rectangle | `form_icon_inset`, `text/dim`, icon palette |
@@ -185,7 +203,7 @@ helpers private. Add interaction tests when the element introduces an action.
 
 The gallery checks geometry, label alignment, handles and effective paint bounds in
 both themes. Field/footer/panel tests retain focus, completion and action coverage.
-`ui_kit_guard_tests` scans kit callers recursively, rejects raw control constructors
+`ui_kit_guard_tests` scans every UI feature module recursively, rejects raw control constructors
 and methods (including aliases), and rejects removed legacy helpers. The raw-control
 allowance table is empty and guarded against additions. Standard colour/font guards,
 Clippy, wasm, i18n, assets, icons and layers still apply.
@@ -389,3 +407,64 @@ rule. Ranking, command mode and keyboard routing remain with the caller.
 Generate CPU-rendered evidence of all five search states and the actual ribbon's
 closed/opening/open/closing transition in both themes with
 `SOLIDCRAFT_SEARCH_EVIDENCE=/tmp/search cargo test -p solidcraft-ui-egui --lib command_search`.
+
+### Compact workspace composition
+
+`Container::gap` and `Container::frame` supply the layout policy for every adaptive
+surface. Compact has no gaps or shadows between edge-bound panels; floating uses
+the shared card spacing and frame. `Panel` bounds draggable compact sheets to the workspace. The shared frame rounds
+all corners away from the right dock and only the left corners while right-docked;
+the footer inherits that frame's bottom corners. Both layouts retain drag offsets. Browser uses the same content renderer and width in both modes,
+with a square, flush ribbon join in Compact. Non-workspace surfaces keep their roles.
+`DockEdges` declares touching edges. The container measures content-hugging cards
+before rounding their exposed corners, and aligns touching outlines onto a single
+border strip without changing logical panel allocations. The application bar has
+an independent surface role.
+The saved `Prefs::layout` is changed through `view.layout`; `ui.set` may still make a
+transient automation override.
+## File/start presentation
+
+`FileView` owns File surfaces and controls. It accepts translated strings, existing
+icon ids and cached thumbnail textures; callers retain commands, document state,
+persistence, thumbnail jobs and recovery decisions.
+
+- `page`, `content` and `rail` own the page background, responsive insets and
+  full-height rail fill/clip. `navigation` also supports the narrow navigation menu.
+  Callers supply layout rectangles, scrolling and entry order.
+- `nav_row` accepts a stable id, label, shortcut, selection and enabled state.
+  `back_to` accepts a translated `{name}` template, paints the document name
+  semibold and reuses the mirrored chevron and outlined keycap. `separator`
+  supplies grouped rules. Disabled rows cannot activate.
+- `title`, `subtitle`, `detail` and `section` own typography. `section` accepts a
+  token-based heading/body gap: `space_12` for New, `space_10` for Recent/Samples.
+  Callers retain semantic section order and the larger `file_section_gap`.
+- `grid` provides responsive columns with 14 pt gutters and no trailing row gap.
+  `action_tile` supplies an 84 pt card with 44 pt original artwork and vertically
+  centered label/subtitle. `tile_min_width` informs responsive columns.
+- `recent_list` owns the rounded border and zero row gap. `recent_row` accepts a
+  `RecentRow`, paints internal separators, medium names and workspace dots, and
+  retains title/path at narrow widths. Callers handle unavailable-file actions.
+- `sample_grid(ui, id, &[SampleCard])` measures each row's tallest content and
+  stretches cards to equal bottoms without clipping descriptions. Responses stay
+  in sample order, with stable `{id}:{index}` ids. Artwork inputs remain unchanged.
+- `recovery_banner` accepts `RecoveryMessage` segments for a bold title, normal
+  message, monospace filename and normal suffix. Actions align right or wrap below
+  at narrow widths. Discard is optional for summaries; the return value is
+  `(recover_response, optional_discard_response)`. `recovery_review` uses the same
+  geometry with per-design Discard. Callers provide truthful metadata.
+
+The exported `file_*` colour tokens provide readable light/dark foreground and
+background pairs, including File-specific secondary text. Thumbnails retain the
+neutral `file_image_tint`; icon and text colours do not change their pixels.
+Spacing, dimensions, fonts and radii come from `theme::Tokens`.
+
+Gallery and geometry tests cover these components. To capture the actual File
+view using public temporary fixtures, set `SOLIDCRAFT_FILE_EVIDENCE` to an output
+directory and run `file_view_application_evidence_in_both_themes_and_widths` with
+`--ignored`. It produces desktop and 420 pt narrow PNGs in both themes.
+
+`button_at(ui, id, rect, label, Button::Primary/Normal)` places the same shared
+native button used by `button` inside a bounded, centred layout. It preserves
+stable identity, enabled state and exact caller-owned geometry. Recovery actions
+use this component rather than custom button painters. The recovery well renders
+the existing restore artwork through its construction accent ramp.

@@ -121,11 +121,6 @@ impl PreviewState {
         if self.rolled_back { &[] } else { &self.replaced }
     }
 
-    /// Whether the preview scene should be drawn.
-    pub fn draw_active(&self) -> bool {
-        self.active && !self.rolled_back
-    }
-
     /// Stop drawing the preview scene and give the bodies it stood in for back to the model.
     fn hide_scene(&mut self) {
         if self.active || !self.replaced.is_empty() {

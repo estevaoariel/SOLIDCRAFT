@@ -322,13 +322,7 @@ pub(crate) fn history_seam(ui: &mut egui::Ui, card: Rect, names: bool) -> Histor
     let response = button.clone().union(edge.clone());
     if hovered && !dragging {
         let mut tip = egui::Tooltip::for_widget(&response);
-        let t = Tokens::get();
-        let frame = egui::Frame::NONE
-            .fill(t.dialog_body)
-            .stroke(Stroke::new(1.0, t.dialog_border))
-            .corner_radius(t.radius_md)
-            .inner_margin(egui::Margin::symmetric(t.space_8 as i8, t.space_4 as i8))
-            .shadow(t.shell_shadow());
+        let frame = super::Container::new(ui.ctx(), super::Surface::Toast).tooltip_frame(ui.ctx());
         tip.popup = tip.popup.anchor(seam.pill).align(egui::RectAlign::RIGHT_START).frame(frame);
         tip.show(|ui| {
             let t = Tokens::get();
