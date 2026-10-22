@@ -375,7 +375,8 @@ pub(crate) fn rename_menu(ui: &mut Ui, value: &mut String, focused: &mut bool) -
                 response.request_focus();
                 *focused = true;
             }
-            if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+            // Leaving the box with Tab keeps the new name as Enter does; only Escape cancels (#3313).
+            if ui.input(|i| i.key_pressed(egui::Key::Enter)) || (response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Tab))) {
                 done = Some(true);
             }
             if ui.input(|i| i.key_pressed(egui::Key::Escape)) {

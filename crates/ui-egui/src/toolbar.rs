@@ -1450,8 +1450,12 @@ fn assistant_button(app: &mut SolveApp, ui: &mut egui::Ui, at: Rect) {
             ui.painter().circle_filled(c, 4.0, color);
         }
         AssistantMark::Busy => {
-            ui.ctx().request_repaint();
-            let phase = ui.input(|i| i.time) as f32 * 3.0;
+            let phase = if app.preferences.look_at_anim {
+                ui.ctx().request_repaint();
+                ui.input(|i| i.time) as f32 * 3.0
+            } else {
+                0.0
+            };
             ui.painter().circle_filled(c, 6.0, ring);
             let points = (0..=24)
                 .map(|i| {
@@ -2252,6 +2256,8 @@ mod header_report_tests {
             assert!(crate::issue_report::pending(&h.app));
             assert_eq!(before, (h.app.session.doc.to_json(), h.app.session.undo.len(), h.app.session.revision));
             captured_frame(&mut h);
+            // The report card takes a few frames to reach its full height.
+            h.frames(16);
             // Existing review content scrolls vertically when the window is narrow.
             if width < 700.0 {
                 let [x, y] = h.widget("Close draft").unwrap();
