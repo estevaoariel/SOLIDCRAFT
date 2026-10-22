@@ -265,14 +265,65 @@ fn the_example_macros_run() {
     let r = play_example(
         &mut sprocket,
         "gear_generator.rhai",
-        json!({"params": {"kind": "sprocket", "chain": "40", "teeth": 12, "bore": 10, "hub": "none"}}),
+        json!({"params": {"kind": "sprocket", "chain": "40", "teeth": 12, "bore": 10, "hub": "none", "edge_chamfer": "no"}}),
     );
     assert_eq!(r["ran"], true, "sprocket: {r}");
     let sv = volume(&mut sprocket);
-    let width = 7.925;
+    let width = 0.284 * 25.4;
     let ra = 12.7 * (0.6 + 1.0 / (std::f64::consts::PI / 12.0).tan()) / 2.0;
     let max = std::f64::consts::PI * ra * ra * width;
     assert!(sv > max * 0.2 && sv < max, "ANSI #40 sprocket volume {sv} vs disk {max}");
+
+    let mut n15 = Session::default();
+    let r = play_example(
+        &mut n15,
+        "gear_generator.rhai",
+        json!({"params": {"kind": "sprocket", "chain": "40", "teeth": 15, "bore": 10, "hub": "none", "edge_chamfer": "no"}}),
+    );
+    assert_eq!(r["ran"], true, "ANSI #40 15T: {r}");
+    let bb = &run(&mut n15, "inspect.measure", json!({}))["bodies"][0]["bbox"];
+    let ext = |k: &str, i: usize| bb[k][i].as_f64().unwrap_or(f64::NAN).abs();
+    let rmax = ext("max", 0).max(ext("min", 0)).max(ext("max", 1)).max(ext("min", 1));
+    let zmax = bb["max"][2].as_f64().unwrap_or(f64::NAN);
+    let do_mm = 2.652 * 25.4 / 2.0;
+    assert!((rmax - do_mm).abs() < 0.15, "outside radius {rmax} vs guide {do_mm}: {bb}");
+    assert!((zmax - width).abs() < 0.05, "tooth thickness {zmax} vs {width}: {bb}");
+
+    let mut n41 = Session::default();
+    let r = play_example(
+        &mut n41,
+        "gear_generator.rhai",
+        json!({"params": {"kind": "sprocket", "chain": "41", "teeth": 12, "bore": 10, "hub": "none", "edge_chamfer": "no"}}),
+    );
+    assert_eq!(r["ran"], true, "#41: {r}");
+    assert!(volume(&mut n41) < sv, "#41 is thinner than #40");
+
+    let mut chamfered = Session::default();
+    let r = play_example(
+        &mut chamfered,
+        "gear_generator.rhai",
+        json!({"params": {"kind": "sprocket", "chain": "40", "teeth": 9, "bore": 10, "hub": "none", "edge_chamfer": "yes"}}),
+    );
+    assert_eq!(r["ran"], true, "edge chamfer: {r}");
+    let cv = volume(&mut chamfered);
+    let mut plain = Session::default();
+    play_example(
+        &mut plain,
+        "gear_generator.rhai",
+        json!({"params": {"kind": "sprocket", "chain": "40", "teeth": 9, "bore": 10, "hub": "none", "edge_chamfer": "no"}}),
+    );
+    assert!(cv < volume(&mut plain), "edge chamfer removes tip material: {cv}");
+    assert_eq!(run(&mut chamfered, "inspect.measure", json!({}))["body_count"], 1);
+    let mut too_few = Session::default();
+    let few = error(
+        &mut too_few,
+        "macro.play",
+        json!({
+            "source": std::fs::read_to_string(format!("{}/gear_generator.rhai", examples_dir())).unwrap(),
+            "params": {"kind": "sprocket", "chain": "40", "teeth": 8, "bore": 10, "hub": "none"}
+        }),
+    );
+    assert!(few.contains("9 teeth"), "{few}");
 
     let mut boss = Session::default();
     let r = play_example(
