@@ -574,6 +574,10 @@ fn file_menu(app: &mut SolveApp, ctx: &egui::Context) {
                     crate::dialogs_save_mesh::start_with_format(app, "3mf");
                     close = true;
                 }
+                if item_if(ui, "Send to Slicer", "", "mesh_export", shown && crate::dialogs_save_mesh::available(app)) {
+                    app.start("file.send_to_slicer");
+                    close = true;
+                }
                 if item_if(ui, "Export STEP…", "", "export", shown) {
                     export(app, "step");
                     close = true;
@@ -1545,6 +1549,8 @@ fn ribbon_tooltip(app: &SolveApp, response: egui::Response, command: &solidcraft
         let description = match command.id {
             "render.scene" => Some(app.tr("render.preview_help")),
             "render.start" => Some(app.tr("render.image_help")),
+            // Sending again replaces the file the slicer has open.
+            "file.send_to_slicer" => Some(app.tr("ui.slicer_resend_hint")),
             _ => None,
         };
         if let Some(description) = description {
