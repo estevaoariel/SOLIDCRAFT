@@ -1487,6 +1487,10 @@ impl SolveApp {
         self.collect_screenshots(ctx);
         self.issue_screenshots(ctx);
         if self.issue_report.draft.is_none() && self.file_picker.is_none() {
+            // Completion owns its keys before either CAD shortcuts or text editors see them.
+            if !keymap::capturing(self) {
+                expression_complete::begin_frame(ctx);
+            }
             toolbar::shortcuts(self, ctx);
         }
         recovery_ui::tick(self);
@@ -1542,7 +1546,6 @@ impl SolveApp {
 
     /// Lay out the whole window.
     pub fn ui(&mut self, ui: &mut egui::Ui) {
-        expression_complete::begin_frame(ui.ctx());
         let t0 = now_ms();
         // The first frames draw with the bundled faces while the system's CJK, Hangul and Thai
         // faces are read on a thread; the fonts are installed again once they are there.
