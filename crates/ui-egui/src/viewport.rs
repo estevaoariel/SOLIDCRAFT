@@ -100,6 +100,9 @@ pub struct ViewportState {
     hl_key: u64,
     /// Browser/timeline body feedback, independent of the camera and reference widget scale.
     hover_block: std::sync::Mutex<Option<HoverBlock>>,
+    /// Each shown body the model builds on the CPU: the block of the model scene that holds its
+    /// triangles, and the body's vertex range in it (for whole-body highlights).
+    body_tris: std::sync::Mutex<std::collections::HashMap<String, (u64, std::ops::Range<u32>)>>,
     pub nav: Option<NavMode>,
     /// The preset's navigation for the left-button drag under way (Alias: Shift+Alt), taken
     /// when the button went down, so the drag neither selects nor moves sketch geometry.
@@ -559,6 +562,9 @@ fn update_refinement(app: &mut SolveApp, ctx: &egui::Context, proj: &Proj) {
 pub(crate) struct CachedBlock {
     bytes: std::sync::Arc<crate::gpu::BlockBytes>,
     meshes: Vec<std::sync::Arc<solidcraft_engine::geom::Mesh>>,
+    /// Each body's triangles in `bytes.tris`, by body name: whole-body highlights draw those
+    /// vertices again instead of building a copy of them on the CPU.
+    ranges: Vec<(String, std::ops::Range<u32>)>,
 }
 
 /// [`ViewportState::mesh_bounds`]: each box by the shared mesh it was measured on (held, so its
@@ -607,6 +613,8 @@ fn taken_shared_tris(mesh: &std::sync::Arc<solidcraft_engine::geom::Mesh>) -> Op
 
 /// One body as the model scene draws it.
 struct BodyDraw {
+    /// The body's name in the world state, for the highlight's lookup of its triangles.
+    name: String,
     /// Its mesh where it stands, or (with `place`) the shared mesh `place` moves there.
     mesh: std::sync::Arc<solidcraft_engine::geom::Mesh>,
     /// The move from `mesh` to where the body stands, for a body drawn as an instance.
@@ -693,16 +701,29 @@ fn push_block(
     build: impl Fn(&BodyDraw, &mut crate::gpu::BlockBytes),
 ) {
     let same = |c: &CachedBlock| c.meshes.len() == draws.len() && c.meshes.iter().zip(&draws).all(|(m, d)| std::sync::Arc::ptr_eq(m, &d.mesh));
-    let block = match kept.remove(&key).or_else(|| made.remove(&key)).filter(same) {
+    let mut block = match kept.remove(&key).or_else(|| made.remove(&key)).filter(same) {
         Some(c) => c,
         None => {
             let mut bytes = crate::gpu::BlockBytes::default();
+            let mut ranges = Vec::with_capacity(draws.len());
             for d in &draws {
+                let start = u32::try_from(bytes.tris.len() / crate::gpu::TRI_SIZE).unwrap_or(u32::MAX);
                 build(d, &mut bytes);
+                let end = u32::try_from(bytes.tris.len() / crate::gpu::TRI_SIZE).unwrap_or(u32::MAX);
+                ranges.push((d.name.clone(), start..end));
             }
-            CachedBlock { bytes: std::sync::Arc::new(bytes), meshes: draws.iter().map(|d| d.mesh.clone()).collect() }
+            CachedBlock { bytes: std::sync::Arc::new(bytes), meshes: draws.iter().map(|d| d.mesh.clone()).collect(), ranges }
         }
     };
+    // The body names are not part of a block's key (its bytes are the same whatever a body is
+    // called): keep the ranges' names those of the bodies drawn from them this time.
+    if block.ranges.len() == draws.len() {
+        for (range, d) in block.ranges.iter_mut().zip(&draws) {
+            if range.0 != d.name {
+                range.0.clone_from(&d.name);
+            }
+        }
+    }
     // See-through triangles are sorted with the rest of the glass, every view.
     sc.glass.extend_from_slice(&block.bytes.glass);
     sc.blocks.push(crate::gpu::SceneBlock { key, bytes: block.bytes.clone() });
@@ -864,9 +885,10 @@ pub(crate) fn build_scene(app: &SolveApp) -> GpuScene {
             crate::gpu::InstanceLook::Opaque => 255,
         };
         let instanced = (!on_gpu && face_looks.is_empty()).then(|| instances.place(b, [col[0], col[1], col[2], alpha], look)).flatten();
+        let name = b.name.clone();
         let body = match instanced {
-            Some((mesh, place)) => BodyDraw { mesh, place: Some(place), col, faded, opacity, face_looks, on_gpu: true },
-            None => BodyDraw { mesh: drawn_mesh(app, b), place: None, col, faded, opacity, face_looks, on_gpu },
+            Some((mesh, place)) => BodyDraw { name, mesh, place: Some(place), col, faded, opacity, face_looks, on_gpu: true },
+            None => BodyDraw { name, mesh: drawn_mesh(app, b), place: None, col, faded, opacity, face_looks, on_gpu },
         };
         let key = body.key(shaded, edges, hidden_edges, edge_col, hidden_col);
         key.hash(&mut run_key);
@@ -881,6 +903,19 @@ pub(crate) fn build_scene(app: &SolveApp) -> GpuScene {
     }
     if !run.is_empty() {
         push_block(&mut sc, &mut kept, &mut made, run_key.finish(), run, |d, out| d.build(out, shaded, edges, hidden_edges, edge_col, hidden_col));
+    }
+    // Where each CPU-built body's triangles are in the model's blocks, for whole-body
+    // highlights (see `highlight_block_tris`).
+    let mut body_tris = std::collections::HashMap::new();
+    for (key, c) in &made {
+        for (name, tris) in &c.ranges {
+            if !tris.is_empty() {
+                body_tris.insert(name.clone(), (*key, tris.clone()));
+            }
+        }
+    }
+    if let Ok(mut m) = app.viewport.body_tris.lock() {
+        *m = body_tris;
     }
     if let Ok(mut b) = app.viewport.blocks.lock() {
         *b = made;
@@ -2137,8 +2172,15 @@ fn highlight_geometry_key(app: &SolveApp) -> u64 {
     hover_drawn(&app.viewport.hover).hash(&mut h);
     app.viewport.hover_feature.hash(&mut h);
     app.viewport.hover_bodies.hash(&mut h);
-    // Which mesh lights a face follows how the model draws its body (see `shown_mesh`).
+    // Which mesh lights a face follows how the model draws its body (see `shown_mesh`), and at
+    // which display quality its plan and edges are made.
+    solidcraft_engine::doc::display_quality::current().hash(&mut h);
     lod_generation(app).hash(&mut h);
+    // Whole-body highlights redraw the model scene's own blocks: they must be the scene's
+    // current ones (their keys and the bodies' ranges in them).
+    scene_key(app).hash(&mut h);
+    // And the mode the model draws bodies in: from their plans on the GPU, or built here.
+    app.viewport.gpu.is_some_and(|g| g.tess).hash(&mut h);
     app.session.active_component.hash(&mut h);
     app.session.active_occurrence_path.hash(&mut h);
     app.ui.visual_style.hash(&mut h);
@@ -2173,15 +2215,125 @@ fn highlight_key(app: &SolveApp) -> u64 {
     h.finish()
 }
 
+#[derive(Clone)]
 struct HoverBlock {
     key: u64,
     state: std::sync::Arc<solidcraft_engine::doc::ModelState>,
     doc: std::sync::Arc<solidcraft_engine::doc::Document>,
     block: crate::gpu::SceneBlock,
+    /// Whole bodies the model draws from their plans: reused like the block when the camera
+    /// moves (they are the model's own evaluated triangles, not a copy of them).
+    hover_planned: Vec<std::sync::Arc<solidcraft_engine::geom::tess::TessPlan>>,
+    selected_planned: Vec<std::sync::Arc<solidcraft_engine::geom::tess::TessPlan>>,
+    /// CPU-built bodies: their triangles in the model scene's blocks, reused the same way.
+    hover_blocks: Vec<crate::gpu::BlockTris>,
+    selected_blocks: Vec<crate::gpu::BlockTris>,
+    /// Bodies the model draws as placements of shared triangles: the same placements with the
+    /// highlight colour.
+    hover_instanced: Vec<crate::gpu::InstancedMesh>,
+    selected_instanced: Vec<crate::gpu::InstancedMesh>,
+}
+
+/// The plan the model draws a whole highlighted body from, when it draws one on the GPU. The
+/// highlight then redraws those evaluated triangles in the highlight colour instead of building
+/// a copy of every triangle on the CPU: lighting a whole assembly's faces that way took seconds
+/// (every triangle of every body, again), while the model already had them all on the GPU.
+fn highlight_plan(
+    app: &SolveApp,
+    b: &solidcraft_engine::doc::ModelBody,
+    active_bodies: &Option<Vec<String>>,
+) -> Option<std::sync::Arc<solidcraft_engine::geom::tess::TessPlan>> {
+    drawn_plan(app, b, highlight_opaque(app, b, active_bodies))
+}
+
+/// Whether the model draws a whole body opaque on the GPU, rather than building it on the CPU:
+/// a live preview stands in for none, faded and see-through bodies stay on the CPU, and face
+/// opacities matter only where faces are shaded.
+fn highlight_opaque(app: &SolveApp, b: &solidcraft_engine::doc::ModelBody, active_bodies: &Option<Vec<String>>) -> bool {
+    if app.preview.effective_replaced().contains(&b.name) {
+        return false;
+    }
+    let doc = &app.session.doc;
+    let faces_opaque = app.ui.visual_style == 2 || doc.face_colors(b).iter().all(|(_, l)| l.opacity >= 0.999);
+    !body_faded(app, b, active_bodies) && doc.model_body_opacity(b) >= 0.999 && faces_opaque
+}
+
+/// Whole highlighted bodies the model draws as placements of shared triangles, collected as one
+/// [`InstancedMesh`] per mesh (a placement and its colour each): the model scene already holds
+/// the shared vertices, so a whole assembly under the pointer draws them again, not a copy.
+#[derive(Default)]
+struct HighlightInstances {
+    meshes: Vec<crate::gpu::InstancedMesh>,
+    /// The index in `meshes` of each mesh, by its address.
+    by_mesh: std::collections::HashMap<usize, usize>,
+}
+
+impl HighlightInstances {
+    /// Add the body at `color`, when the model draws it as an instanced placement of an opaque
+    /// shared mesh; `false` when it does not (the caller builds its feedback on the CPU).
+    fn add(&mut self, app: &SolveApp, b: &solidcraft_engine::doc::ModelBody, active_bodies: &Option<Vec<String>>, color: [u8; 4]) -> bool {
+        // A body with face appearances of its own is built on the CPU, never as an instance.
+        if !highlight_opaque(app, b, active_bodies) || !app.session.doc.face_colors(b).is_empty() {
+            return false;
+        }
+        let Some((mesh, m)) = shared_mesh(app, b) else { return false };
+        let key = std::sync::Arc::as_ptr(&mesh) as usize;
+        let at = match self.by_mesh.get(&key) {
+            Some(i) => *i,
+            None => {
+                // The model scene's shared triangles (made ahead, or with its own instances).
+                let tris = app
+                    .viewport
+                    .instanced_tris
+                    .lock()
+                    .ok()
+                    .and_then(|c| c.get(&key).filter(|(held, _)| std::sync::Arc::ptr_eq(held, &mesh)).map(|(_, t)| t.clone()))
+                    .or_else(|| taken_shared_tris(&mesh));
+                let Some(tris) = tris else { return false };
+                self.meshes.push(crate::gpu::InstancedMesh {
+                    key: key as u64,
+                    tris,
+                    instances: Vec::new(),
+                    look: crate::gpu::InstanceLook::Opaque,
+                    levels: Vec::new(),
+                });
+                self.by_mesh.insert(key, self.meshes.len() - 1);
+                self.meshes.len() - 1
+            }
+        };
+        let rows = [0, 1, 2].map(|r| [m[0][r] as f32, m[1][r] as f32, m[2][r] as f32, m[3][r] as f32]);
+        match self.meshes.get_mut(at) {
+            Some(inst) => {
+                inst.place(rows, color);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// The meshes with their placements (none when nothing was added).
+    fn finish(self) -> Vec<crate::gpu::InstancedMesh> {
+        self.meshes
+    }
+}
+
+/// The model scene's triangles for a whole highlighted body it builds on the CPU (no display
+/// plan): the block holding them and the body's vertex range in it. Drawing those again tinted
+/// costs no CPU work, where copying every triangle did (a whole assembly hovered at once stalled
+/// the window). See-through and faded bodies have no range here: they are not in the block's
+/// opaque triangles, and the CPU feedback colours them.
+fn highlight_block_tris(app: &SolveApp, b: &solidcraft_engine::doc::ModelBody) -> Option<crate::gpu::BlockTris> {
+    if app.preview.effective_replaced().contains(&b.name) {
+        return None;
+    }
+    let map = app.viewport.body_tris.lock().ok()?;
+    let (block, tris) = map.get(&b.name)?;
+    Some(crate::gpu::BlockTris { block: *block, tris: tris.clone() })
 }
 
 /// The highlight scene: origin widget, construction planes, selection and hover.
 pub(crate) fn build_highlight(app: &SolveApp) -> GpuScene {
+    let began = crate::now_ms();
     let t = Tokens::get();
     let mut sc = GpuScene::default();
     let st = crate::open_meshing::shown_world(app);
@@ -2262,17 +2414,22 @@ pub(crate) fn build_highlight(app: &SolveApp) -> GpuScene {
         || matches!(hover, Some(Hit::Profile { .. }));
     let key = highlight_geometry_key(app);
     if !projected
-        && let Some(block) = app.viewport.hover_block.lock().ok().and_then(|cache| {
-            cache
-                .as_ref()
-                .filter(|c| c.key == key && std::sync::Arc::ptr_eq(&c.state, &st) && std::sync::Arc::ptr_eq(&c.doc, &s.doc))
-                .map(|c| c.block.clone())
+        && let Some(cached) = app.viewport.hover_block.lock().ok().and_then(|cache| {
+            cache.as_ref().filter(|c| c.key == key && std::sync::Arc::ptr_eq(&c.state, &st) && std::sync::Arc::ptr_eq(&c.doc, &s.doc)).cloned()
         })
     {
-        sc.blocks.push(block);
+        sc.blocks.push(cached.block);
+        sc.hover_planned = cached.hover_planned;
+        sc.selected_planned = cached.selected_planned;
+        sc.hover_blocks = cached.hover_blocks;
+        sc.selected_blocks = cached.selected_blocks;
+        sc.hover_instanced = cached.hover_instanced;
+        sc.selected_instanced = cached.selected_instanced;
         return sc;
     }
     let mut feedback = GpuScene::default();
+    let mut hover_instances = HighlightInstances::default();
+    let mut selected_instances = HighlightInstances::default();
     // Selected things.
     for x in &sel {
         match x {
@@ -2287,9 +2444,15 @@ pub(crate) fn build_highlight(app: &SolveApp) -> GpuScene {
                 if let Some(b) = st.body(name)
                     && app.session.body_visible(name)
                 {
-                    let m = shown(b);
-                    let count = b.body.face_count();
-                    mesh_tris(&mut feedback, &m, c4(t.body_selected), true, |f| (f as usize) < count);
+                    if let Some(plan) = highlight_plan(app, b, &active_bodies) {
+                        feedback.selected_planned.push(plan);
+                    } else if let Some(tris) = highlight_block_tris(app, b) {
+                        feedback.selected_blocks.push(tris);
+                    } else if !selected_instances.add(app, b, &active_bodies, c4(t.body_selected)) {
+                        let m = shown(b);
+                        let count = b.body.face_count();
+                        mesh_tris(&mut feedback, &m, c4(t.body_selected), true, |f| (f as usize) < count);
+                    }
                 }
             }
             Sel::Edge { body, index, point } => {
@@ -2341,44 +2504,55 @@ pub(crate) fn build_highlight(app: &SolveApp) -> GpuScene {
     // Timeline modifiers light only their resulting faces; browser rows light whole bodies.
     let mut hovered = app.viewport.hover_feature.map(|id| feature_geometry(app, id)).unwrap_or_default();
     hovered.extend(app.viewport.hover_bodies.iter().map(|name| Sel::Body { name: name.clone() }));
+    // By name, once: a whole assembly holds thousands of bodies, and scanning the list for
+    // each of them is quadratic (as is a body lookup by name in the world).
+    let hovered_whole: std::collections::HashSet<&str> =
+        hovered.iter().filter_map(|x| if let Sel::Body { name } = x { Some(name.as_str()) } else { None }).collect();
+    let selected_whole: std::collections::HashSet<&str> =
+        sel.iter().filter_map(|x| if let Sel::Body { name } = x { Some(name.as_str()) } else { None }).collect();
+    let mut hovered_faces: std::collections::HashMap<&str, Vec<usize>> = std::collections::HashMap::new();
+    let mut selected_faces: std::collections::HashMap<&str, std::collections::HashSet<usize>> = std::collections::HashMap::new();
+    for x in &hovered {
+        if let Sel::Face { body, index, .. } = x {
+            hovered_faces.entry(body.as_str()).or_default().push(*index);
+        }
+    }
+    for x in &sel {
+        if let Sel::Face { body, index, .. } = x {
+            selected_faces.entry(body.as_str()).or_default().insert(*index);
+        }
+    }
     for b in st.bodies.iter().filter(|b| app.session.body_visible(&b.name) && !app.preview.effective_replaced().contains(&b.name)) {
-        let whole = hovered.iter().any(|x| matches!(x, Sel::Body { name } if name == &b.name));
-        let faces: Vec<_> = if whole {
-            (0..b.body.face_count()).collect()
-        } else {
-            hovered
-                .iter()
-                .filter_map(|x| match x {
-                    Sel::Face { body, index, .. } if body == &b.name => Some(*index),
-                    _ => None,
-                })
-                .collect()
-        };
+        let whole = hovered_whole.contains(b.name.as_str());
+        let faces: Vec<usize> =
+            if whole { (0..b.body.face_count()).collect() } else { hovered_faces.get(b.name.as_str()).cloned().unwrap_or_default() };
         if faces.is_empty() {
             continue;
         }
-        let k = t.hover_face_lift;
-        let c = body_rgb(app, &b.name);
         let m = drawn_mesh(app, b);
-        let lit = shown(b);
-        let selected_body = sel.iter().any(|x| matches!(x, Sel::Body { name } if name == &b.name));
+        let base = body_color(&s.doc, b).unwrap_or(t.body);
+        let k = t.hover_face_lift;
+        let hover_col = [base.r().saturating_add(k), base.g().saturating_add(k), base.b().saturating_add(k), 255];
+        let selected_body = selected_whole.contains(b.name.as_str());
         if !selected_body {
-            let selected_faces: std::collections::HashSet<usize> = sel
-                .iter()
-                .filter_map(|x| {
-                    if let Sel::Face { body, index, .. } = x
-                        && body == &b.name
-                    {
-                        Some(*index)
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            let hovered_faces: std::collections::HashSet<usize> = faces.iter().copied().collect();
-            mesh_tris(&mut feedback, &lit, [c.0.saturating_add(k), c.1.saturating_add(k), c.2.saturating_add(k), 255], true, |f| {
-                hovered_faces.contains(&(f as usize)) && !selected_faces.contains(&(f as usize))
-            });
+            // A whole body the model draws from a plan is lit by redrawing the plan's own
+            // evaluated triangles, not by building every triangle again (see `highlight_plan`).
+            if whole && let Some(plan) = highlight_plan(app, b, &active_bodies) {
+                feedback.hover_planned.push(plan);
+            } else if whole && let Some(tris) = highlight_block_tris(app, b) {
+                feedback.hover_blocks.push(tris);
+            } else if whole && hover_instances.add(app, b, &active_bodies, hover_col) {
+                // Its placements carry the highlight colour.
+            } else {
+                let lit = shown(b);
+                let selected_faces = selected_faces.get(b.name.as_str());
+                let hovered_faces: std::collections::HashSet<usize> = faces.iter().copied().collect();
+                let keeps = |f: u32| {
+                    let f = f as usize;
+                    hovered_faces.contains(&f) && selected_faces.is_none_or(|s| !s.contains(&f))
+                };
+                mesh_tris(&mut feedback, &lit, hover_col, true, keeps);
+            }
         }
         for (ei, e) in m.edges.iter().enumerate() {
             if m.edge_pickable(ei) && (whole || m.edge_faces.get(ei).is_some_and(|fs| fs.iter().any(|f| faces.contains(&(*f as usize))))) {
@@ -2392,12 +2566,17 @@ pub(crate) fn build_highlight(app: &SolveApp) -> GpuScene {
         Some(Hit::Face { body, .. }) if app.ui.pick_bodies && app.dialog.is_none() && app.tool.is_none() => {
             if let Some(b) = st.body(body) {
                 let k = t.hover_face_lift;
-                let c = body_rgb(app, body);
-                let m = shown(b);
-                let count = b.body.face_count();
-                mesh_tris(&mut feedback, &m, [c.0.saturating_add(k), c.1.saturating_add(k), c.2.saturating_add(k), 255], true, |f| {
-                    (f as usize) < count
-                });
+                let c = body_color(&s.doc, b).unwrap_or(t.body);
+                let hover_col = [c.r().saturating_add(k), c.g().saturating_add(k), c.b().saturating_add(k), 255];
+                if let Some(plan) = highlight_plan(app, b, &active_bodies) {
+                    feedback.hover_planned.push(plan);
+                } else if let Some(tris) = highlight_block_tris(app, b) {
+                    feedback.hover_blocks.push(tris);
+                } else if !hover_instances.add(app, b, &active_bodies, hover_col) {
+                    let m = shown(b);
+                    let count = b.body.face_count();
+                    mesh_tris(&mut feedback, &m, hover_col, true, |f| (f as usize) < count);
+                }
             }
         }
         Some(Hit::Face { body, index, .. })
@@ -2441,12 +2620,20 @@ pub(crate) fn build_highlight(app: &SolveApp) -> GpuScene {
         }
         _ => {}
     }
+    feedback.hover_instanced = hover_instances.finish();
+    feedback.selected_instanced = selected_instances.finish();
     if projected {
         sc.tris.append(&mut feedback.tris);
         sc.trans.append(&mut feedback.trans);
         sc.lines.append(&mut feedback.lines);
         sc.hidden.append(&mut feedback.hidden);
         sc.overlay.append(&mut feedback.overlay);
+        sc.hover_planned.append(&mut feedback.hover_planned);
+        sc.selected_planned.append(&mut feedback.selected_planned);
+        sc.hover_blocks.append(&mut feedback.hover_blocks);
+        sc.selected_blocks.append(&mut feedback.selected_blocks);
+        sc.hover_instanced.append(&mut feedback.hover_instanced);
+        sc.selected_instanced.append(&mut feedback.selected_instanced);
     } else {
         let block = crate::gpu::SceneBlock {
             key,
@@ -2457,12 +2644,49 @@ pub(crate) fn build_highlight(app: &SolveApp) -> GpuScene {
                 ..Default::default()
             }),
         };
+        let (hover_planned, selected_planned) = (feedback.hover_planned, feedback.selected_planned);
+        let (hover_blocks, selected_blocks) = (feedback.hover_blocks, feedback.selected_blocks);
+        let (hover_instanced, selected_instanced) = (feedback.hover_instanced, feedback.selected_instanced);
         if let Ok(mut cache) = app.viewport.hover_block.lock() {
-            *cache = Some(HoverBlock { key, state: st.clone(), doc: s.doc.clone(), block: block.clone() });
+            *cache = Some(HoverBlock {
+                key,
+                state: st.clone(),
+                doc: s.doc.clone(),
+                block: block.clone(),
+                hover_planned: hover_planned.clone(),
+                selected_planned: selected_planned.clone(),
+                hover_blocks: hover_blocks.clone(),
+                selected_blocks: selected_blocks.clone(),
+                hover_instanced: hover_instanced.clone(),
+                selected_instanced: selected_instanced.clone(),
+            });
         }
         sc.blocks.push(block);
+        sc.hover_planned = hover_planned;
+        sc.selected_planned = selected_planned;
+        sc.hover_blocks = hover_blocks;
+        sc.selected_blocks = selected_blocks;
+        sc.hover_instanced = hover_instanced;
+        sc.selected_instanced = selected_instanced;
     }
 
+    if solidcraft_engine::geom::env::var_os("PROFILE_FRAMES").is_some() {
+        let in_blocks = |f: fn(&crate::gpu::SceneBlock) -> usize| sc.blocks.iter().map(f).sum::<usize>();
+        let tris = sc.tris.len() + in_blocks(|b| b.bytes.tris.len());
+        let lines = sc.lines.len() + in_blocks(|b| b.bytes.lines.len());
+        let hidden = sc.hidden.len() + in_blocks(|b| b.bytes.hidden.len());
+        eprintln!(
+            "SolidCraft highlight: {:.0} ms, hovered {} bodies, planned {} hover + {} selected, blocks {} hover + {} selected, instanced {} hover + {} selected, CPU triangles {tris} B, lines {lines} B, hidden {hidden} B",
+            crate::now_ms() - began,
+            hovered.len(),
+            sc.hover_planned.len(),
+            sc.selected_planned.len(),
+            sc.hover_blocks.len(),
+            sc.selected_blocks.len(),
+            sc.hover_instanced.len(),
+            sc.selected_instanced.len(),
+        );
+    }
     sc
 }
 
@@ -2689,6 +2913,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             }
             app.viewport.hl_key = hk;
         }
+        crate::frame_watch::step(app, "highlight scene");
         let ppp = ui.ctx().pixels_per_point();
         let size_px = [rect.width() * ppp, rect.height() * ppp];
         let ssaa = supersampling(app, ui.ctx(), proj.vp.to_f32(), size_px);
@@ -2722,6 +2947,13 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             eye: {
                 let e = proj.cam.eye().to_f32();
                 [e[0], e[1], e[2], if proj.cam.fov > 0.0 { 1.0 } else { 0.0 }]
+            },
+            // Whole-body highlights redraw the model's own plan triangles: the hover lifts each
+            // body's colour the same amount `mesh_tris` used to, and a selection replaces it.
+            hover_tint: [f32::from(t.hover_face_lift) / 255.0; 3],
+            selection_tint: {
+                let c = t.body_selected;
+                [f32::from(c.r()) / 255.0, f32::from(c.g()) / 255.0, f32::from(c.b()) / 255.0]
             },
         });
         painter.add(egui_wgpu::Callback::new_paint_callback(rect, cb));
@@ -5038,6 +5270,8 @@ mod tests {
                     eye: [e[0], e[1], e[2], if proj.cam.fov > 0.0 { 1.0 } else { 0.0 }],
                     ao_radius: 0.0,
                     ssaa: 1.0,
+                    hover_tint: [0.0; 3],
+                    selection_tint: [0.0; 3],
                 };
                 let t0 = std::time::Instant::now();
                 let mut encoder = device.create_command_encoder(&Default::default());
@@ -6208,6 +6442,68 @@ mod tests {
             app.session.selection = selected;
             assert_eq!(build_highlight(&app).merged().tris.len(), expected, "whole-body feedback must neither omit nor duplicate selected faces");
         }
+    }
+
+    /// A whole highlighted body is lit from the model's own triangles, not by copying every one
+    /// of them onto the CPU (a whole assembly lit that way took most of a second a frame): from
+    /// its display plan where the model draws one, else from its vertices in the model scene's
+    /// blocks. See-through bodies keep the CPU feedback, which colours them.
+    #[test]
+    fn whole_body_highlights_reuse_the_models_own_triangles() {
+        let mut app = cylinder_app();
+        app.viewport.gpu = Some(GpuTarget { format: egui_wgpu::wgpu::TextureFormat::Rgba8Unorm, depth: None, samples: 1, tess: true });
+        let body = app.session.world_state().bodies[0].clone();
+        let plan = body.display_plan().expect("the test body is drawn from a plan");
+        app.viewport.hover_bodies = vec![body.name.clone()];
+        let hovered = build_highlight(&app);
+        assert_eq!(hovered.hover_planned.len(), 1, "the whole hovered body is lit from its plan");
+        assert!(std::sync::Arc::ptr_eq(&hovered.hover_planned[0], &plan));
+        assert_eq!(hovered.tris.len(), 0);
+        assert!(hovered.blocks.iter().all(|b| b.bytes.tris.is_empty()), "no copy of the body's triangles");
+        app.viewport.hover_bodies.clear();
+        app.session.selection = vec![Sel::Body { name: body.name.clone() }];
+        let selected = build_highlight(&app);
+        assert_eq!(selected.selected_planned.len(), 1, "a selected whole body is lit from its plan too");
+        assert_eq!(selected.tris.len(), 0);
+        assert!(selected.blocks.iter().all(|b| b.bytes.tris.is_empty()));
+        // A body the model builds on the CPU (here: no GPU plans) is lit from its own vertices
+        // in the model scene's blocks.
+        app.session.selection.clear();
+        app.viewport.hover_bodies.clear();
+        app.viewport.gpu = None;
+        build_scene(&app);
+        app.viewport.hover_bodies = vec![body.name.clone()];
+        let built = build_highlight(&app);
+        assert!(built.hover_planned.is_empty());
+        assert_eq!(built.hover_blocks.len(), 1, "a CPU-built body is lit from the model's block");
+        assert_eq!(built.tris.len(), 0);
+        assert!(built.blocks.iter().all(|b| b.bytes.tris.is_empty()), "no copy of the body's triangles");
+        // Two occurrences of one component are drawn as placements of its shared triangles: the
+        // highlight draws those placements again, in its colour.
+        let mut s = solidcraft_engine::Session::default();
+        s.execute("solid.cylinder", &json!({"radius": 10, "height": 20, "body_name": "Sleeve"})).unwrap();
+        let made = s.execute("component.from_bodies", &json!({"bodies": ["Sleeve"]})).unwrap();
+        let part = made["components"][0]["component"].as_u64().unwrap();
+        s.execute("occurrence.copy", &json!({"component": part, "translate": [40, 0, 0]})).unwrap();
+        let mut assembly = SolveApp::new(s, crate::Services::default());
+        assembly.ui.show_origin = false;
+        let names: Vec<String> = assembly.session.world_state().bodies.iter().map(|b| b.name.clone()).collect();
+        assert_eq!(names.len(), 2, "two placements of the part");
+        build_scene(&assembly);
+        assembly.viewport.hover_bodies = names;
+        let instanced = build_highlight(&assembly);
+        assert_eq!(instanced.hover_instanced.len(), 1, "the part's one shared mesh");
+        assert_eq!(instanced.hover_instanced[0].count(), 2, "both of its placements");
+        assert_eq!(instanced.tris.len(), 0);
+        assert!(instanced.blocks.iter().all(|b| b.bytes.tris.is_empty()), "no copy of the placements");
+        // A see-through body is not in the block's opaque triangles: its feedback is built here.
+        app.viewport.hover_bodies.clear();
+        app.run("appearance.assign", json!({"bodies": [body.name.clone()], "color": [200, 200, 200], "opacity": 0.5})).unwrap();
+        build_scene(&app);
+        app.viewport.hover_bodies = vec![body.name.clone()];
+        let see_through = build_highlight(&app);
+        assert!(see_through.hover_planned.is_empty(), "a see-through body is not drawn from a plan");
+        assert!(!see_through.merged().tris.is_empty(), "its highlight is still lit");
     }
 
     #[test]
