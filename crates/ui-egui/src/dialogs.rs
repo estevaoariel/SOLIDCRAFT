@@ -2430,7 +2430,11 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     if let Some(field) = crate::ui_kit::canvas_value_focus(ctx) {
         value_fields.push(field);
     }
-    if std::mem::take(&mut d.restore_value_focus) {
+    // The editor loses the keyboard while the click is still being handled, possibly in a later
+    // pass of the same frame, so give it back once the pointer is idle again.
+    let pointer_busy = ctx.input(|i| i.pointer.any_down() || i.pointer.any_pressed() || i.pointer.any_released());
+    if d.restore_value_focus && !pointer_busy {
+        d.restore_value_focus = false;
         let target = value_fields.iter().find(|(id, _)| Some(*id) == d.value_focus).or_else(|| value_fields.first());
         if let Some(&(id, length)) = target {
             d.focus = false;
@@ -2443,7 +2447,11 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             }
         }
     }
-    d.value_focus = ctx.memory(|memory| memory.focused()).filter(|id| value_fields.iter().any(|(field, _)| field == id));
+    if d.restore_value_focus {
+        ctx.request_repaint();
+    } else {
+        d.value_focus = ctx.memory(|memory| memory.focused()).filter(|id| value_fields.iter().any(|(field, _)| field == id));
+    }
     // Keyboard: Enter applies (from a value field, or with nothing focused), Esc cancels.
     let (enter_free, esc) = ctx.input(|i| (i.key_pressed(egui::Key::Enter), i.key_pressed(egui::Key::Escape)));
     let nothing_focused = ctx.memory(|m| m.focused().is_none());
