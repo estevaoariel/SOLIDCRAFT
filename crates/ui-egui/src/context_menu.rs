@@ -1082,10 +1082,7 @@ pub fn run_item(app: &mut SolveApp, item: &Item, at: Pos2) {
         }
         "ui.findBrowser" => {
             if let Some(b) = p.get("body").and_then(Value::as_str) {
-                app.ui.show_browser = true;
-                app.preferences.timeline_left_browser_collapsed = false;
-                app.tree.reveal_feature = None;
-                app.tree.reveal = Some(b.to_string());
+                crate::browser::reveal_body(app, b);
                 let _ = app.run("select.set", json!({"items": [{"type": "body", "name": b}]}));
             }
         }

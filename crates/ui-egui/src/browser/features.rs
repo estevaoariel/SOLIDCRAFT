@@ -241,6 +241,55 @@ mod tests {
         }
     }
 
+    fn find_in_browser(app: &mut SolveApp, pick: Sel) {
+        app.session.selection = vec![pick];
+        let item = crate::context_menu::items(app, &Target::Viewport).into_iter().find(|item| item.id == "ui.findBrowser").unwrap();
+        crate::context_menu::run_item(app, &item, pos2(0.0, 0.0));
+    }
+
+    fn face(body: &str) -> Sel {
+        Sel::Face { body: body.into(), index: 0, point: solidcraft_engine::geom::Vec3::ZERO }
+    }
+
+    #[test]
+    fn browser_find_opens_the_collapsed_rows_above_the_body() {
+        let mut h = Harness::new();
+        h.app.run("solid.box", json!({"length":10,"width":10,"height":10,"body_name":"Plate"})).unwrap();
+        let group = h.app.run("browser.group", json!({"component":0,"folder":"bodies","items":["Plate"]})).unwrap()["group"].as_u64().unwrap();
+        for key in ["c0".to_string(), "c0/bodies".to_string(), format!("c0/g{group}")] {
+            h.app.tree.collapsed.insert(key);
+        }
+        h.frames(2);
+        assert!(!drawn_rows().iter().any(|(label, ..)| label == "Plate"), "the body starts hidden");
+        find_in_browser(&mut h.app, face("Plate"));
+        h.frames(2);
+        assert!(drawn_rows().iter().any(|(label, ..)| label == "Plate"), "{:?}", drawn_rows());
+        assert!(h.app.tree.reveal.is_none(), "the body row was drawn and scrolled to");
+        assert_eq!(h.app.session.selection, [Sel::Body { name: "Plate".into() }]);
+    }
+
+    #[test]
+    fn browser_find_reveals_a_body_in_a_later_placement() {
+        let mut h = Harness::new();
+        let assembly = h.app.run("component.create", json!({"name":"Assembly"})).unwrap();
+        let component = h.app.run("component.create", json!({"name":"Part"})).unwrap();
+        h.app.run("solid.box", json!({"length":40,"width":30,"height":20,"body_name":"Plate"})).unwrap();
+        let copy = h.app.run("occurrence.copy", json!({"occurrence":assembly["occurrence"],"translate":[70,25,10]})).unwrap();
+        let path = vec![copy["occurrence"].as_u64().unwrap(), component["occurrence"].as_u64().unwrap()];
+        h.app.run("component.activate", json!({"component":0})).unwrap();
+        let world_body = h.app.session.occurrence_bodies(&path, false).unwrap()[0].clone();
+        assert_ne!(world_body, "Plate", "a later placement's body has its own world name");
+        h.app.tree.collapsed.insert("c0".into());
+        for depth in 1..=path.len() {
+            h.app.tree.collapsed.insert(occurrence_key(&path[..depth]));
+        }
+        h.app.tree.collapsed.insert(format!("{}/bodies", occurrence_key(&path)));
+        find_in_browser(&mut h.app, face(&world_body));
+        h.frames(2);
+        assert!(h.app.tree.reveal.is_none(), "the placed body row was drawn and scrolled to");
+        assert_eq!(h.app.session.selection, [Sel::Body { name: world_body }]);
+    }
+
     #[test]
     fn browser_feature_imported_source_ids_never_reveal_an_unrelated_native_feature() {
         struct Source(std::path::PathBuf);
