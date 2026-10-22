@@ -103,29 +103,13 @@ pub struct Offer {
 /// - It draws nothing and creates no layer: the toast is the shared one. It never touches
 ///   `ctx.memory`, focus, layer order, keyboard events, dialogs, tools, the selection or the document.
 pub fn due(app: &mut SolveApp, ctx: &egui::Context) -> Option<Offer> {
-    let calibrated = app.space_mouse.device.as_ref().is_some_and(|device| app.preferences.space_mouse_calibrations.contains_key(device));
-    let device = app.space_mouse.device.clone().filter(|device| {
-        should_offer(
-            Some(device),
-            calibrated,
-            &app.preferences.space_mouse_offered,
-            app.preferences.space_mouse_enabled,
-            app.preferences.space_mouse_offer_never,
-        ) && !app.space_mouse.offer_hidden.contains(device)
-    })?;
-    if !ctx.input(|i| i.focused)
-        || app.file_picker_busy()
-        || app.file_load.busy()
-        || crate::issue_report::cad_input_blocked()
-        || app.prefs_window.open
-        || app.space_mouse.calibrating.is_some()
-        || app.home.open
-    {
+    let device = offerable(app)?;
+    if input_blocked(app, ctx) {
         return None;
     }
     // Once the user is working, a status or computing toast says so: the offer goes for this run (not
     // recorded, so it can come back next start), and does not show while one is up.
-    if app.status.is_some() || app.computing_since().is_some() {
+    if status_up(app) {
         app.space_mouse.offer_hidden.insert(device);
         app.space_mouse.offer_since = None;
         return None;
@@ -160,8 +144,61 @@ pub fn keep(app: &mut SolveApp, ctx: &egui::Context, rect: egui::Rect) {
     }
 }
 
-/// The user clicked `action` on the toast of `offer`.
-pub fn act(app: &mut SolveApp, offer: &Offer, action: Action) {
+/// The device the offer is for now: the current device when it should be offered one and the offer
+/// has not been hidden for the run. No side effects.
+fn offerable(app: &SolveApp) -> Option<String> {
+    let calibrated = app.space_mouse.device.as_ref().is_some_and(|device| app.preferences.space_mouse_calibrations.contains_key(device));
+    app.space_mouse.device.clone().filter(|device| {
+        should_offer(
+            Some(device),
+            calibrated,
+            &app.preferences.space_mouse_offered,
+            app.preferences.space_mouse_enabled,
+            app.preferences.space_mouse_offer_never,
+        ) && !app.space_mouse.offer_hidden.contains(device)
+    })
+}
+
+/// Whether something else has the input or the screen: the window is in the background, a file is
+/// being picked or loaded, an issue report takes input, Preferences or the calibration window is up, or
+/// the start page is. No side effects.
+fn input_blocked(app: &SolveApp, ctx: &egui::Context) -> bool {
+    !ctx.input(|i| i.focused)
+        || app.file_picker_busy()
+        || app.file_load.busy()
+        || crate::issue_report::cad_input_blocked()
+        || app.prefs_window.open
+        || app.space_mouse.calibrating.is_some()
+        || app.home.open
+}
+
+/// A status or computing toast is up. No side effects.
+fn status_up(app: &SolveApp) -> bool {
+    app.status.is_some() || app.computing_since().is_some()
+}
+
+/// Whether `action` of `offer` may be taken now, with no side effects: the offer is still for the
+/// current device and still due (not dismissed, not hidden, navigation on), nothing blocks input, no
+/// status toast has taken its place, and the action is still on offer (Swap needs `swap_offered`).
+/// `due` and `act` both stand on the same pieces.
+pub fn eligible(app: &SolveApp, ctx: &egui::Context, offer: &Offer, action: Action) -> bool {
+    offerable(app).as_deref() == Some(offer.device.as_str())
+        && !input_blocked(app, ctx)
+        && !status_up(app)
+        && match action {
+            Action::Swap => swap_offered(&offer.device, app.space_mouse.drivers, app.preferences.space_mouse_driver),
+            Action::Calibrate | Action::Close | Action::Never => true,
+        }
+}
+
+/// The user clicked `action` on the toast of `offer`. Taken only if it is still eligible (`eligible`): a
+/// click that arrives after the device changed, after something took the input, or for an action no
+/// longer on offer does nothing, records nothing for the old device and changes neither the Never flag
+/// nor the driver setting.
+pub fn act(app: &mut SolveApp, ctx: &egui::Context, offer: &Offer, action: Action) {
+    if !eligible(app, ctx, offer, action) {
+        return;
+    }
     match action {
         Action::Calibrate | Action::Close => {
             app.space_mouse.offer_since = None;
@@ -632,6 +669,78 @@ mod preferences_tests {
         }
     }
 
+    /// `act` itself refuses a stale action: the device changed since the card was drawn, something took
+    /// the input, or the action is no longer on offer. Nothing is recorded for the old device, and neither
+    /// the Never flag nor the driver changes. (The control: with nothing stale each action does its job.)
+    #[test]
+    fn act_refuses_a_stale_action_and_changes_nothing() {
+        use crate::prefs::SpaceMouseDriver::{Automatic, Direct};
+        use crate::space_mouse_offer::{Action, act, due};
+        for action in [Action::Calibrate, Action::Close, Action::Never, Action::Swap] {
+            let fresh = || {
+                let mut h = spacenavd_harness();
+                run(&mut h, 2.0);
+                let offer = due(&mut h.app, &h.ctx).expect("due");
+                assert!(offer.actions.contains(&action), "{action:?} is on the card");
+                (h, offer)
+            };
+            // Control.
+            let (mut h, offer) = fresh();
+            act(&mut h.app, &h.ctx, &offer, action);
+            let done = match action {
+                Action::Calibrate => h.app.space_mouse.calibrating.is_some() && h.app.preferences.space_mouse_offered.contains("spacenavd"),
+                Action::Close => h.app.preferences.space_mouse_offered.contains("spacenavd"),
+                Action::Never => h.app.preferences.space_mouse_offer_never,
+                Action::Swap => h.app.preferences.space_mouse_driver == Direct && h.app.preferences.space_mouse_offered.is_empty(),
+            };
+            assert!(done, "{action:?}: the fresh action works");
+            type Stale = (&'static str, fn(&mut crate::scenario::Harness));
+            let cases: [Stale; 7] = [
+                ("the device changed", |h| h.app.space_mouse.device = Some("hid 256f:c63a".into())),
+                ("the device went", |h| h.app.space_mouse.device = None),
+                ("an issue report took the input", |_| crate::issue_report::set_cad_input_blocked_for_test(true)),
+                ("Preferences opened", |h| h.app.prefs_window.open = true),
+                ("a status toast is up", |h| h.app.status = Some(("Done".into(), crate::now_ms(), false))),
+                ("the device was dismissed elsewhere", |h| {
+                    h.app.preferences.space_mouse_offered.insert("spacenavd".into());
+                }),
+                ("the action is no longer on offer", |h| {
+                    // Swap needs spacenavd chosen; for the others the driver is irrelevant, so the offer is
+                    // taken away by Never being set elsewhere.
+                    h.app.preferences.space_mouse_driver = Automatic;
+                    h.app.preferences.space_mouse_offer_never = true;
+                }),
+            ];
+            for (what, stale) in cases {
+                let (mut h, offer) = fresh();
+                stale(&mut h);
+                let (before, calibrating, window, hidden) = (
+                    h.app.preferences.clone(),
+                    h.app.space_mouse.calibrating.is_some(),
+                    h.app.prefs_window.open,
+                    h.app.space_mouse.offer_hidden.clone(),
+                );
+                act(&mut h.app, &h.ctx, &offer, action);
+                crate::issue_report::set_cad_input_blocked_for_test(false);
+                assert_eq!(h.app.preferences, before, "{action:?}, {what}: nothing recorded or changed");
+                assert_eq!(h.app.space_mouse.calibrating.is_some(), calibrating, "{action:?}, {what}: no wizard");
+                assert_eq!(h.app.prefs_window.open, window, "{action:?}, {what}: Preferences untouched");
+                assert_eq!(h.app.space_mouse.offer_hidden, hidden, "{action:?}, {what}");
+            }
+            // Swap alone: with Automatic chosen (the device is read when it opens) it is no longer on offer, the
+            // other actions still are.
+            let (mut h, offer) = fresh();
+            h.app.preferences.space_mouse_driver = Automatic;
+            let before = h.app.preferences.clone();
+            act(&mut h.app, &h.ctx, &offer, action);
+            if action == Action::Swap {
+                assert_eq!(h.app.preferences, before, "Swap is refused once it is not on offer");
+            } else {
+                assert!(h.app.preferences != before || h.app.space_mouse.calibrating.is_some(), "{action:?} still works with Automatic chosen");
+            }
+        }
+    }
+
     /// A different device key while the offer is up gets its own offer (its own calibration key); the
     /// first one is left alone, with no record made for either.
     #[test]
@@ -756,7 +865,7 @@ mod preferences_tests {
         assert!(card_up(&h), "back once Preferences is closed, nothing was dismissed");
         assert!(h.app.preferences.space_mouse_offered.is_empty());
         let offer = crate::space_mouse_offer::due(&mut h.app, &h.ctx).expect("due");
-        crate::space_mouse_offer::act(&mut h.app, &offer, crate::space_mouse_offer::Action::Calibrate);
+        crate::space_mouse_offer::act(&mut h.app, &h.ctx, &offer, crate::space_mouse_offer::Action::Calibrate);
         let from_card = h.app.space_mouse.calibrating.as_ref().map(|(device, wizard)| (device.clone(), wizard.stage(), wizard.kind()));
         assert!(h.app.prefs_window.open);
         let mut other = spacenavd_harness();

@@ -3086,7 +3086,7 @@ fn transient_messages(app: &mut SolveApp, ui: &egui::Ui, viewport: Rect) -> Vec<
             shown.push(r);
             crate::space_mouse_offer::keep(app, ui.ctx(), r);
             if let Some(action) = clicked.and_then(|i| offer.actions.get(i)) {
-                crate::space_mouse_offer::act(app, &offer, *action);
+                crate::space_mouse_offer::act(app, ui.ctx(), &offer, *action);
             }
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
         }
