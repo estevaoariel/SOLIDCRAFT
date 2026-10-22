@@ -3,7 +3,9 @@
 //!
 //! This crate is persistence-only: it defines what is saved in the document and what the
 //! engine produces for a post-processor. It does not evaluate toolpaths, run commands, or
-//! contain any UI or companion logic.
+//! contain any UI. Feature selection is resolved by the in-process SolidCraft kernel
+//! against the design B-rep. There is no CadQuery, FreeCAD Path, or other GPL/LGPL CAM
+//! runtime in this crate.
 //!
 //! # Document integration
 //! [`ManufactureSettings`] lives in `solidcraft_doc::Document::manufacture`. It serialises only
@@ -1143,16 +1145,19 @@ fn validate_feeds(f: &Feeds, path: &str) -> Result<()> {
 // Geometric targets (model-space feature selection for CAM operations)
 // ---------------------------------------------------------------------------
 
-/// Model-space geometric targets that select features on the solid model for a CAM operation.
+/// Model-space picks that select faces or edges on the design B-rep for a CAM operation.
 ///
-/// The CAM evaluator resolves each `face_sample_points` entry to the nearest face
-/// (by face-centroid distance in model space) and rejects the operation if:
+/// The in-process SolidCraft kernel resolves each `face_sample_points` entry to the nearest
+/// face by centroid distance in model millimetres, and rejects the operation if:
 /// - the nearest face centre is more than `FACE_SELECT_TOLERANCE_MM` away, or
 /// - a second face is within `FACE_SELECT_TIE_TOLERANCE_MM` of the nearest (ambiguous).
 ///
 /// `drill_points` supplies explicit XY hole-centre coordinates for [`DrillOperation`]; the
-/// evaluator selects the nearest cylindrical face to each point.  If both are provided on a
+/// kernel selects the nearest cylindrical face to each point. If both are provided on a
 /// DrillOperation, `drill_points` takes precedence.
+///
+/// This is a SolidCraft document contract (sample points in mm). It does not name, call, or
+/// depend on an external CAD scripting API.
 ///
 /// # Backwards compatibility
 /// This field is absent from existing documents.  `#[serde(default)]` plus
@@ -1588,7 +1593,7 @@ pub struct ProfileOperation {
     pub side: ProfileSide,
     /// Axial depth of cut in mm (strictly positive).
     pub depth: f64,
-    /// Number of radial finishing passes (≥ 1); kept for legacy companion posts.
+    /// Number of radial finishing passes (≥ 1).
     pub passes: u32,
     /// Stock left on walls in mm (≥ 0); 0 = finish pass.
     pub finish_allowance: f64,
@@ -1601,7 +1606,7 @@ pub struct ProfileOperation {
     #[serde(default)]
     pub geometry: ContourGeometryOpts,
     /// Geometric targets: face/edge sample points used to select the profile contour
-    /// in the STEP model.  Required by the companion adapter; absent from legacy documents.
+    /// on the design body. Optional; absent from older documents.
     #[serde(default, skip_serializing_if = "GeometricTargets::is_empty")]
     pub targets: GeometricTargets,
 }
@@ -1999,7 +2004,7 @@ pub struct DrillOperation {
     #[serde(default)]
     pub geometry: DrillGeometryOpts,
     /// Geometric targets: explicit drill-centre XY points or face sample points used to
-    /// select hole faces in the STEP model.  `drill_points` takes precedence over
+    /// select hole faces on the design body. `drill_points` takes precedence over
     /// `face_sample_points` when both are present.
     #[serde(default, skip_serializing_if = "GeometricTargets::is_empty")]
     pub targets: GeometricTargets,
