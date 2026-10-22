@@ -1672,7 +1672,7 @@ fn space_mouse_section(app: &mut SolveApp, ui: &mut egui::Ui) {
                 });
             }
             // Only where the reader has seen the choice: Linux, with spacenavd and the device both there.
-            if let Some(present) = app.space_mouse.drivers.filter(|present| present.spacenavd || present.direct) {
+            if let Some(present) = app.space_mouse.drivers.filter(|present| present.spacenavd || (present.direct && !present.denied)) {
                 let [label, auto, direct, only_spacenavd, only_direct] =
                     ["driver", "driver_auto", "driver_direct", "driver_only_spacenavd", "driver_only_direct"]
                         .map(|key| app.tr(&format!("ui.space_mouse_{key}")).to_owned());
@@ -1734,7 +1734,9 @@ fn space_mouse_section(app: &mut SolveApp, ui: &mut egui::Ui) {
                         app.preferences.space_mouse_calibrations.remove(device);
                     }
                 });
+                let not_allowed = found_but_not_allowed(app.space_mouse.drivers);
                 let status = match (&device, saved) {
+                    (None, _) if not_allowed => app.tr("ui.space_mouse_denied_short").to_owned(),
                     (None, _) if waiting_for_a_record(app.space_mouse.drivers) => app.tr("ui.space_mouse_calibrate_wait").to_owned(),
                     (None, _) => app.tr("ui.space_mouse_none").to_owned(),
                     (Some(device), true) => format!("{} ({device})", app.tr("ui.space_mouse_calibrated")),
@@ -1743,12 +1745,17 @@ fn space_mouse_section(app: &mut SolveApp, ui: &mut egui::Ui) {
                 let status_line = ui_kit::text(ui, &status, ui_kit::Text::Report("calibration_status", false));
                 // Nothing confirmed yet (none found, or waiting for the first record): a hint to try, as a
                 // tooltip here and, while a reader is waiting for the first record, as a line below.
-                if device.is_none() {
+                if device.is_none() && !not_allowed {
                     status_line.on_hover_text(app.tr("ui.space_mouse_wiggle"));
                 }
             });
             if app.space_mouse.device.is_none() {
-                ui_kit::text(ui, app.tr("ui.space_mouse_wiggle"), ui_kit::Text::Note("space_mouse_wiggle"));
+                if found_but_not_allowed(app.space_mouse.drivers) {
+                    // Wiggling will not help: the device is there and SolidCraft may not read it.
+                    ui_kit::text(ui, app.tr("ui.space_mouse_denied"), ui_kit::Text::Note("space_mouse_denied"));
+                } else {
+                    ui_kit::text(ui, app.tr("ui.space_mouse_wiggle"), ui_kit::Text::Note("space_mouse_wiggle"));
+                }
             }
 
             let enabled = app.preferences.space_mouse_enabled;
@@ -1806,7 +1813,13 @@ const AXIS_SLIDER_MIN: f32 = 150.0;
 /// sent a record: the device is not confirmed until it does, so Preferences asks for a movement
 /// instead of saying none was found. Nothing reachable at all is "none found".
 fn waiting_for_a_record(drivers: Option<crate::space_mouse::DriversPresent>) -> bool {
-    drivers.is_some_and(|present| present.spacenavd || present.direct)
+    drivers.is_some_and(|present| present.spacenavd || (present.direct && !present.denied))
+}
+
+/// A 3D mouse is there but may not be opened, and nothing else is reachable (no spacenavd): asking for
+/// a movement would wait forever, so Preferences says what is wrong instead.
+fn found_but_not_allowed(drivers: Option<crate::space_mouse::DriversPresent>) -> bool {
+    drivers.is_some_and(|present| present.denied && !present.spacenavd)
 }
 
 /// Puts this section's settings back: the driver choice, the speed, each axis's invert and speed and
@@ -2398,10 +2411,9 @@ mod tests {
                         ui.ctx().data_mut(|data| data.insert_persisted(id, true));
                         super::space_mouse_section(&mut app, ui);
                         let wide: Vec<_> = crate::scenario::rects("").into_iter().filter(|(_, r)| r.right() > panel.right() + 0.5).collect();
-                        assert!(ui.min_rect().right() <= panel.right() + 0.5 || wide.is_empty() && false, "{wide:?}",);
                         assert!(
                             ui.min_rect().right() <= panel.right() + 0.5,
-                            "width {width}, frame {frame}: the section reaches {}",
+                            "width {width}, frame {frame}: the section reaches {}; past the panel: {wide:?}",
                             ui.min_rect().right()
                         );
                     });
@@ -2601,9 +2613,8 @@ mod tests {
         assert!(p.space_mouse_offer_never && !p.space_mouse_enabled);
         assert_eq!(p.nav, before.nav);
         assert_eq!(h.app.cam, camera);
-        // And it asks first: the button only arms it.
+        // And it asks first: the real button only arms it (see cancelling_the_restore_question_changes_nothing).
         assert!(!h.app.space_mouse.restore_pending);
-        assert!(include_str!("prefs.rs").contains("app.space_mouse.restore_pending = true;"));
     }
 
     /// Opens Preferences on the Navigation page with the 3D mouse section unfolded and these settings
@@ -2979,49 +2990,73 @@ mod tests {
     }
 
     /// The boat's Reset View puts the boat back and nothing else: calibration, sensitivity, axis
-    /// assignment and the document's camera stay.
+    /// assignment and the document's camera stay. Clicked as a person would.
     #[test]
     fn reset_view_is_scoped_to_the_test_model() {
-        let mut h = crate::scenario::Harness::new();
-        h.app.home.open = false;
-        let axes =
-            std::array::from_fn(|source| solidcraft_space_mouse::AxisCalibration { source, reversed: false, rest: 0, dead_zone: 0, full: [350; 2] });
-        let calibration = solidcraft_space_mouse::Calibration { dead_zone_share: 0.0, kind: solidcraft_space_mouse::Kind::ReturnToCenter, axes };
-        h.app.space_mouse.device = Some("hid 046d:c62b".into());
-        h.app.preferences.space_mouse_calibrations.insert("hid 046d:c62b".into(), calibration);
-        h.app.preferences.space_mouse_speed = 1.7;
-        h.app.preferences.space_mouse_reverse[2] = true;
-        h.app.preferences.space_mouse_axis_speed[1] = 0.5;
-        h.app.preferences.space_mouse_axis_source = [1, 0, 2, 3, 4, 5];
-        h.frames(3);
+        let mut h = changed_3d_mouse_settings(Some("hid 046d:c62b"));
+        h.frames(10);
         // The boat has been turned.
         let mut boat = crate::test_boat::Boat::new(30.0);
         boat.cam.yaw += 1.0;
         h.app.space_mouse.boat = Some(boat);
         let before = (h.app.cam, h.app.preferences.clone());
-        // What the button does (the page's scroll area hides it from the harness, which cannot scroll).
-        crate::test_boat::reset(&mut h.app.space_mouse.boat);
-        h.frames(3);
-        assert!(h.app.space_mouse.boat.is_none(), "the boat is back");
+        scroll_to_and_click(&mut h, "dialog:button::Reset View");
+        assert!(
+            h.app.space_mouse.boat.is_none()
+                || h.app.space_mouse.boat.as_ref().is_some_and(|boat| boat.cam.yaw == crate::test_boat::Boat::new(30.0).cam.yaw),
+            "the boat is back"
+        );
         assert_eq!(h.app.cam, before.0, "the document's camera");
         assert_eq!(h.app.preferences, before.1, "every setting, calibration included");
         assert_eq!(crate::i18n::tr("ui.space_mouse_reset_view"), "Reset View");
-        assert!(
-            include_str!("prefs.rs").contains("ui_kit::button(ui, crate::i18n::tr(\"ui.space_mouse_reset_view\"), ui_kit::Button::Normal).clicked()")
-        );
     }
 
-    /// The "wiggle it" hint exists in every catalog, and is what the status line carries when no
-    /// device is confirmed.
+    /// The "wiggle it" hint exists in every catalog and is a visible line while no device is confirmed,
+    /// gone once there is one.
     #[test]
-    fn the_wiggle_hint_has_text_and_is_used_by_the_device_line() {
+    fn the_wiggle_hint_has_text_and_shows_until_a_device_is_confirmed() {
         assert_eq!(crate::i18n::tr("ui.space_mouse_wiggle"), "If you have one plugged in, wiggle it.");
         for catalog in crate::i18n::LOCALES {
             let text = crate::i18n::Locale::for_language(catalog.id).text("ui.space_mouse_wiggle");
             assert!(!text.is_empty() && text != "ui.space_mouse_wiggle", "{}", catalog.id);
         }
-        let source = include_str!("prefs.rs");
-        assert!(source.contains("status_line.on_hover_text(app.tr(\"ui.space_mouse_wiggle\"))"));
+        let mut h = changed_3d_mouse_settings(None);
+        h.app.space_mouse.drivers = Some(crate::space_mouse::DriversPresent { spacenavd: true, direct: false, denied: false });
+        h.frames(10);
+        assert!(crate::scenario::rect_of("dialog:note:space_mouse_wiggle").is_some(), "no device yet: the hint is a line");
+        h.app.space_mouse.device = Some("spacenavd".into());
+        h.frames(10);
+        assert!(crate::scenario::rect_of("dialog:note:space_mouse_wiggle").is_none(), "confirmed: no hint");
+    }
+
+    /// A 3D mouse that is there but may not be read, with no spacenavd to ask instead: Preferences says so
+    /// in plain words and does not ask for a movement; with a daemon reachable it still waits for one.
+    #[test]
+    fn preferences_says_when_a_device_is_found_but_not_allowed() {
+        for catalog in crate::i18n::LOCALES {
+            for key in ["ui.space_mouse_denied", "ui.space_mouse_denied_short"] {
+                let text = crate::i18n::Locale::for_language(catalog.id).text(key);
+                assert!(text.chars().count() > 5 && text != key, "{} {key}", catalog.id);
+            }
+        }
+        assert!(crate::i18n::tr("ui.space_mouse_denied").contains("udev"));
+        let cases = [
+            // (spacenavd there, device found, denied) and whether the denied line shows.
+            (false, true, true, true),
+            (false, true, false, false),
+            (true, true, true, false),
+            (false, false, false, false),
+        ];
+        for (spacenavd, direct, denied, shown) in cases {
+            let mut h = changed_3d_mouse_settings(None);
+            h.app.space_mouse.drivers = Some(crate::space_mouse::DriversPresent { spacenavd, direct, denied });
+            h.frames(10);
+            let said = crate::scenario::rect_of("dialog:note:space_mouse_denied").is_some();
+            assert_eq!(said, shown, "spacenavd {spacenavd}, found {direct}, denied {denied}");
+            let wiggle = crate::scenario::rect_of("dialog:note:space_mouse_wiggle").is_some();
+            assert_eq!(wiggle, !shown, "the hint to wiggle shows only where waiting can help");
+            assert_eq!(super::waiting_for_a_record(h.app.space_mouse.drivers), spacenavd || (direct && !denied));
+        }
     }
 
     /// The dialog's Restore Defaults on the page that holds the 3D mouse section resets the page, and the
