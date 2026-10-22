@@ -320,9 +320,10 @@ fn a_helical_gear_uses_sweep() {
     let r = play_example(
         &mut helix,
         "gear_generator.rhai",
-        json!({"params": {"kind": "gear", "teeth": 12, "gear_module": 2, "bore": 8, "thickness": 8, "helix": 15, "pa": "20"}}),
+        json!({"params": {"kind": "gear", "form": "helical", "teeth": 12, "gear_module": 2, "bore": 8, "thickness": 8, "helix": 15, "pa": "20"}}),
     );
     assert_eq!(r["ran"], true, "helical sweep: {r}");
+    assert_eq!(run(&mut helix, "inspect.measure", json!({}))["body_count"], 1, "helical is one body");
     assert!(volume(&mut helix) > 100.0, "helical gear has volume");
 }
 
