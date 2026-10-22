@@ -111,6 +111,14 @@ fn a_param_choice_list_becomes_a_dropdown() {
     assert_eq!(m.params[0].choices, vec!["gear", "sprocket"]);
     assert_eq!(m.params[0].default.as_ref().and_then(Value::as_str), Some("gear"));
     assert_eq!(m.params[1].choices, vec!["14.5", "20", "25"]);
+    let gated = super::macros::parse_rhai_macro(
+        "macro.open",
+        "// @param kind Kind {gear, sprocket} | gear\n// @param chain Chain {40, 50} | 40 @if kind=sprocket\nrun(\"solid.box\", #{ length: 1, width: 1, height: 1 });\n",
+    )
+    .unwrap();
+    let w = gated.params[1].when.as_ref().expect("when");
+    assert_eq!(w.name, "kind");
+    assert_eq!(w.values, vec!["sprocket"]);
     assert!(super::macros::parse_rhai_macro("macro.open", "// @param k K {}\nrun(\"solid.box\", #{});\n").is_err());
     assert!(super::macros::parse_rhai_macro("macro.open", "// @param k K {gear, sprocket} | worm\nrun(\"solid.box\", #{});\n").is_err());
 }

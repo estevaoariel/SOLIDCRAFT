@@ -43,6 +43,15 @@ pub struct MacroParam {
     /// Play shows a dropdown when this is not empty (`// @param name Label {a, b} | a`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub choices: Vec<String>,
+    /// Play shows this row only when another field's value is in `values` (`@if kind=sprocket`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<MacroWhen>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MacroWhen {
+    pub name: String,
+    pub values: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -266,6 +275,42 @@ fn is_choice(s: &str) -> bool {
     !s.is_empty() && s.len() <= 64 && s.chars().all(|c| c.is_alphanumeric() || matches!(c, '_' | '-' | '.'))
 }
 
+/// Split `… @if kind=sprocket` off a @param line.
+fn param_when(cmd: &str, spec: &str) -> Result<(String, Option<MacroWhen>)> {
+    let Some((left, rest)) = spec.split_once("@if") else {
+        return Ok((spec.to_string(), None));
+    };
+    let rest = rest.trim();
+    let Some((name, vals)) = rest.split_once('=') else {
+        return Err(bad(cmd, "`@if` needs `name=value`"));
+    };
+    let name = name.trim();
+    if !is_param_name(name) {
+        return Err(bad(cmd, "`@if` needs a parameter name (letters, digits, `_` and `-`)"));
+    }
+    let mut values = Vec::new();
+    for part in vals.split(',') {
+        let c = part.trim();
+        if c.is_empty() {
+            return Err(bad(cmd, "`@if` values cannot be empty"));
+        }
+        if !is_choice(c) {
+            return Err(bad(cmd, format!("`@if` value `{c}` uses letters, digits, `_`, `-` and `.`")));
+        }
+        if values.iter().any(|q: &String| q == c) {
+            return Err(bad(cmd, format!("`@if` value `{c}` is given twice")));
+        }
+        values.push(c.to_string());
+        if values.len() > 16 {
+            return Err(bad(cmd, "`@if` has at most 16 values"));
+        }
+    }
+    if values.is_empty() {
+        return Err(bad(cmd, "`@if` needs at least one value"));
+    }
+    Ok((left.trim().to_string(), Some(MacroWhen { name: name.to_string(), values })))
+}
+
 /// Split `name Label {a, b}` into (`name Label`, [a, b]).
 fn param_choices(cmd: &str, left: &str) -> Result<(String, Vec<String>)> {
     let Some(start) = left.find('{') else {
@@ -326,9 +371,10 @@ pub(crate) fn parse_rhai_macro(cmd: &str, text: &str) -> Result<Macro> {
         let rest = rest.trim();
         if let Some(spec) = rest.strip_prefix("@param") {
             let spec = spec.trim();
+            let (spec, when) = param_when(cmd, spec)?;
             let (left, default) = match spec.split_once('|') {
                 Some((l, r)) => (l.trim(), Some(Value::String(r.trim().to_string()))),
-                None => (spec, None),
+                None => (spec.as_str(), None),
             };
             let (left, choices) = param_choices(cmd, left)?;
             let mut default = default;
@@ -350,8 +396,13 @@ pub(crate) fn parse_rhai_macro(cmd: &str, text: &str) -> Result<Macro> {
             if params.iter().any(|q: &MacroParam| q.name == n) {
                 return Err(bad(cmd, format!("parameter `{n}` is given twice")));
             }
+            if let Some(w) = &when
+                && w.name == n
+            {
+                return Err(bad(cmd, format!("parameter `{n}` cannot depend on itself")));
+            }
             let label = bits.collect::<Vec<_>>().join(" ");
-            params.push(MacroParam { name: n.to_string(), label: if label.is_empty() { None } else { Some(label) }, default, choices });
+            params.push(MacroParam { name: n.to_string(), label: if label.is_empty() { None } else { Some(label) }, default, choices, when });
             if params.len() > 100 {
                 return Err(bad(cmd, "a macro asks for at most 100 parameters"));
             }

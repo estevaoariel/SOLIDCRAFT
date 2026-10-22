@@ -109,6 +109,8 @@ pub(crate) fn play(app: &mut SolveApp, params: Value) {
         Ok(r) => {
             let ran = r.get("steps").and_then(Value::as_u64).unwrap_or(0);
             app.set_status(crate::i18n::format("macro.played", &[("steps", &ran.to_string())]), false);
+            app.home.open = false;
+            app.fit_view();
         }
         Err(e) => app.set_status(crate::i18n::format("macro.failed", &[("error", &e)]), true),
     }

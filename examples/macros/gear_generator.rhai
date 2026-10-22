@@ -1,20 +1,19 @@
 // Universal gear and sprocket
-// Involute gears (ISO 53 / Machinery's Handbook) and roller-chain sprockets (ISO 606, ASME B29.1)
 // @param kind Kind {gear, sprocket} | gear
-// @param hand Teeth {external, internal} | external
-// @param sizing Size {module, DP} | module
-// @param pa Pressure angle {14.5, 20, 25} | 20
-// @param depth Depth {full, stub} | full
-// @param chain Chain {25, 35, 40, 50, 60, 80, 06B, 08B, 10B, 12B, 16B} | 40
-// @param hub Hub {none, one, both} | none
+// @param hand Teeth {external, internal} | external @if kind=gear
+// @param sizing Size {module, DP} | module @if kind=gear
+// @param pa Pressure angle {14.5, 20, 25} | 20 @if kind=gear
+// @param depth Depth {full, stub} | full @if kind=gear
+// @param size Module or DP | 2 @if kind=gear
+// @param helix Helix angle (deg) | 0 @if kind=gear
+// @param rim Internal rim OD | 80 @if hand=internal
+// @param chain Chain {25, 35, 40, 50, 60, 80, 06B, 08B, 10B, 12B, 16B} | 40 @if kind=sprocket
 // @param teeth Teeth | 12
-// @param size Module or DP | 2
-// @param bore Bore diameter | 8
 // @param thickness Thickness | 8
-// @param helix Helix angle (deg) | 0
-// @param rim Internal rim OD | 80
-// @param hub_od Hub OD | 20
-// @param hub_length Hub length | 8
+// @param bore Bore diameter | 8 @if hand=external
+// @param hub Hub {none, one, both} | none @if hand=external
+// @param hub_od Hub OD | 20 @if hub=one,both
+// @param hub_length Hub length | 8 @if hub=one,both
 fn as_n(v) {
     if type_of(v) == "string" { parse_float(v) } else { v }
 }
@@ -70,7 +69,7 @@ fn involute_pts(z, m, alpha, ha, hf, invert, r_pitch) {
     }
     let inv_p = inv_of(cos(alpha));
     let half_w = pi / (2.0 * z);
-    let n_flank = 16;
+    let n_flank = 24;
     let n_tip = 5;
     let n_root = 8;
     let pts = [];
@@ -141,31 +140,47 @@ fn involute_pts(z, m, alpha, ha, hf, invert, r_pitch) {
 }
 fn sprocket_pts(z, P, Dr) {
     let pi = 3.141592653589793;
-    let r_pitch = P / (2.0 * sin(pi / z));
-    let r_seat = 0.5025 * Dr + 0.05;
-    let da = P * (1.0 / tan(pi / z) + 0.5);
-    let ra = da / 2.0;
-    let n_seat = 8;
-    let n_tip = 4;
-    let span = 1.15;
+    let r_p = P / (2.0 * sin(pi / z));
+    let r_s = 0.5025 * Dr + 0.05;
+    let r_a = P * (0.5 + 1.0 / tan(pi / z)) / 2.0;
+    let n_s = 12;
+    let n_f = 8;
+    let beta = 0.85;
     let pts = [];
     let tooth = 0;
     while tooth < z {
-        let theta = 2.0 * pi * tooth / z;
-        let cx = r_pitch * cos(theta);
-        let cy = r_pitch * sin(theta);
+        let th = 2.0 * pi * tooth / z;
+        let cx = r_p * cos(th);
+        let cy = r_p * sin(th);
         let k = 0;
-        while k <= n_seat {
-            let a = theta + pi - span + 2.0 * span * (k * 1.0) / (n_seat * 1.0);
-            pts.push([cx + r_seat * cos(a), cy + r_seat * sin(a)]);
+        while k <= n_s {
+            let a = th + pi - beta + 2.0 * beta * (k * 1.0) / (n_s * 1.0);
+            pts.push([cx + r_s * cos(a), cy + r_s * sin(a)]);
             k = k + 1;
         }
-        let tip = theta + pi / z;
-        let k = 1;
-        while k < n_tip {
-            let a = tip - 0.2 * pi / z + 0.4 * pi / z * (k * 1.0) / (n_tip * 1.0);
-            pts.push([ra * cos(a), ra * sin(a)]);
-            k = k + 1;
+        let a1 = th + pi + beta;
+        let x1 = cx + r_s * cos(a1);
+        let y1 = cy + r_s * sin(a1);
+        let tip = th + pi / z;
+        let xt = r_a * cos(tip);
+        let yt = r_a * sin(tip);
+        let j = 1;
+        while j <= n_f {
+            let u = (j * 1.0) / (n_f * 1.0);
+            pts.push([x1 + (xt - x1) * u, y1 + (yt - y1) * u]);
+            j = j + 1;
+        }
+        let thn = 2.0 * pi * (tooth + 1.0) / z;
+        let cxn = r_p * cos(thn);
+        let cyn = r_p * sin(thn);
+        let a0 = thn + pi - beta;
+        let x0 = cxn + r_s * cos(a0);
+        let y0 = cyn + r_s * sin(a0);
+        let j = 1;
+        while j < n_f {
+            let u = (j * 1.0) / (n_f * 1.0);
+            pts.push([xt + (x0 - xt) * u, yt + (y0 - yt) * u]);
+            j = j + 1;
         }
         tooth = tooth + 1;
     }
@@ -233,7 +248,7 @@ run("sketch.create", #{ plane: "XY", name: "Gear" });
 if internal {
     run("sketch.circle.center", #{ center: [0.0, 0.0], radius: rim_n / 2.0 });
 }
-run("sketch.line", #{ points: pts, closed: true });
+run("sketch.line", #{ points: pts, closed: true, infer: false });
 run("sketch.finish");
 
 if kind_s == "gear" && helix_n != 0.0 && !internal {
