@@ -1795,6 +1795,7 @@ mod tests {
         unreadable.opened();
         assert!(unreadable.at.is_none());
         assert!(unreadable.failed(one), "after a success the next failure is said, though this node was before");
+        assert!(unreadable.at.is_some(), "and the wait starts again from it");
         assert!(unreadable.failed(zero));
     }
 
@@ -1824,6 +1825,35 @@ mod tests {
             std::thread::sleep(Duration::from_millis(2));
         }
         assert_eq!(fake.world().opens, opens, "the daemon was read again without opening the device first");
+    }
+
+    /// The same restart while the daemon is streaming without a pause: the read is ended by the timer's
+    /// look, not by silence, and it still goes back to the daemon without trying the device first.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_daemon_restart_during_a_continuous_stream_does_not_retry_the_unopenable_device_either() {
+        use machine::{Fake, Running};
+        let fake = Fake::default();
+        *fake.world() = machine::World { device: true, daemon: true, openable: false, ..Default::default() };
+        let reader = Running::start(SpaceMouseDriver::Automatic, fake.clone());
+        reader.reads("spacenavd");
+        let until = Instant::now() + Duration::from_secs(3);
+        // Records keep coming every 2 ms until the read has probed the device a second time.
+        while fake.world().opens < 2 {
+            assert!(Instant::now() < until, "the busy read never tried the device again");
+            fake.daemon_sends_a_record();
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let (opens, connects) = {
+            let world = fake.world();
+            (world.opens, world.connects)
+        };
+        fake.world().daemon_end = None;
+        while fake.world().connects == connects {
+            assert!(Instant::now() < until, "the daemon was never read again");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(fake.world().opens, opens, "read again without opening the device first");
     }
 
     /// With no daemon at all, a device that failed to open is tried again at the usual pace, not after the
@@ -1901,6 +1931,8 @@ mod tests {
             assert!(Instant::now() < until, "never moved to the device");
             std::thread::sleep(Duration::from_millis(2));
         }
+        // A record that arrived on the daemon does not become fresh again on the device.
+        assert!(!reader.shared.lock().unwrap().arrived, "nothing has arrived on the device yet");
         let on_device = mouse.buttons();
         assert_eq!((on_device.device.as_deref(), on_device.down, on_device.taps), (Some(key.as_str()), 0, 0), "nothing held, nothing pressed");
     }
@@ -1913,7 +1945,9 @@ mod tests {
     fn a_decelerating_ball_on_the_daemon_is_rolling_while_records_arrive_and_stopped_when_they_do_not() {
         use machine::{Fake, Running};
         use solidcraft_space_mouse::{Kind, Stage, Wizard};
-        for (records_keep_arriving, step_done) in [(true, false), (false, true)] {
+        // (what arrives after the ball slows, whether the step ends): different values that decode alike,
+        // the same value over and over, or one record and then silence.
+        for (mode, step_done) in [("alternating", false), ("identical", false), ("silence", true)] {
             let fake = Fake::default();
             *fake.world() = machine::World { device: false, daemon: true, openable: true, ..Default::default() };
             let reader = Running::start(SpaceMouseDriver::Automatic, fake.clone());
@@ -1967,9 +2001,14 @@ mod tests {
             }
             // Then 16 and 17, which both decode to 11, for 0.7 s: arriving, or one last record and silence.
             for i in 0..35 {
-                tick(&mut app, if records_keep_arriving || i == 0 { Some(if i % 2 == 0 { 16 } else { 17 }) } else { None });
+                let record = match mode {
+                    "alternating" => Some(if i % 2 == 0 { 16 } else { 17 }),
+                    "identical" => Some(16),
+                    _ => (i == 0).then_some(16),
+                };
+                tick(&mut app, record);
             }
-            assert_eq!(stage(&app) == Some(Stage::Step(1)), step_done, "records arriving: {records_keep_arriving}, {:?}", stage(&app));
+            assert_eq!(stage(&app) == Some(Stage::Step(1)), step_done, "{mode}: {:?}", stage(&app));
         }
     }
 
