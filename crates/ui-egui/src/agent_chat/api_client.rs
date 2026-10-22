@@ -788,8 +788,8 @@ mod tests {
         let (events, _rx) = channel();
         let w = Worker {
             cfg,
-            mcp: None,
-            next: 0,
+            mcp_backend: None,
+            skills: None,
             tools: vec![json!({"type": "function", "function": {"name": "measure"}})],
             history: vec![json!({"role": "user", "content": "hi"})],
             events,
