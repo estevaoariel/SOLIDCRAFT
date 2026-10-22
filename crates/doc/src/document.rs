@@ -2665,7 +2665,14 @@ impl Document {
     /// Rename body `old` to `new` where the design keeps things by body name outside its
     /// features: materials, appearances, configuration columns, offsets, components and the
     /// browser's groups and order. (The features are the rename command's to change.)
+    ///
+    /// A name the design numbered (`Body1`) is not used again after the rename: the design's
+    /// counter starts over at every evaluation, so without this a design that is evaluated
+    /// again hands the freed name to the next body (#4957).
     pub fn rename_body_keys(&mut self, old: &str, new: &str) {
+        if old.strip_prefix("Body").and_then(|n| n.parse::<usize>().ok()).is_some() {
+            self.reserved_body_names.insert(old.to_string());
+        }
         if let Some(m) = self.materials.remove(old) {
             self.materials.insert(new.to_string(), m);
         }

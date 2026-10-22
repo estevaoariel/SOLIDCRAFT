@@ -1602,6 +1602,9 @@ impl Model {
             recomputed += 1;
             let t0 = now();
             let mut next = (*state).clone();
+            // The names the design must not use again travel with the state (#4957): a state
+            // taken from an earlier evaluation may have been made before a rename freed one.
+            next.reserved_body_names = doc.reserved_body_names.clone();
             for b in &mut next.bodies {
                 b.made = crate::lineage::Made::Before;
             }
@@ -1779,6 +1782,8 @@ impl Model {
                         b.name = new.to_string();
                         b.names = b.names.renamed();
                     }
+                    // The names the design must not use again travel with the state (#4957).
+                    st.reserved_body_names = doc.reserved_body_names.clone();
                     Arc::new(st)
                 })
                 .clone();
@@ -1943,12 +1948,6 @@ fn new_name(state: &mut ModelState, f: &Feature, k: usize) -> String {
         && !n.is_empty()
         && state.body(n).is_none()
     {
-        // The body has a name of its own, but it is still a body the design made: the counter
-        // moves past it, so the name a rename freed is not handed out again (#4957). Without
-        // this, a design that is evaluated again after a rename (a join changed the body, so
-        // the rename cannot be followed without evaluating) hands the freed name to the next
-        // body, and a script that names a body finds another one.
-        state.body_counter += 1;
         return n.clone();
     }
     // Bodies past the stored names (a profile added after the feature was made) are numbered
