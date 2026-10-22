@@ -68,7 +68,9 @@ pub struct TreeState {
     pub collapsed: BTreeSet<String>,
     /// Folders opened by the user (folders that start closed).
     pub expanded: BTreeSet<String>,
-    /// Scroll to this body's row and open its folders (Find in Browser).
+    /// Scroll to this body's row (by the name it has in the world, which tells the placements
+    /// of a part apart) and open the components, placements and folders above it: Find in
+    /// Browser, and a body picked in the viewport (#3005).
     pub reveal: Option<String>,
     /// A native feature to reveal in its placed component's Features folder.
     pub(super) reveal_feature: Option<features::Reveal>,
@@ -519,6 +521,31 @@ fn sel_of_key(k: &str) -> Option<Sel> {
     None
 }
 
+/// The body a selection item is on: a body, or a face or edge of one (by its name in the
+/// world).
+pub(crate) fn picked_body(sel: &Sel) -> Option<&str> {
+    match sel {
+        Sel::Body { name } => Some(name),
+        Sel::Face { body, .. } | Sel::Edge { body, .. } => Some(body),
+        _ => None,
+    }
+}
+
+/// A pick in the viewport: the Browser, when shown, opens down to the picked body's row and
+/// scrolls to it (#3005). The body of the last item picked.
+pub(crate) fn reveal_pick(app: &mut SolveApp) {
+    if app.ui.show_browser
+        && let Some(body) = app.session.selection.last().and_then(picked_body)
+    {
+        app.tree.reveal = Some(body.to_string());
+    }
+}
+
+/// Whether the body being revealed is in this placement or one below it: it opens.
+fn reveals_in_occurrence(app: &SolveApp, path: &[u64]) -> bool {
+    app.tree.reveal.as_ref().is_some_and(|r| app.session.occurrence_bodies(path, true).is_ok_and(|bodies| bodies.contains(r)))
+}
+
 pub(crate) fn is_open(app: &SolveApp, key: &str, default: bool) -> bool {
     if default { !app.tree.collapsed.contains(key) } else { app.tree.expanded.contains(key) }
 }
@@ -937,6 +964,9 @@ fn rows_scrolling(app: &mut SolveApp, ui: &mut egui::Ui, acts: &mut Actions, shr
             ui.spacing_mut().item_spacing.y = 0.0;
             component_rows(app, ui, 0, 0, acts);
         });
+    // The row was reached and scrolled to, or isn't in the tree (a body a later feature removes):
+    // either way the reveal is done.
+    app.tree.reveal = None;
 }
 
 fn finish_browser(app: &mut SolveApp, ui: &mut egui::Ui, acts: Actions) {
@@ -967,9 +997,14 @@ fn component_name(app: &SolveApp, id: u64) -> String {
 fn component_rows(app: &mut SolveApp, ui: &mut egui::Ui, id: u64, depth: usize, acts: &mut Actions) {
     let t = Tokens::get();
     let key = format!("c{id}");
+    let bodies = crate::context_menu::component_bodies(app, id);
+    if let Some(r) = app.tree.reveal.clone()
+        && (bodies.contains(&r) || model_children(app, id).into_iter().any(|o| reveals_in_occurrence(app, &[o])))
+    {
+        app.tree.collapsed.remove(&key);
+    }
     let open = is_open(app, &key, true);
     let active = app.session.active_component == id;
-    let bodies = crate::context_menu::component_bodies(app, id);
     let visible = bodies.is_empty() || bodies.iter().any(|b| !app.session.visibility.hidden_bodies.contains(b));
     let grounded = app.session.doc.occurrence_of(id).is_some_and(|o| o.grounded);
     let faded = app.session.active_component != 0 && !app.session.doc.component_within(id, app.session.active_component) && !active;
@@ -1072,6 +1107,9 @@ fn occurrence_key(path: &[u64]) -> String {
 fn occurrence_rows(app: &mut SolveApp, ui: &mut egui::Ui, path: Vec<u64>, depth: usize, acts: &mut Actions) {
     let Some(placement) = model_placement(app, &path) else { return };
     let key = occurrence_key(&path);
+    if reveals_in_occurrence(app, &path) {
+        app.tree.collapsed.remove(&key);
+    }
     let open = is_open(app, &key, true);
     let active = app.session.active_occurrence_path.as_deref() == Some(path.as_slice())
         || (app.session.active_occurrence_path.is_none()
@@ -1795,11 +1833,11 @@ fn folder_rows_at(app: &mut SolveApp, ui: &mut egui::Ui, comp: u64, path: Option
     let key = format!("{prefix}/{folder}");
     if let Some(r) = app.tree.reveal.clone()
         && folder == "bodies"
-        && all.iter().any(|e| e.key == r)
+        && let Some(e) = all.iter().find(|e| e.row_key == format!("b:{r}"))
     {
         app.tree.collapsed.remove(&key);
         app.tree.collapsed.remove(&format!("c{comp}"));
-        for g in app.session.doc.browser_groups.iter().filter(|g| g.items.contains(&r)) {
+        for g in app.session.doc.browser_groups.iter().filter(|g| g.items.contains(&e.key)) {
             app.tree.collapsed.remove(&format!("g{}", g.id));
         }
     }
@@ -1947,7 +1985,7 @@ fn entry_row(
         toggle(app, &pattern_key, true);
     }
     if folder == "bodies"
-        && app.tree.reveal.as_deref() == Some(e.key.as_str())
+        && app.tree.reveal.as_ref().is_some_and(|b| e.row_key.strip_prefix("b:") == Some(b.as_str()))
         && let Some(rect) = r.rect
     {
         ui.scroll_to_rect(rect, Some(egui::Align::Center));
