@@ -1245,6 +1245,19 @@ fn fillet_edges(s: &Session, sel: &Sel, chain: bool) -> Vec<Sel> {
 /// (#2984: the last sketch was taken instead), else, when there is just one, the active sketch's,
 /// else the last sketch's while no feature builds from it yet. A used profile (a cube's sketch on
 /// its bottom face) is only taken when it is picked.
+/// The profiles of a sketch that aren't the island inside another profile's hole: a circle in a
+/// rectangle gives the rectangle-with-hole and the disc, and taking both would fill the hole.
+/// Loops are compared as sets of curve ids, so where a loop starts or which way it runs doesn't matter.
+fn outermost_profiles(profiles: &[solidcraft_engine::sketch::Profile]) -> impl Iterator<Item = usize> + '_ {
+    let key = |ids: &[String]| {
+        let mut v = ids.to_vec();
+        v.sort();
+        v
+    };
+    let holes: Vec<Vec<String>> = profiles.iter().flat_map(|p| p.hole_curves.iter().map(|h| key(h))).collect();
+    (0..profiles.len()).filter(move |&i| profiles.get(i).is_some_and(|p| !holes.contains(&key(&p.outer_curves))))
+}
+
 fn default_profiles(s: &Session) -> Vec<Sel> {
     let st = s.world_state();
     let chosen = s.selection.iter().find_map(|x| match x {
@@ -1252,7 +1265,10 @@ fn default_profiles(s: &Session) -> Vec<Sel> {
         _ => None,
     });
     if let Some(id) = chosen {
-        return st.sketch(id).map(|ss| (0..ss.profiles.len()).map(|index| Sel::Profile { sketch: id, index }).collect()).unwrap_or_default();
+        return st
+            .sketch(id)
+            .map(|ss| outermost_profiles(&ss.profiles).map(|index| Sel::Profile { sketch: id, index }).collect())
+            .unwrap_or_default();
     }
     let sid = s.active_sketch.or_else(|| {
         s.doc.features.iter().rev().find(|f| matches!(f.kind, FeatureKind::Sketch { .. })).map(|f| f.id).filter(|&id| !profiles_used(s, id))

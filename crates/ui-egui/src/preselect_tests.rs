@@ -2276,3 +2276,26 @@ fn extrude_takes_the_sketch_selected_in_the_browser() {
     let volume = m["bodies"][0]["volume_mm3"].as_f64().unwrap();
     assert!((volume - 20.0 * 10.0 * 10.0).abs() < 1e-6, "the 20 × 10 rectangle, 10 mm: {volume}");
 }
+
+/// #2984: a selected sketch with a circle inside a rectangle extrudes as a plate with a hole.
+/// The disc inside the hole is a profile of its own; taking it too would fill the hole back in.
+#[test]
+fn extrude_of_a_selected_sketch_keeps_its_holes() {
+    let mut h = crate::scenario::Harness::new();
+    h.app.run("sketch.create", json!({"plane": "XY"})).unwrap();
+    h.app.run("sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [20, 10]})).unwrap();
+    h.app.run("sketch.circle.center", json!({"center": [10, 5], "radius": 2})).unwrap();
+    h.app.run("sketch.finish", json!({})).unwrap();
+    let id = h.app.session.doc.features.iter().find(|f| matches!(f.kind, solidcraft_engine::doc::FeatureKind::Sketch { .. })).map(|f| f.id).unwrap();
+    h.app.session.selection = vec![Sel::Feature { id }];
+    h.app.start("solid.extrude");
+    h.frames(1);
+    let items = h.app.dialog.as_ref().unwrap().inputs[0].items.clone();
+    assert_eq!(items.len(), 1, "only the plate, not the disc in its hole: {items:?}");
+    h.step(&json!({"key":"Enter"})).unwrap();
+    assert!(h.app.dialog.is_none(), "{:?}", h.app.dialog.as_ref().and_then(|d| d.error.clone()));
+    let m = h.app.session.execute("inspect.measure", &json!({})).unwrap();
+    let volume = m["bodies"][0]["volume_mm3"].as_f64().unwrap();
+    let want = (200.0 - 4.0 * std::f64::consts::PI) * 10.0;
+    assert!((volume - want).abs() < 1e-3 * want, "(200 − 4π) × 10 = {want}: {volume}");
+}
