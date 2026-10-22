@@ -66,6 +66,8 @@ pub struct ViewportState {
     /// The triangles of each mesh the last scene drew as instances, by the mesh's address (the
     /// mesh held, so its address stays its own).
     instanced_tris: std::sync::Mutex<InstancedTris>,
+    /// The levels of detail of large instanced meshes ([`crate::mesh_lod`]).
+    pub(crate) mesh_lods: crate::mesh_lod::MeshLods,
     /// View-dependent display refinement (#1320): which bodies are drawn finer than the chosen
     /// display quality, and their refined plans.
     pub(crate) lod: std::sync::Mutex<crate::display_lod::Lod>,
@@ -319,6 +321,7 @@ fn scene_key(app: &SolveApp) -> u64 {
     app.ui.ground_shadow.hash(&mut h);
     solidcraft_engine::doc::display_quality::current().hash(&mut h);
     lod_generation(app).hash(&mut h);
+    app.viewport.mesh_lods.generation().hash(&mut h);
     // The section plane (its cut outlines are part of the model scene).
     section_plane(app).map(|(o, n)| [o.x, o.y, o.z, n.x, n.y, n.z].map(f64::to_bits)).hash(&mut h);
     app.cam.up.hash(&mut h);
@@ -714,6 +717,7 @@ struct Instances {
     /// The meshes drawn as instances, in the order their first placement came, by address.
     meshes: Vec<(std::sync::Arc<solidcraft_engine::geom::Mesh>, crate::gpu::InstancedMesh)>,
     kept: InstancedTris,
+    lods: crate::mesh_lod::MeshLods,
 }
 
 impl Instances {
@@ -733,7 +737,7 @@ impl Instances {
                 .filter(|(_, (m, _))| m.triangles.len() >= INSTANCE_ALONE || uses.get(&(std::sync::Arc::as_ptr(m) as usize)).is_some_and(|n| *n > 1))
                 .collect();
         }
-        Instances { candidates, meshes: Vec::new(), kept }
+        Instances { candidates, meshes: Vec::new(), kept, lods: app.viewport.mesh_lods.clone() }
     }
 
     /// Draw `b` (in colour `col`) as an instance when it is one: its shared mesh and placement.
@@ -752,7 +756,9 @@ impl Instances {
                     Some((_, t)) => t.clone(),
                     None => taken_shared_tris(&mesh).unwrap_or_else(|| std::sync::Arc::new(crate::gpu::SharedTris::new(&mesh))),
                 };
-                self.meshes.push((mesh.clone(), crate::gpu::InstancedMesh { key: key as u64, tris, instances: Vec::new() }));
+                // A large mesh's levels of detail, once made (until then, drawn in full).
+                let levels = self.lods.levels(&mesh).map(|l| l.as_ref().clone()).unwrap_or_default();
+                self.meshes.push((mesh.clone(), crate::gpu::InstancedMesh { key: key as u64, tris, instances: Vec::new(), levels }));
                 self.meshes.len() - 1
             }
         };
@@ -765,6 +771,7 @@ impl Instances {
     fn finish(self, app: &SolveApp) -> Vec<crate::gpu::InstancedMesh> {
         let kept: InstancedTris =
             self.meshes.iter().map(|(mesh, inst)| (std::sync::Arc::as_ptr(mesh) as usize, (mesh.clone(), inst.tris.clone()))).collect();
+        self.lods.retain(&kept.keys().copied().collect());
         if let Ok(mut k) = app.viewport.instanced_tris.lock() {
             *k = kept;
         }
@@ -2625,6 +2632,10 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     // ---- model ----
     crate::frame_watch::step(app, "viewport before the model");
     update_refinement(app, ui.ctx(), &proj);
+    // Levels of detail being made: keep frames coming to draw them when they are.
+    if app.viewport.mesh_lods.busy() {
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
+    }
     crate::frame_watch::step(app, "display refinement");
     let key = scene_key(app);
     let t0 = crate::now_ms();
@@ -4928,7 +4939,42 @@ mod tests {
             eprintln!("close up: {seen} of {} placements' centres in view", st.bodies.len());
         }
         let yaw = app.cam.yaw;
-        for (label, scene) in [("own triangles", scene.clone().merged()), ("instanced", scene)] {
+        // The levels of detail, made off the window thread meanwhile.
+        let t = std::time::Instant::now();
+        while app.viewport.mesh_lods.busy() {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let lod = build_scene(&app);
+        eprintln!(
+            "levels of detail made in {:.1} s: {:?}",
+            t.elapsed().as_secs_f64(),
+            lod.instanced.iter().map(|m| m.levels.iter().map(|(t, e)| (t.indices.len() / 3, *e)).collect::<Vec<_>>()).collect::<Vec<_>>()
+        );
+        // `SOLIDCRAFT_BENCH_PNG=dir`: the view drawn in full and from the levels, side by side.
+        if let Some(dir) = std::env::var_os("SOLIDCRAFT_BENCH_PNG") {
+            const SIDE: u32 = 1024;
+            let rect = Rect::from_min_size(Pos2::ZERO, vec2(SIDE as f32, SIDE as f32));
+            let proj = projection(&app, rect);
+            let e = proj.cam.eye().to_f32();
+            let eye = [e[0], e[1], e[2], if proj.cam.fov > 0.0 { 1.0 } else { 0.0 }];
+            for (name, scene) in [("full", scene.clone()), ("lod", lod.clone())] {
+                if let Some(rgba) = crate::gpu::render_offscreen(
+                    scene,
+                    None,
+                    proj.vp.to_f32(),
+                    proj.cam.back().to_f32(),
+                    eye,
+                    SIDE,
+                    None,
+                    [0.0; 8],
+                    crate::gpu::analysis_colors(&Tokens::get().analysis),
+                ) && let Some(png) = solidcraft_engine::render::png(SIDE as usize, SIDE as usize, rgba)
+                {
+                    let _ = std::fs::write(std::path::Path::new(&dir).join(format!("{name}.png")), png);
+                }
+            }
+        }
+        for (label, scene) in [("own triangles", scene.clone().merged()), ("instanced", scene), ("instanced, levels of detail", lod)] {
             let mut renderer = crate::gpu::Renderer::new(&device, GpuTarget { format, depth: Some(depth), samples, tess: false }, None);
             let slot: SceneSlot = std::sync::Arc::new(std::sync::Mutex::new(Some(scene)));
             let none = || std::sync::Arc::new(std::sync::Mutex::new(None));
@@ -5029,6 +5075,93 @@ mod tests {
         assert_eq!(scene.instanced.len(), 1, "a large mesh alone is drawn from shared vertices");
         assert!(std::sync::Arc::ptr_eq(&scene.instanced[0].tris, &warmed), "the ones made ahead");
         assert!(!WARMED.lock().unwrap().iter().any(|(m, _)| std::sync::Arc::ptr_eq(m, &mesh)), "taken");
+    }
+
+    /// A design with one imported mesh of about 100 000 triangles (a sphere of radius 50, each
+    /// corner its own point, as an STL is read), drawn on a device that builds bodies on the CPU.
+    fn large_scan() -> SolveApp {
+        use solidcraft_engine::doc::{Document, FeatureKind, MeshData};
+        let n = 160u32;
+        let at = |i: u32, j: u32| {
+            let (t, p) = (std::f64::consts::PI * f64::from(i) / f64::from(n), std::f64::consts::TAU * f64::from(j) / f64::from(2 * n));
+            let (st, sp, cp) =
+                (if i == 0 || i == n { 0.0 } else { t.sin() }, if j == 2 * n { 0.0 } else { p.sin() }, if j == 2 * n { 1.0 } else { p.cos() });
+            [50.0 * st * cp, 50.0 * st * sp, 50.0 * t.cos()]
+        };
+        let corners: Vec<[f64; 3]> = (0..n)
+            .flat_map(|i| (0..2 * n).flat_map(move |j| [at(i, j), at(i + 1, j + 1), at(i, j + 1), at(i, j), at(i + 1, j), at(i + 1, j + 1)]))
+            .collect();
+        let mut doc = Document::default();
+        let meshes = vec![MeshData {
+            name: "Scan".into(),
+            positions: corners.iter().flatten().copied().collect(),
+            triangles: (0..u32::try_from(corners.len()).unwrap()).collect(),
+            color: None,
+        }];
+        doc.add_feature(FeatureKind::MeshImport { file: "scan.stl".into(), meshes }, Some("Scan")).unwrap();
+        let mut app = SolveApp::new(solidcraft_engine::Session::new(doc), crate::Services::default());
+        app.ui.ground_shadow = false;
+        app.ui.show_origin = false;
+        app.viewport.gpu = Some(GpuTarget { format: egui_wgpu::wgpu::TextureFormat::Rgba8Unorm, depth: None, samples: 1, tess: false });
+        app
+    }
+
+    /// A large mesh is drawn in full until its levels of detail are made off the window thread;
+    /// then the scene is built again with them, and seen small, a coarse level draws it as the
+    /// full triangles do (within a fraction of a pixel). Skipped without a GPU adapter (the
+    /// levels are checked anyway).
+    #[test]
+    fn a_large_mesh_seen_small_is_drawn_from_its_levels_of_detail() {
+        let mut app = large_scan();
+        let (mesh, _) = app.session.world_state().bodies[0].mesh_in_place();
+        assert!(mesh.triangles.len() >= INSTANCE_ALONE);
+        let key = scene_key(&app);
+        let first = build_scene(&app);
+        assert_eq!(first.instanced.len(), 1);
+        assert!(first.instanced[0].levels.is_empty(), "drawn in full meanwhile");
+        let began = std::time::Instant::now();
+        while app.viewport.mesh_lods.busy() {
+            assert!(began.elapsed() < std::time::Duration::from_secs(120), "the levels are made");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_ne!(scene_key(&app), key, "the scene is built again when they are");
+        let scene = build_scene(&app);
+        let levels = &scene.instanced[0].levels;
+        assert!(levels.len() >= 2, "{} levels", levels.len());
+        // Small on screen: the sphere about 30 px across.
+        app.fit_view();
+        app.cam.distance *= 4.0;
+        const SIZE: u32 = 256;
+        let rect = Rect::from_min_size(Pos2::ZERO, vec2(SIZE as f32, SIZE as f32));
+        let proj = projection(&app, rect);
+        let e = proj.cam.eye().to_f32();
+        let eye = [e[0], e[1], e[2], if proj.cam.fov > 0.0 { 1.0 } else { 0.0 }];
+        let render = |scene: GpuScene| {
+            crate::gpu::render_offscreen(
+                scene,
+                None,
+                proj.vp.to_f32(),
+                proj.cam.back().to_f32(),
+                eye,
+                SIZE,
+                None,
+                [0.0; 8],
+                crate::gpu::analysis_colors(&Tokens::get().analysis),
+            )
+        };
+        // The level the placement is drawn from there.
+        let rows = [[1.0f32, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]];
+        let scale = crate::gpu::placement_scale(&rows, &scene.instanced[0].tris.bounds, &proj.vp.to_f32(), [SIZE as f32; 2]);
+        let errors: Vec<f32> = std::iter::once(0.0).chain(levels.iter().map(|(_, e)| *e)).collect();
+        assert!(crate::gpu::level_for(&errors, scale) >= 1, "a coarse level: scale {scale} px/mm, errors {errors:?}");
+        let (Some(lod), Some(full)) = (render(scene.clone()), render(scene.merged())) else {
+            eprintln!("skipping: no GPU adapter");
+            return;
+        };
+        let drawn = full.chunks(4).filter(|p| p[..3] != [255, 255, 255]).count();
+        assert!(drawn > 300, "the sphere is drawn: {drawn} pixels");
+        let differ = lod.chunks(4).zip(full.chunks(4)).filter(|(a, b)| a.iter().zip(b.iter()).any(|(x, y)| x.abs_diff(*y) > 24)).count();
+        assert!(differ * 20 < drawn, "{differ} of {drawn} pixels differ");
     }
 
     /// Each placement of a part is picked where it stands, the turned one too, from the part's

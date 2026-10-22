@@ -121,6 +121,29 @@ impl SharedTris {
         out
     }
 
+    /// A simplified copy of a mesh ([`solidcraft_geom::simplify::Level`]): its vertices already
+    /// shared, its triangles lit flat (each fragment with its triangle's own normal).
+    pub fn from_level(level: &solidcraft_geom::simplify::Level) -> SharedTris {
+        let mut out = SharedTris { flat: true, ..Default::default() };
+        out.vertices.reserve_exact(level.positions.len() * SHARED_SIZE);
+        let mut lo = [f32::INFINITY; 3];
+        let mut hi = [f32::NEG_INFINITY; 3];
+        for p in &level.positions {
+            let p = p.to_f32();
+            for k in 0..3 {
+                lo[k] = lo[k].min(p[k]);
+                hi[k] = hi[k].max(p[k]);
+            }
+            for v in p.iter().chain(&[0.0f32; 3]) {
+                out.vertices.extend_from_slice(&v.to_le_bytes());
+            }
+        }
+        let n = u32::try_from(level.positions.len()).unwrap_or(u32::MAX);
+        out.indices = level.triangles.iter().filter(|t| t.iter().all(|i| *i < n)).flatten().copied().collect();
+        out.bounds = [lo, hi];
+        out
+    }
+
     /// Vertex `i`: position and normal.
     fn vertex(&self, i: u32) -> ([f32; 3], [f32; 3]) {
         let at = i as usize * SHARED_SIZE;
@@ -171,6 +194,10 @@ pub struct InstancedMesh {
     pub tris: Arc<SharedTris>,
     /// The placements, [`INSTANCE_SIZE`] bytes each ([`InstancedMesh::place`]).
     pub instances: Vec<u8>,
+    /// Coarser copies of the triangles, finest first, each with how far it strays from them (mm,
+    /// in the part's frame): a placement small on screen is drawn from the coarsest whose error
+    /// stays under [`LOD_PX`] there ([`Batches::cull`]).
+    pub levels: Vec<(Arc<SharedTris>, f32)>,
 }
 
 impl InstancedMesh {
@@ -588,6 +615,61 @@ impl SharedGpu {
     }
 }
 
+/// How far (pixels) a level of detail may stray from the full triangles where a placement is
+/// drawn from it.
+pub const LOD_PX: f32 = 0.75;
+
+/// Pixels per millimetre where a placement (`rows`, see [`INSTANCE_SIZE`]) of a box (`bounds`)
+/// is nearest the eye, along whichever of its axes shows largest, in the view `vp` (columns) of
+/// `size` pixels. Infinite when a corner of it is at or behind the eye, or for a box that is not
+/// finite: such a placement is drawn in full.
+pub fn placement_scale(rows: &[[f32; 4]; 3], bounds: &[[f32; 3]; 2], vp: &[[f32; 4]; 4], size: [f32; 2]) -> f32 {
+    let [lo, hi] = bounds;
+    if !lo.iter().chain(hi).all(|x| x.is_finite()) {
+        return f32::INFINITY;
+    }
+    let clip = |p: [f32; 3]| -> [f32; 4] {
+        let w = rows.map(|r| r[0] * p[0] + r[1] * p[1] + r[2] * p[2] + r[3]);
+        std::array::from_fn(|k| vp[0][k] * w[0] + vp[1][k] * w[1] + vp[2][k] * w[2] + vp[3][k])
+    };
+    let corners: [[f32; 3]; 8] = std::array::from_fn(|i| {
+        [if i & 1 == 0 { lo[0] } else { hi[0] }, if i & 2 == 0 { lo[1] } else { hi[1] }, if i & 4 == 0 { lo[2] } else { hi[2] }]
+    });
+    let mut nearest = (f32::INFINITY, corners[0]);
+    for c in corners {
+        let w = clip(c)[3];
+        if !(w > 1e-6) {
+            return f32::INFINITY;
+        }
+        if w < nearest.0 {
+            nearest = (w, c);
+        }
+    }
+    let screen = |c: [f32; 4]| [c[0] / c[3] * size[0] * 0.5, c[1] / c[3] * size[1] * 0.5];
+    let (_, c) = nearest;
+    let at = screen(clip(c));
+    let mut scale = 0.0f32;
+    for k in 0..3 {
+        // A step of a hundredth of the box (at least a micrometre) along each axis.
+        let step = ((hi[k] - lo[k]) * 0.01).max(1e-3);
+        let mut q = c;
+        q[k] += step;
+        let qc = clip(q);
+        if !(qc[3] > 1e-6) {
+            return f32::INFINITY;
+        }
+        let s = screen(qc);
+        scale = scale.max(((s[0] - at[0]).powi(2) + (s[1] - at[1]).powi(2)).sqrt() / step);
+    }
+    if scale.is_finite() { scale } else { f32::INFINITY }
+}
+
+/// The coarsest level whose error (mm; level 0, the full triangles, has none) stays under
+/// [`LOD_PX`] at `scale` pixels per millimetre.
+pub fn level_for(errors: &[f32], scale: f32) -> usize {
+    errors.iter().rposition(|e| *e * scale <= LOD_PX).unwrap_or(0)
+}
+
 /// Whether a box (`bounds`, min and max) moved by a placement (`rows`, see [`INSTANCE_SIZE`])
 /// may be seen in the view `vp` (the view-projection, columns, depth 0 near and 1 far): `false`
 /// only when all its corners lie beyond the same side of the view (left, right, top, bottom,
@@ -612,23 +694,42 @@ pub fn placed_box_in_view(rows: &[[f32; 4]; 3], bounds: &[[f32; 3]; 2], vp: &[[f
     !out.iter().any(|o| *o)
 }
 
-/// An [`InstancedMesh`] on the GPU: its triangles (shared with the next scene while its key
-/// comes back) and the placements in view.
-struct InstancedDraw {
+/// One level of an [`InstancedDraw`]: its triangles and the placements drawn from it.
+struct LevelDraw {
     tris: Arc<SharedGpu>,
     flat: bool,
+    /// How far it strays from the full triangles (mm; 0 for them).
+    error: f32,
+    /// The placements drawn from it, first `count` of them ([`Batches::cull`]).
+    instances: wgpu::Buffer,
+    count: u32,
+}
+
+/// An [`InstancedMesh`] on the GPU: its triangles and coarser levels (shared with the next scene
+/// while they come back), and the placements in view, each drawn from its level.
+struct InstancedDraw {
+    /// The full triangles first, then coarser ones.
+    levels: Vec<LevelDraw>,
     bounds: [[f32; 3]; 2],
     /// Every placement ([`INSTANCE_SIZE`] bytes each), as the scene has them.
     placements: Vec<u8>,
-    /// The placements in view, first `count` of them ([`Batches::cull`]).
-    instances: wgpu::Buffer,
-    count: u32,
-    /// Which placements `instances` holds now (none drawn yet: `None`).
-    shown: Option<Vec<u32>>,
+    /// Which placements the levels hold now, with their level (none drawn yet: `None`).
+    shown: Option<Vec<(u32, u8)>>,
 }
 
 impl InstancedDraw {
-    /// Draw every placement with `pipeline` (the placements in vertex buffer 1).
+    /// Draw every placement in view, from its level, with `smooth` or `flat` as the level's
+    /// triangles are lit.
+    pub(crate) fn draw(&self, pass: &mut wgpu::RenderPass<'_>, smooth: &wgpu::RenderPipeline, flat: &wgpu::RenderPipeline) {
+        for level in &self.levels {
+            pass.set_pipeline(if level.flat { flat } else { smooth });
+            level.draw(pass);
+        }
+    }
+}
+
+impl LevelDraw {
+    /// Draw its placements (in vertex buffer 1).
     fn draw(&self, pass: &mut wgpu::RenderPass<'_>) {
         if self.count == 0 {
             return;
@@ -696,9 +797,9 @@ struct Batches {
     guide_lines: Option<Batch>,
     planned: Vec<PlannedDraw>,
     instanced: Vec<InstancedDraw>,
-    /// The instanced meshes' triangles on the GPU by key, with the triangles they were uploaded
-    /// from.
-    instanced_tris: std::collections::HashMap<u64, (Arc<SharedTris>, Arc<SharedGpu>)>,
+    /// The instanced meshes' triangles (and their levels) on the GPU, by the address of the
+    /// triangles they were uploaded from (held, so it stays theirs).
+    instanced_tris: std::collections::HashMap<usize, (Arc<SharedTris>, Arc<SharedGpu>)>,
     /// Evaluated chunks by their plans' addresses, holding the plans so the addresses stay
     /// theirs: a chunk whose plans are unchanged is not evaluated again when the scene is rebuilt.
     resident: std::collections::HashMap<Vec<usize>, (Vec<Arc<solidcraft_geom::tess::TessPlan>>, Arc<crate::GpuMesh>)>,
@@ -765,21 +866,30 @@ impl Batches {
             if count == 0 {
                 continue;
             }
-            let tris = match kept.remove(&m.key).or_else(|| self.instanced_tris.remove(&m.key)).filter(|(b, _)| Arc::ptr_eq(b, &m.tris)) {
-                Some(t) => t,
-                None => match SharedGpu::new(device, &m.tris) {
-                    Some(g) => (m.tris.clone(), Arc::new(g)),
-                    None => continue,
-                },
-            };
             let placements = m.instances.get(..count as usize * INSTANCE_SIZE).unwrap_or_default().to_vec();
-            let instances = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("sc_instances"),
-                contents: &placements,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            });
-            out.push(InstancedDraw { tris: tris.1.clone(), flat: m.tris.flat, bounds: m.tris.bounds, placements, instances, count, shown: None });
-            self.instanced_tris.insert(m.key, tris);
+            let mut levels = Vec::with_capacity(1 + m.levels.len());
+            for (i, (tris, error)) in std::iter::once((&m.tris, 0.0f32)).chain(m.levels.iter().map(|(t, e)| (t, *e))).enumerate() {
+                let key = Arc::as_ptr(tris) as usize;
+                let gpu = match kept.remove(&key).or_else(|| self.instanced_tris.remove(&key)).filter(|(b, _)| Arc::ptr_eq(b, tris)) {
+                    Some(t) => t,
+                    None => match SharedGpu::new(device, tris) {
+                        Some(g) => (tris.clone(), Arc::new(g)),
+                        None => continue,
+                    },
+                };
+                // Until the first cull, every placement is drawn in full.
+                let instances = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("sc_instances"),
+                    contents: &placements,
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                });
+                let count = if i == 0 { count } else { 0 };
+                levels.push(LevelDraw { tris: gpu.1.clone(), flat: tris.flat, error, instances, count });
+                self.instanced_tris.insert(key, gpu);
+            }
+            if !levels.is_empty() {
+                out.push(InstancedDraw { levels, bounds: m.tris.bounds, placements, shown: None });
+            }
         }
         out
     }
@@ -787,34 +897,43 @@ impl Batches {
     /// Keep only the placements of the instanced meshes that may be seen in the view `vp` (see
     /// [`placed_box_in_view`]): a part placed many times, most of it out of the view, draws
     /// only what is in it. The placements are written again only when that set changes.
-    fn cull(&mut self, queue: &wgpu::Queue, vp: &[[f32; 4]; 4]) {
+    /// Each placement's level of detail is chosen here too: the coarsest whose error stays under
+    /// [`LOD_PX`] where it is drawn ([`placement_scale`], [`level_for`]), in a view of `size`
+    /// pixels.
+    fn cull(&mut self, queue: &wgpu::Queue, vp: &[[f32; 4]; 4], size: [f32; 2]) {
         let f = |b: &[u8], i: usize| b.get(i..i + 4).and_then(|x| x.try_into().ok()).map_or(0.0, f32::from_le_bytes);
         for d in &mut self.instanced {
-            let shown: Vec<u32> = d
+            let errors: Vec<f32> = d.levels.iter().map(|l| l.error).collect();
+            let shown: Vec<(u32, u8)> = d
                 .placements
                 .as_chunks::<INSTANCE_SIZE>()
                 .0
                 .iter()
                 .enumerate()
-                .filter(|(_, p)| {
+                .filter_map(|(i, p)| {
                     let rows = [0, 1, 2].map(|r| [f(&p[..], 16 * r), f(&p[..], 16 * r + 4), f(&p[..], 16 * r + 8), f(&p[..], 16 * r + 12)]);
-                    placed_box_in_view(&rows, &d.bounds, vp)
+                    placed_box_in_view(&rows, &d.bounds, vp).then(|| {
+                        let level = if errors.len() > 1 { level_for(&errors, placement_scale(&rows, &d.bounds, vp, size)) } else { 0 };
+                        (i as u32, u8::try_from(level).unwrap_or(0))
+                    })
                 })
-                .map(|(i, _)| i as u32)
                 .collect();
             if d.shown.as_ref() == Some(&shown) {
                 continue;
             }
-            let bytes: Vec<u8> = shown
-                .iter()
-                .filter_map(|i| d.placements.get(*i as usize * INSTANCE_SIZE..(*i as usize + 1) * INSTANCE_SIZE))
-                .flatten()
-                .copied()
-                .collect();
-            if !bytes.is_empty() {
-                queue.write_buffer(&d.instances, 0, &bytes);
+            for (k, level) in d.levels.iter_mut().enumerate() {
+                let bytes: Vec<u8> = shown
+                    .iter()
+                    .filter(|(_, l)| usize::from(*l) == k)
+                    .filter_map(|(i, _)| d.placements.get(*i as usize * INSTANCE_SIZE..(*i as usize + 1) * INSTANCE_SIZE))
+                    .flatten()
+                    .copied()
+                    .collect();
+                if !bytes.is_empty() {
+                    queue.write_buffer(&level.instances, 0, &bytes);
+                }
+                level.count = u32::try_from(bytes.len() / INSTANCE_SIZE).unwrap_or(u32::MAX);
             }
-            d.count = u32::try_from(shown.len()).unwrap_or(u32::MAX);
             d.shown = Some(shown);
         }
     }
@@ -1715,7 +1834,7 @@ impl Renderer {
         res.highlight.take(device, cb.hl_key, &cb.hl_slot, None);
         res.preview.take(device, cb.pv_key, &cb.pv_slot, None);
         res.model.sort_glass(queue, cb.back);
-        res.model.cull(queue, &cb.view_proj);
+        res.model.cull(queue, &cb.view_proj, cb.size_px);
         queue.write_buffer(&res.uniform, 0, &uniform_bytes(cb, cb.size_px[0], cb.size_px[1], res.linear_out, res.target.reversed_depth()));
         if let Some(a) = &cb.access
             && a.version != res.access_version
@@ -1851,8 +1970,7 @@ impl Renderer {
         // Instanced meshes, with the pipeline for smooth and for flat triangles.
         let instanced = |pass: &mut wgpu::RenderPass<'static>, smooth: &wgpu::RenderPipeline, flat: &wgpu::RenderPipeline| {
             for d in &m.instanced {
-                pass.set_pipeline(if d.flat { flat } else { smooth });
-                d.draw(pass);
+                d.draw(pass, smooth, flat);
             }
         };
         let sectioned = cb.clip[..3].iter().map(|c| c * c).sum::<f32>() > 0.25;
@@ -2058,6 +2176,41 @@ mod tests {
         assert!(placed_box_in_view(&at(-0.5, -0.5, -20.0), &[[0.0, 0.0, 0.0], [1.0, 1.0, 21.0]], &persp), "from in front of the eye to behind it");
         // A box that is not finite is drawn (never culled by mistake).
         assert!(placed_box_in_view(&at(30.0, 0.0, -10.0), &[[f32::NAN; 3], [1.0; 3]], &persp));
+    }
+
+    /// A placement's pixels per millimetre: in an orthographic view the same anywhere, along the
+    /// axis that shows largest (a turned box too); in perspective, larger nearer the eye, and
+    /// infinite (drawn in full) with a corner behind it. The level chosen is the coarsest whose
+    /// error stays under `LOD_PX` there.
+    #[test]
+    fn levels_of_detail_follow_the_size_on_screen() {
+        use super::{LOD_PX, level_for, placement_scale};
+        let unit = [[0.0f32, 0.0, 0.0], [1.0, 1.0, 1.0]];
+        let at = |x: f32, y: f32, z: f32| [[1.0, 0.0, 0.0, x], [0.0, 1.0, 0.0, y], [0.0, 0.0, 1.0, z]];
+        // Orthographic over x, y in -10..10 on a 200 × 200 view: 10 px a millimetre.
+        let ortho = [[0.1, 0.0, 0.0, 0.0], [0.0, 0.1, 0.0, 0.0], [0.0, 0.0, 0.005, 0.0], [0.0, 0.0, 0.5, 1.0]];
+        let size = [200.0, 200.0];
+        assert!((placement_scale(&at(0.0, 0.0, 0.0), &unit, &ortho, size) - 10.0).abs() < 1e-3);
+        assert!((placement_scale(&at(5.0, -3.0, 0.0), &unit, &ortho, size) - 10.0).abs() < 1e-3);
+        let (c, s) = (0.6f32.cos(), 0.6f32.sin());
+        let turned = [[c, -s, 0.0, 0.0], [s, c, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]];
+        assert!((placement_scale(&turned, &unit, &ortho, size) - 10.0).abs() < 1e-2);
+        // Perspective looking down -z from the origin (w = -z), 90° over 200 px.
+        let persp = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, -1.0, -1.0], [0.0, 0.0, -1.0, 0.0]];
+        let near = placement_scale(&at(0.0, 0.0, -10.0), &unit, &persp, size);
+        let far = placement_scale(&at(0.0, 0.0, -100.0), &unit, &persp, size);
+        assert!((near - 100.0 / 9.0).abs() < 0.2, "nearest corner at depth 9: {near}");
+        assert!(far < near / 9.0 && far > 0.0, "{far} vs {near}");
+        assert!(placement_scale(&at(0.0, 0.0, 0.5), &unit, &persp, size).is_infinite(), "a corner behind the eye");
+        assert!(placement_scale(&at(0.0, 0.0, -10.0), &[[f32::NAN; 3], [1.0; 3]], &persp, size).is_infinite());
+        // The coarsest level within LOD_PX: errors 0 (full), 0.05, 0.2, 1.0 mm.
+        let errors = [0.0, 0.05, 0.2, 1.0];
+        assert_eq!(level_for(&errors, f32::INFINITY), 0);
+        assert_eq!(level_for(&errors, 100.0), 0, "5 px for the first level");
+        assert_eq!(level_for(&errors, 10.0), 1);
+        assert_eq!(level_for(&errors, LOD_PX / 0.2), 2);
+        assert_eq!(level_for(&errors, 0.5), 3);
+        assert_eq!(level_for(&[0.0], 0.001), 0);
     }
 
     /// Shared vertices: a flat mesh's by position alone (an STL's facets: one normal per
