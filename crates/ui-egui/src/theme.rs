@@ -25,6 +25,9 @@ thread_local! {
     /// The palette of a theme file (`theme_files`) in place of the built-in one of its base
     /// (dark or light), per thread like the rest. `None`: the built-in palettes.
     static CUSTOM: Cell<Option<Custom>> = const { Cell::new(None) };
+    /// The viewport's own dark or light when the theme splits the window and the view (#4146),
+    /// per thread like the rest. `None`: the view is as dark as the window.
+    static VIEWPORT_DARK: Cell<Option<bool>> = const { Cell::new(None) };
 }
 
 /// A theme file's palette and whether it is dark.
@@ -126,6 +129,11 @@ impl TabAccent {
 /// Is the dark theme on?
 pub fn is_dark() -> bool {
     DARK.get()
+}
+
+/// Is the 3D view dark? As the window, unless the theme gives the view its own (#4146).
+pub fn viewport_dark() -> bool {
+    VIEWPORT_DARK.get().unwrap_or_else(is_dark)
 }
 
 /// The common conversion boundary for compiled icon palette data.
@@ -251,6 +259,9 @@ pub struct IconColors {
     pub marker_halo: Color32,
 }
 
+/// Every colour and size the UI draws with. The colours drawn in the 3D view are listed again in
+/// [`Tokens::with_viewport`], which a theme that splits the window and the view takes from the
+/// other side (#4146): a new colour drawn in the view goes in both.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Tokens {
     // Shared dimensions in logical pixels; identical in both themes.
@@ -540,9 +551,91 @@ impl Tokens {
         egui::Shadow { offset: [0, self.space_2 as i8], blur: self.space_8 as u8, spread: 0, color: self.app_bar.gamma_multiply(0.18) }
     }
 
-    /// The tokens of the current theme and colour vision mode.
+    /// The tokens of the current theme and colour vision mode, the colours drawn in the 3D view
+    /// from the view's own dark or light ([`viewport_dark`]).
     pub fn get() -> Tokens {
-        Tokens::themed(is_dark(), vision())
+        let window = Tokens::themed(is_dark(), vision());
+        if viewport_dark() == is_dark() { window } else { window.with_viewport(Tokens::themed(viewport_dark(), vision())) }
+    }
+
+    /// The tokens of the 3D view's side (#4146), for a window colour drawn straight onto the view
+    /// with nothing behind it (a status line, a label or a warning beside the geometry), so it
+    /// reads on the view's background. As [`Tokens::get`] unless the theme splits the two.
+    pub fn view() -> Tokens {
+        Tokens::themed(viewport_dark(), vision())
+    }
+
+    /// These tokens with the colours drawn in the 3D view taken from `view`: the background and
+    /// grid, bodies, selection and hover, the origin and construction geometry, previews, sketches
+    /// and their dimensions and glyphs, the navigation cube and triads, box selection and the
+    /// analysis colours. The window keeps its own: panels, dialogs, menus, and the chips and cards
+    /// over the view (`overlay` with its text, icons and borders).
+    pub fn with_viewport(self, view: Tokens) -> Tokens {
+        Tokens {
+            sel_face: view.sel_face,
+            sel_edge: view.sel_edge,
+            sel_edge_rim: view.sel_edge_rim,
+            hover_edge: view.hover_edge,
+            hover_edge_halo: view.hover_edge_halo,
+            hover_face_lift: view.hover_face_lift,
+            sel_profile: view.sel_profile,
+            sel_profile_edge: view.sel_profile_edge,
+            hover_profile: view.hover_profile,
+            hover_profile_edge: view.hover_profile_edge,
+            sel_vertex: view.sel_vertex,
+            origin_plane: view.origin_plane,
+            origin_plane_edge: view.origin_plane_edge,
+            origin_plane_hover: view.origin_plane_hover,
+            origin_point: view.origin_point,
+            axis_x: view.axis_x,
+            axis_y: view.axis_y,
+            axis_z: view.axis_z,
+            construction_plane: view.construction_plane,
+            construction_geom: view.construction_geom,
+            body: view.body,
+            body_edge: view.body_edge,
+            manipulator: view.manipulator,
+            preview_add: view.preview_add,
+            preview_new: view.preview_new,
+            preview_sketch: view.preview_sketch,
+            preview_cut: view.preview_cut,
+            cube_face: view.cube_face,
+            cube_border: view.cube_border,
+            cube_text: view.cube_text,
+            cube_hover: view.cube_hover,
+            viewport_top: view.viewport_top,
+            viewport_bottom: view.viewport_bottom,
+            grid: view.grid,
+            grid_major: view.grid_major,
+            body_selected: view.body_selected,
+            sketch: view.sketch,
+            sketch_fixed: view.sketch_fixed,
+            sketch_locked: view.sketch_locked,
+            dimension: view.dimension,
+            dimension_driven: view.dimension_driven,
+            sketch_point: view.sketch_point,
+            sketch_point_free: view.sketch_point_free,
+            section_cap: view.section_cap,
+            profile_fill: view.profile_fill,
+            glyph_bg: view.glyph_bg,
+            glyph_edge: view.glyph_edge,
+            glyph_text: view.glyph_text,
+            rubber_band: view.rubber_band,
+            box_window: view.box_window,
+            box_crossing: view.box_crossing,
+            sketch_projected: view.sketch_projected,
+            sketch_lost: view.sketch_lost,
+            sketch_construction: view.sketch_construction,
+            sketch_centerline: view.sketch_centerline,
+            triad: view.triad,
+            gizmo: view.gizmo,
+            bend_up: view.bend_up,
+            bend_down: view.bend_down,
+            interference: view.interference,
+            continuity: view.continuity,
+            analysis: view.analysis,
+            ..self
+        }
     }
 
     /// The tokens of a theme and colour vision mode: a theme file's palette when one is on for
@@ -586,6 +679,11 @@ pub fn material_color(name: &str) -> Option<Color32> {
 /// Switch themes (the visuals follow on the next [`apply`]).
 pub fn set_dark(dark: bool) {
     DARK.set(dark);
+}
+
+/// Give the 3D view its own dark or light (#4146), or `None` to draw it as dark as the window.
+pub fn set_viewport_dark(dark: Option<bool>) {
+    VIEWPORT_DARK.set(dark);
 }
 
 fn visuals(dark: bool) -> egui::Visuals {
@@ -735,6 +833,64 @@ mod tests {
                 });
             }
         });
+    }
+
+    /// A theme that splits the window and the 3D view (#4146): the view's colours come from the
+    /// other side and everything else stays the window's, in every colour vision mode. A view as
+    /// dark as the window gives the window's tokens unchanged.
+    #[test]
+    fn a_split_theme_takes_the_views_colours_from_the_other_side() {
+        use super::{ColorVision, Tokens};
+        for mode in ColorVision::ALL {
+            super::set_vision(mode);
+            for window in [false, true] {
+                super::set_dark(window);
+                for same in [None, Some(window)] {
+                    super::set_viewport_dark(same);
+                    assert_eq!(super::viewport_dark(), window);
+                    assert_eq!(Tokens::get(), Tokens::themed(window, mode), "{mode:?} {window} {same:?}");
+                    assert_eq!(Tokens::view(), Tokens::get(), "{mode:?} {window} {same:?}");
+                }
+                super::set_viewport_dark(Some(!window));
+                assert_eq!(super::viewport_dark(), !window);
+                let (t, w, v) = (Tokens::get(), Tokens::themed(window, mode), Tokens::themed(!window, mode));
+                // What is drawn straight onto the view takes all of its side's colours.
+                assert_eq!(Tokens::view(), v);
+                // The two sides differ, so the checks below tell them apart.
+                assert_ne!((w.viewport_top, w.panel), (v.viewport_top, v.panel));
+                // The view's: background and grid, bodies, selection and hover, sketches with their
+                // dimensions and glyphs, the origin, the cube and triads, box selection, analysis.
+                assert_eq!((t.viewport_top, t.viewport_bottom, t.grid, t.grid_major), (v.viewport_top, v.viewport_bottom, v.grid, v.grid_major));
+                assert_eq!(
+                    (t.body, t.body_edge, t.body_selected, t.sel_face, t.sel_edge, t.hover_edge),
+                    (v.body, v.body_edge, v.body_selected, v.sel_face, v.sel_edge, v.hover_edge)
+                );
+                assert_eq!(
+                    (t.sketch, t.sketch_fixed, t.dimension, t.glyph_bg, t.glyph_text, t.profile_fill),
+                    (v.sketch, v.sketch_fixed, v.dimension, v.glyph_bg, v.glyph_text, v.profile_fill)
+                );
+                assert_eq!(
+                    (t.origin_plane, t.axis_x, t.cube_face, t.cube_text, t.triad, t.gizmo),
+                    (v.origin_plane, v.axis_x, v.cube_face, v.cube_text, v.triad, v.gizmo)
+                );
+                assert_eq!(
+                    (t.box_window, t.section_cap, t.preview_add, t.sketch_construction, t.continuity),
+                    (v.box_window, v.section_cap, v.preview_add, v.sketch_construction, v.continuity)
+                );
+                assert_eq!(t.analysis, v.analysis);
+                // The window's: panels, text, accents, dialogs, and the chips over the view with
+                // their borders and icons.
+                assert_eq!(
+                    (t.panel, t.text, t.border, t.accent, t.accent_soft, t.icon),
+                    (w.panel, w.text, w.border, w.accent, w.accent_soft, w.icon)
+                );
+                assert_eq!(
+                    (t.overlay, t.hover, t.dialog_bg, t.field, t.timeline, t.app_bar),
+                    (w.overlay, w.hover, w.dialog_bg, w.field, w.timeline, w.app_bar)
+                );
+            }
+        }
+        super::set_viewport_dark(None);
     }
 
     /// Title and section bands stand out from a dialog, the title more than its sections.

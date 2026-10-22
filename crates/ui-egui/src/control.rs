@@ -217,7 +217,7 @@ pub(crate) fn view_scene(app: &SolveApp, guides: solidcraft_engine::view::Guides
         &app.cam,
         crate::viewport::section_plane(app),
         solidcraft_engine::view::world_curve_parts,
-        &crate::viewport::scene_palette(app.ui.dark, app.preferences.color_vision),
+        &crate::viewport::scene_palette(app.viewport_dark(), app.preferences.color_vision),
         guides,
     )
 }
@@ -1027,7 +1027,7 @@ mod tests {
     }
 
     /// `ui.render` draws in the window's theme (#974): its background is the viewport's, light
-    /// or dark.
+    /// or dark, and with a theme that splits the window and the view, the view's (#4146).
     #[test]
     fn model_render_is_in_the_windows_theme() {
         if !crate::gpu::test_picture_renderer() {
@@ -1038,9 +1038,11 @@ mod tests {
         let mut app = SolveApp::new(s, Services::default());
         let dir = std::env::temp_dir().join(format!("solidcraft-render-theme-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        for dark in [false, true, false] {
-            app.ui.dark = dark;
-            let png = render(&mut app, &dir.join(format!("dark-{dark}.png")));
+        for theme in ["light", "dark", "dark_ui_light_viewport", "light_ui_dark_viewport", "light"] {
+            app.preferences.theme = theme.into();
+            app.ui.dark = crate::prefs::theme_sides(theme).is_some_and(|(dark, _)| dark);
+            let dark = app.viewport_dark();
+            let png = render(&mut app, &dir.join(format!("{theme}.png")));
             let img = image::load_from_memory(&png).unwrap().to_rgba8();
             // The top row is the background's top: its most common colour.
             let mut counts = std::collections::HashMap::new();
@@ -1050,7 +1052,7 @@ mod tests {
             let top = counts.into_iter().max_by_key(|(_, n)| *n).map(|(c, _)| c).unwrap();
             let want = if dark { crate::theme::Tokens::dark() } else { crate::theme::Tokens::light() }.viewport_top;
             let near = top.iter().zip([want.r(), want.g(), want.b()]).all(|(a, b)| a.abs_diff(b) <= 2);
-            assert!(near, "dark {dark}: the render's top row is {top:?}, the window's background {want:?}");
+            assert!(near, "{theme}: the render's top row is {top:?}, the view's background {want:?}");
         }
         std::fs::remove_dir_all(&dir).ok();
     }

@@ -96,7 +96,8 @@ Shortcuts changes them.
 
 ### Colour themes
 
-General › **Theme** lists Dark, Light and System (follows the operating system), the built-in
+General › **Theme** lists Dark, Light, two that give the 3D view the other one's colours
+(**Dark UI, light viewport** and **Light UI, dark viewport**), System (follows the operating system), the built-in
 Gruvbox themes (dark and light, each in hard, normal and soft contrast) and any themes you have
 imported. A choice applies at once.
 

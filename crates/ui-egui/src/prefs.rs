@@ -242,7 +242,26 @@ pub const PAGE_PLUGINS: usize = 8;
 pub const PAGE_SHORTCUTS: usize = 2;
 pub const PAGE_DESIGN: usize = 3;
 pub const PAGE_GRAPHICS: usize = 4;
-pub const THEMES: [(&str, &str); 3] = [("dark", "Dark"), ("light", "Light"), ("system", "System")];
+pub const THEMES: [(&str, &str); 5] = [
+    ("dark", "Dark"),
+    ("light", "Light"),
+    ("dark_ui_light_viewport", "Dark UI, light viewport"),
+    ("light_ui_dark_viewport", "Light UI, dark viewport"),
+    ("system", "System"),
+];
+
+/// A built-in theme's two sides: whether the window is dark, and the 3D view's own dark or light
+/// when the theme splits them (#4146). `None` for System and theme files, whose window follows
+/// the system or the file's base, with the view as the window.
+pub fn theme_sides(id: &str) -> Option<(bool, Option<bool>)> {
+    match id {
+        "dark" => Some((true, None)),
+        "light" => Some((false, None)),
+        "dark_ui_light_viewport" => Some((true, Some(false))),
+        "light_ui_dark_viewport" => Some((false, Some(true))),
+        _ => None,
+    }
+}
 pub const MSAA: [u32; 4] = [1, 2, 4, 8];
 /// Supersampling factors (#1288): off, 1.5× and 2× the viewport's pixels each way.
 pub const SUPERSAMPLING: [f32; 3] = [1.0, 1.5, 2.0];
@@ -1681,6 +1700,7 @@ pub fn control(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::
         o.insert("dialog".into(), json!(app.prefs_window.open.then(|| PAGES.get(app.prefs_window.section).copied().unwrap_or_default())));
         o.insert("stand_up_offer".into(), json!(app.stand_up));
         o.insert("dark".into(), json!(app.ui.dark));
+        o.insert("viewport_dark".into(), json!(app.viewport_dark()));
         o.insert("theme_ids".into(), json!(theme_choices(app).into_iter().map(|(id, _)| id).collect::<Vec<_>>()));
         if let Some(id) = imported {
             o.insert("theme_imported".into(), json!(id));
@@ -1723,7 +1743,7 @@ fn select_theme(app: &mut SolveApp, id: &str) {
     app.preferences.theme = id.to_string();
     match crate::theme_files::find(id, &app.preferences.custom_themes) {
         Some(f) => app.ui.dark = f.base.is_dark(),
-        None if id != "system" => app.ui.dark = id == "dark",
+        None if id != "system" => app.ui.dark = theme_sides(id).is_some_and(|(dark, _)| dark),
         None => {}
     }
 }
@@ -1847,7 +1867,10 @@ pub fn set(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::Valu
     }
     let file = crate::theme_files::find(&new.theme, &new.custom_themes);
     if (!THEMES.iter().any(|(id, _)| *id == new.theme) && file.is_none()) || !["z", "y"].contains(&new.up_axis.as_str()) {
-        return Err("`theme` must be dark, light, system or a theme's id (see `theme_ids`) and `up_axis` z or y".into());
+        return Err(
+            "`theme` must be dark, light, dark_ui_light_viewport, light_ui_dark_viewport, system or a theme's id (see `theme_ids`) and `up_axis` z or y"
+                .into(),
+        );
     }
     if new.custom_themes.len() > crate::theme_files::MAX_CUSTOM || new.custom_themes.iter().any(|t| t.colors.len() > crate::theme_files::MAX_COLORS) {
         return Err(format!("at most {} imported themes of {} colours each", crate::theme_files::MAX_CUSTOM, crate::theme_files::MAX_COLORS));
@@ -1874,7 +1897,7 @@ pub fn set(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::Valu
         return Err("`middle_double_click` must be home, fit or off".into());
     }
     if new.theme != app.preferences.theme && new.theme != "system" {
-        app.ui.dark = file.map_or(new.theme == "dark", |f| f.base.is_dark());
+        app.ui.dark = file.map_or(theme_sides(&new.theme).is_some_and(|(dark, _)| dark), |f| f.base.is_dark());
     }
     let up_changed = new.up_axis != app.preferences.up_axis;
     let msaa_changed = new.msaa != app.preferences.msaa;
@@ -1921,7 +1944,7 @@ mod tests {
         let mut h = crate::scenario::Harness::new();
         let out = h.call("ui.prefs", json!({"theme": "gruvbox-dark-hard"}));
         assert_eq!(out["result"]["theme"], "gruvbox-dark-hard", "{out}");
-        assert!(out["result"]["theme_ids"].as_array().is_some_and(|ids| ids.len() == 9), "{out}");
+        assert!(out["result"]["theme_ids"].as_array().is_some_and(|ids| ids.len() == 11), "{out}");
         h.frames(2);
         let hard = crate::theme_files::find("gruvbox-dark-hard", &[]).map(crate::theme_files::resolve).unwrap();
         assert!(h.app.ui.dark);
@@ -1966,6 +1989,43 @@ mod tests {
         assert!(h.app.preferences.custom_themes.is_empty(), "Cancel takes the import back");
         h.frames(2);
         assert_eq!(Tokens::get().panel, Tokens::dark().panel);
+    }
+
+    /// The two themes that split the window and the 3D view (#4146): `ui.prefs` and the theme
+    /// list turn each on, the window takes its UI side and the next frame draws the view from the
+    /// other; the choice is saved with the preferences. Dark, Light, System and theme files keep
+    /// one side for both.
+    #[test]
+    fn split_themes_draw_the_view_in_the_other_theme() {
+        use crate::theme::{ColorVision, Tokens};
+        use serde_json::json;
+        assert!(super::THEMES.iter().all(|(id, _)| super::theme_sides(id).is_none() == (*id == "system")));
+        let mut h = crate::scenario::Harness::new();
+        for (theme, dark, view) in
+            [("dark_ui_light_viewport", true, false), ("light_ui_dark_viewport", false, true), ("dark", true, true), ("light", false, false)]
+        {
+            let out = h.call("ui.prefs", json!({"theme": theme}));
+            assert_eq!((out["result"]["dark"].as_bool(), out["result"]["viewport_dark"].as_bool()), (Some(dark), Some(view)), "{out}");
+            h.frames(2);
+            let t = Tokens::get();
+            assert_eq!(t.panel, Tokens::themed(dark, ColorVision::Off).panel, "{theme}: the window");
+            assert_eq!(t.viewport_top, Tokens::themed(view, ColorVision::Off).viewport_top, "{theme}: the view");
+        }
+        // Picked in the list, as the dialog does.
+        super::select_theme(&mut h.app, "dark_ui_light_viewport");
+        assert!(h.app.ui.dark && !h.app.viewport_dark());
+        super::select_theme(&mut h.app, "light_ui_dark_viewport");
+        assert!(!h.app.ui.dark && h.app.viewport_dark());
+
+        let mut other = crate::SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
+        other.load_prefs(&h.app.prefs());
+        assert_eq!((other.preferences.theme.as_str(), other.ui.dark, other.viewport_dark()), ("light_ui_dark_viewport", false, true));
+
+        // A theme file keeps its base for both sides.
+        let out = h.call("ui.prefs", json!({"theme": "gruvbox-light-hard"}));
+        assert_eq!((out["result"]["dark"].as_bool(), out["result"]["viewport_dark"].as_bool()), (Some(false), Some(false)), "{out}");
+        h.frames(2);
+        assert!(!crate::theme::viewport_dark() && !crate::theme::is_dark());
     }
 
     /// Picking a font closes the font list, not the Preferences window's body: that folded the
