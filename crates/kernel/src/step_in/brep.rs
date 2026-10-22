@@ -37,6 +37,10 @@ pub(crate) struct BrepOut {
 #[derive(Default)]
 struct Builder {
     vertices: HashMap<u64, mt::Vertex>,
+    /// The VERTEX_POINT an end of an EDGE_CURVE (its id; 0 start, 1 end) is read at instead of
+    /// the one written: writers can list one corner as several, and a loop through two of them
+    /// would not close (see [`Builder::join_loop_corners`]).
+    moved: HashMap<(u64, u8), u64>,
     edges: HashMap<u64, Vec<mt::Edge>>,
     poly_edges: HashMap<(u64, u64), mt::Edge>,
     faces: usize,
@@ -163,6 +167,20 @@ fn reversed_outer(surface: &mt::Surface, wire: &mt::Wire, tol: f64) -> bool {
     area < -16.0 * f64::EPSILON * magnitude
 }
 
+/// The edge ends [`Builder::join_loop_corners`] reads at another VERTEX_POINT for these faces.
+#[cfg(test)]
+pub(super) fn loop_corners_moved(cx: &Ctx, faces: &[u64]) -> HashMap<(u64, u8), u64> {
+    let mut b = Builder::default();
+    b.join_loop_corners(cx, faces);
+    b.moved
+}
+
+/// A vertex position rounded to a nanometre, the same for two VERTEX_POINTs at one corner.
+fn position_key(p: mt::Point3) -> Option<[i64; 3]> {
+    let q = |x: f64| (x.is_finite() && x.abs() < 1e9).then(|| (x * 1e6).round() as i64);
+    Some([q(p.x)?, q(p.y)?, q(p.z)?])
+}
+
 impl Builder {
     fn vertex(&mut self, cx: &Ctx, id: u64) -> R<mt::Vertex> {
         if let Some(v) = self.vertices.get(&id) {
@@ -178,6 +196,114 @@ impl Builder {
         Ok(v)
     }
 
+    /// The ends of an ORIENTED_EDGE (or a bare EDGE_CURVE) in loop order: each as its EDGE_CURVE
+    /// end (id; 0 start, 1 end) and the VERTEX_POINT written there.
+    fn edge_ends(cx: &Ctx, id: u64, depth: usize) -> Option<[((u64, u8), u64); 2]> {
+        let e = entity(cx, id).ok()?;
+        let p = e.params();
+        match e.name() {
+            "ORIENTED_EDGE" if depth < 4 => {
+                let [a, b] = Self::edge_ends(cx, rid(p.get(3), "ORIENTED_EDGE").ok()?, depth + 1)?;
+                Some(if p.get(4).and_then(Param::as_bool).unwrap_or(true) { [a, b] } else { [b, a] })
+            }
+            "EDGE_CURVE" => Some([((id, 0), rid(p.get(1), "edge start").ok()?), ((id, 1), rid(p.get(2), "edge end").ok()?)]),
+            _ => None,
+        }
+    }
+
+    /// Where an edge loop of these faces goes from one edge to the next through two
+    /// VERTEX_POINTs on the same point, a writer listed that corner twice, and the loop closes
+    /// only if both edge ends are read at one vertex. One vertex for every VERTEX_POINT there
+    /// would pinch the shell where the corners are rightly apart (a hole in a face touching
+    /// its outer edge at one point), so the faces around the point are grouped as the loops
+    /// link them, and each group's edge ends are read at the vertex most of them name.
+    fn join_loop_corners(&mut self, cx: &Ctx, faces: &[u64]) {
+        fn root<K: Copy + Eq + std::hash::Hash>(up: &HashMap<K, K>, mut k: K) -> K {
+            for _ in 0..MAX_LOOP {
+                match up.get(&k) {
+                    Some(&next) if next != k => k = next,
+                    _ => break,
+                }
+            }
+            k
+        }
+        let point = |id: u64| -> Option<[i64; 3]> {
+            let e = entity(cx, id).ok()?;
+            (e.name() == "VERTEX_POINT").then_some(())?;
+            position_key(geom::point(cx, rid(e.params().get(1), "VERTEX_POINT").ok()?).ok()?)
+        };
+        // Every turn of every loop: the end it comes in by and the end it leaves by.
+        let mut turns = Vec::new();
+        for &face in faces {
+            let mut face = face;
+            for _ in 0..4 {
+                match entity(cx, face) {
+                    Ok(e) if e.name() == "ORIENTED_FACE" => match rid(e.params().get(2), "ORIENTED_FACE") {
+                        Ok(inner) => face = inner,
+                        Err(_) => break,
+                    },
+                    _ => break,
+                }
+            }
+            let Ok(f) = entity(cx, face) else { continue };
+            for bound in refs(f.params().get(1)).into_iter().take(MAX_BOUNDS) {
+                let Some(lp) = entity(cx, bound).ok().and_then(|b| rid(b.params().get(1), "face bound loop").ok()) else { continue };
+                let Ok(lp) = entity(cx, lp) else { continue };
+                if lp.name() != "EDGE_LOOP" {
+                    continue;
+                }
+                let ends: Vec<_> = refs(lp.params().get(1)).into_iter().take(MAX_LOOP).filter_map(|oe| Self::edge_ends(cx, oe, 0)).collect();
+                for (i, [_, arrive]) in ends.iter().enumerate() {
+                    if let Some([leave, _]) = ends.get((i + 1) % ends.len()) {
+                        turns.push((*arrive, *leave));
+                    }
+                }
+            }
+        }
+        // The VERTEX_POINTs a loop passes between on one point are one corner.
+        let mut corner: HashMap<u64, u64> = HashMap::new();
+        for &((_, a), (_, b)) in &turns {
+            let (ra, rb) = (root(&corner, a), root(&corner, b));
+            if ra != rb && point(a).is_some_and(|pa| point(b) == Some(pa)) {
+                corner.insert(ra.max(rb), ra.min(rb));
+            }
+        }
+        if corner.is_empty() {
+            return;
+        }
+        // At such a corner, the edge ends one face's loop turns between lie around one group.
+        let mut group: HashMap<(u64, u8), (u64, u8)> = HashMap::new();
+        let mut written: HashMap<(u64, u8), u64> = HashMap::new();
+        let joined: std::collections::HashSet<u64> = corner.iter().flat_map(|(&a, &b)| [a, b]).collect();
+        for &((ea, a), (eb, b)) in &turns {
+            if !joined.contains(&a) || root(&corner, a) != root(&corner, b) {
+                continue;
+            }
+            written.insert(ea, a);
+            written.insert(eb, b);
+            let (ra, rb) = (root(&group, ea), root(&group, eb));
+            if ra != rb {
+                group.insert(ra.max(rb), ra.min(rb));
+            }
+        }
+        // Each group is read at the VERTEX_POINT most of its edge ends name.
+        let mut votes: HashMap<(u64, u8), HashMap<u64, usize>> = HashMap::new();
+        for (&end, &v) in &written {
+            *votes.entry(root(&group, end)).or_default().entry(v).or_default() += 1;
+        }
+        let chosen: HashMap<(u64, u8), u64> = votes
+            .into_iter()
+            .filter_map(|(g, count)| count.into_iter().max_by_key(|&(v, n)| (n, std::cmp::Reverse(v))).map(|(v, _)| (g, v)))
+            .collect();
+        for (&end, &v) in &written {
+            if let Some(&to) = chosen.get(&root(&group, end))
+                && to != v
+            {
+                self.moved.insert(end, to);
+            }
+        }
+    }
+
     /// Kernel edges (start to end) of an EDGE_CURVE.
     fn edge_curve(&mut self, cx: &Ctx, id: u64) -> R<Vec<mt::Edge>> {
         if let Some(e) = self.edges.get(&id) {
@@ -189,6 +315,8 @@ impl Builder {
         }
         let p = e.params();
         let (vs_id, ve_id) = (rid(p.get(1), "edge start")?, rid(p.get(2), "edge end")?);
+        let vs_id = self.moved.get(&(id, 0)).copied().unwrap_or(vs_id);
+        let ve_id = self.moved.get(&(id, 1)).copied().unwrap_or(ve_id);
         let vs = self.vertex(cx, vs_id)?;
         let ve = self.vertex(cx, ve_id)?;
         let sense = p.get(4).and_then(Param::as_bool).unwrap_or(true);
@@ -473,6 +601,7 @@ impl Builder {
         if faces.len() > MAX_FACES {
             return Err(format!("shell with {} faces", faces.len()));
         }
+        self.join_loop_corners(cx, &faces);
         let mut out = Vec::with_capacity(faces.len());
         let mut origin = Vec::with_capacity(faces.len());
         for f in faces {

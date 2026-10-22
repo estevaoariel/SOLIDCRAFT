@@ -527,6 +527,61 @@ fn offset_surface_cube_import_is_closed_and_editable() {
     assert!(rel(measure(&result).unwrap().volume, 1000.0 - 40.0 * std::f64::consts::PI) < 1e-3);
 }
 
+#[test]
+fn one_corner_written_as_two_vertices_still_closes_the_solid() {
+    // A writer can list one corner twice: the edge up from (1,0,0) starts at a second
+    // VERTEX_POINT on the same point, so the two side faces' loops close only by position.
+    let mut entities = cube_entities().replace("#329=EDGE_CURVE('',#211,", "#329=EDGE_CURVE('',#218,");
+    entities += "#218=VERTEX_POINT('',#201);\n";
+    entities += &context(10, "(LENGTH_UNIT()NAMED_UNIT(*)SI_UNIT(.CENTI.,.METRE.))");
+    entities += "#9=ADVANCED_BREP_SHAPE_REPRESENTATION('Twice',(#101),#10);\n";
+    let import = step_import(&format!("{HEAD}{entities}{TAIL}")).unwrap();
+    assert!(import.warnings.is_empty(), "{:?}", import.warnings);
+    assert!(import.bodies[0].closed);
+    let body = &import.bodies[0].body;
+    assert_eq!(measure(body).unwrap().faces, 6);
+    assert!(rel(measure(body).unwrap().volume, 1000.0) < 1e-6);
+    let cut = cylinder(Vec3::new(5.0, 5.0, -1.0), Vec3::Z, 2.0, 12.0).unwrap();
+    let result = boolean(body, &cut, BoolOp::Cut).unwrap().unwrap();
+    assert!(rel(measure(&result).unwrap().volume, 1000.0 - 40.0 * std::f64::consts::PI) < 1e-3);
+}
+
+#[test]
+fn a_hole_touching_its_face_corner_keeps_the_corners_apart() {
+    // A face's hole touches its outer loop at the origin, written as two VERTEX_POINTs (#1, the
+    // outer loop's; #5, the hole's). The chamfer edge #28 down from the hole is written from #1,
+    // so the loops of the chamfer faces turn between #1 and #5. One vertex for both would pinch
+    // the shell there (the body read as open, its booleans failing); only #28's start moves.
+    let mut text = String::from(HEAD);
+    for (id, p) in
+        [(1, "0.,0.,0."), (2, "10.,0.,0."), (3, "10.,10.,0."), (4, "0.,10.,0."), (5, "0.,0.,0."), (6, "4.,1.,0."), (7, "1.,4.,0."), (8, "1.,1.,-1.")]
+    {
+        text += &format!("#{}=CARTESIAN_POINT('',({p}));\n#{id}=VERTEX_POINT('',#{});\n", id + 100, id + 100);
+    }
+    for (id, vs, ve) in [(21, 1, 2), (22, 2, 3), (23, 3, 4), (24, 4, 1), (25, 5, 6), (26, 6, 7), (27, 7, 5), (28, 1, 8), (29, 8, 6), (30, 7, 8)] {
+        text += &format!(
+            "#{id}=EDGE_CURVE('',#{vs},#{ve},#999,.T.);\n#{}=ORIENTED_EDGE('',*,*,#{id},.T.);\n#{}=ORIENTED_EDGE('',*,*,#{id},.F.);\n",
+            id + 100,
+            id + 200
+        );
+    }
+    // The face with its hole, and the two chamfer faces from the hole down to #8.
+    for (face, loops) in [(41, vec!["#121,#122,#123,#124", "#125,#126,#127"]), (42, vec!["#225,#128,#129"]), (43, vec!["#227,#130,#228"])] {
+        let mut bounds = Vec::new();
+        for (i, edges) in loops.iter().enumerate() {
+            let id = face * 10 + i as u64;
+            text += &format!("#{id}=EDGE_LOOP('',({edges}));\n#{}=FACE_BOUND('',#{id},.T.);\n", id + 1000);
+            bounds.push(format!("#{}", id + 1000));
+        }
+        text += &format!("#{face}=ADVANCED_FACE('',({}),#998,.T.);\n", bounds.join(","));
+    }
+    text += TAIL;
+    let ex = p21::parse(&text).unwrap();
+    let cx = Ctx { ex: &ex, len: 1.0, ang: 1.0, tol: 1e-6, snap: 1e-6 };
+    let moved = brep::loop_corners_moved(&cx, &[41, 42, 43]);
+    assert_eq!(moved, std::collections::HashMap::from([((28, 0), 5)]));
+}
+
 /// A hand-written unit cube brep (`#100`…) in a representation with the given unit and items.
 fn cube_entities() -> String {
     let mut s = String::new();
