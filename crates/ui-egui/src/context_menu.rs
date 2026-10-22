@@ -1092,7 +1092,11 @@ pub fn run_item(app: &mut SolveApp, item: &Item, at: Pos2) {
             if let Some(f) = f {
                 app.ui.show_timeline = true;
                 crate::timeline_left::reveal_feature(app, f);
-                crate::browser::reveal_feature(app, f, body);
+                // From a face or body, the Browser shows the feature in that body's copy. From a
+                // sketch, plane or feature row there is no body: that row is the Browser's view.
+                if let Some(body) = body {
+                    crate::browser::reveal_feature(app, f, body);
+                }
                 let _ = app.run("select.set", json!({"items": [{"type": "feature", "id": f}]}));
             }
         }

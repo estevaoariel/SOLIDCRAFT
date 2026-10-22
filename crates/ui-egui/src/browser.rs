@@ -20,7 +20,7 @@ mod model;
 
 mod features;
 
-pub(crate) fn reveal_feature(app: &mut SolveApp, id: u64, body: Option<&str>) {
+pub(crate) fn reveal_feature(app: &mut SolveApp, id: u64, body: &str) {
     features::reveal(app, id, body);
 }
 
@@ -34,8 +34,14 @@ pub(crate) fn reveal_body(app: &mut SolveApp, body: &str) {
     app.tree.reveal = Some(body.to_string());
     let state = app.session.model.state();
     let Some(source) = app.session.world_state().body(body).map(|selected| selected.definition_name().to_string()) else { return };
-    let Some((component, path, _)) =
-        app.session.doc.placements().into_iter().find(|(owner, path, _)| app.session.doc.world_body_name(&state, &source, *owner, path) == body)
+    let Some(component) = state.body(&source).map(|definition| definition.component) else { return };
+    // Every component's first placement keeps the definition's name, so the owner must match too.
+    let Some((_, path, _)) = app
+        .session
+        .doc
+        .placements()
+        .into_iter()
+        .find(|(owner, path, _)| *owner == component && app.session.doc.world_body_name(&state, &source, *owner, path) == body)
     else {
         return;
     };

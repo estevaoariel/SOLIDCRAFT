@@ -9,21 +9,24 @@ pub(crate) struct Reveal {
 }
 
 /// Open the Features folder that lists this feature and scroll to its row, without changing the
-/// active component or history marker. With a body, the folder is the one of the placement that
-/// body belongs to; without one, the first placement of the feature's component.
-pub(crate) fn reveal(app: &mut SolveApp, id: u64, body: Option<&str>) {
+/// active component or history marker. The folder is the one of the placement `body` belongs to:
+/// without a body there is no telling which copy of a component was meant.
+pub(crate) fn reveal(app: &mut SolveApp, id: u64, body: &str) {
     let Some(feature) = app.session.doc.feature(id) else { return };
+    if matches!(feature.kind, FeatureKind::Sketch { .. }) {
+        return; // Sketches are listed in Sketches, not Features.
+    }
     let component = feature.component;
     let state = app.session.model.state();
     let world = app.session.world_state();
-    let source = body.and_then(|body| world.body(body)).map(|selected| selected.definition_name());
-    let Some((_, path, _)) = app.session.doc.placements().into_iter().find(|(owner, path, _)| {
-        *owner == component
-            && match (body, source) {
-                (Some(body), Some(source)) => app.session.doc.world_body_name(&state, source, component, path) == body,
-                _ => true,
-            }
-    }) else {
+    let Some(source) = world.body(body).map(|selected| selected.definition_name()) else { return };
+    let Some((_, path, _)) = app
+        .session
+        .doc
+        .placements()
+        .into_iter()
+        .find(|(owner, path, _)| *owner == component && app.session.doc.world_body_name(&state, source, component, path) == body)
+    else {
         return;
     };
     app.ui.show_browser = true;
@@ -172,6 +175,31 @@ mod tests {
     }
 
     #[test]
+    fn find_in_timeline_from_a_sketch_or_plane_row_leaves_the_browser_alone() {
+        let mut h = Harness::new();
+        let assembly = h.app.run("component.create", json!({"name":"Assembly"})).unwrap();
+        h.app.run("component.create", json!({"name":"Part"})).unwrap();
+        h.app.run("solid.box", json!({"length":40,"width":30,"height":20,"body_name":"Plate"})).unwrap();
+        h.app.run("sketch.create", json!({"plane":"XZ","name":"PartSketch"})).unwrap();
+        h.app.run("sketch.rectangle.two_point", json!({"p0":[5,25],"p1":[15,32]})).unwrap();
+        h.app.run("sketch.finish", json!({})).unwrap();
+        let sketch = h.app.session.doc.find_feature("PartSketch").unwrap().id;
+        let plane = h.app.run("construct.plane.offset", json!({"base":"XY","offset":30,"name":"PartPlane"})).unwrap()["feature"].as_u64().unwrap();
+        h.app.run("occurrence.copy", json!({"occurrence":assembly["occurrence"],"translate":[90,0,0]})).unwrap();
+        h.app.run("component.activate", json!({"component":0})).unwrap();
+        h.frames(2);
+        let (collapsed, expanded) = (h.app.tree.collapsed.clone(), h.app.tree.expanded.clone());
+        // Neither row says which copy it was in: revealing in "the first placement" picked the other copy.
+        for (target, id) in [(Target::Sketch { id: sketch }, sketch), (Target::Plane { id: plane }, plane)] {
+            let item = crate::context_menu::items(&h.app, &target).into_iter().find(|item| item.id == "ui.findTimeline").unwrap();
+            crate::context_menu::run_item(&mut h.app, &item, pos2(0.0, 0.0));
+            assert_eq!(h.app.session.selection, [Sel::Feature { id }]);
+            assert!(h.app.tree.reveal_feature.is_none(), "{target:?}");
+            assert_eq!((&h.app.tree.collapsed, &h.app.tree.expanded), (&collapsed, &expanded), "{target:?}");
+        }
+    }
+
+    #[test]
     fn find_in_timeline_opens_the_picked_placements_features_folder_and_survives_reopen() {
         let mut h = Harness::new();
         let assembly = h.app.run("component.create", json!({"name":"Assembly"})).unwrap();
@@ -269,25 +297,34 @@ mod tests {
     }
 
     #[test]
-    fn browser_find_reveals_a_body_in_a_later_placement() {
+    fn browser_find_reveals_a_body_in_its_own_nested_placement() {
         let mut h = Harness::new();
         let assembly = h.app.run("component.create", json!({"name":"Assembly"})).unwrap();
         let component = h.app.run("component.create", json!({"name":"Part"})).unwrap();
         h.app.run("solid.box", json!({"length":40,"width":30,"height":20,"body_name":"Plate"})).unwrap();
         let copy = h.app.run("occurrence.copy", json!({"occurrence":assembly["occurrence"],"translate":[70,25,10]})).unwrap();
-        let path = vec![copy["occurrence"].as_u64().unwrap(), component["occurrence"].as_u64().unwrap()];
+        let first = vec![assembly["occurrence"].as_u64().unwrap(), component["occurrence"].as_u64().unwrap()];
+        let later = vec![copy["occurrence"].as_u64().unwrap(), component["occurrence"].as_u64().unwrap()];
         h.app.run("component.activate", json!({"component":0})).unwrap();
-        let world_body = h.app.session.occurrence_bodies(&path, false).unwrap()[0].clone();
-        assert_ne!(world_body, "Plate", "a later placement's body has its own world name");
-        h.app.tree.collapsed.insert("c0".into());
-        for depth in 1..=path.len() {
-            h.app.tree.collapsed.insert(occurrence_key(&path[..depth]));
+        // The first placement's body keeps the definition's name, which every component's first
+        // placement (the root's too) would also give; a later one has its own world name.
+        for (path, named_plate) in [(first, true), (later, false)] {
+            let world_body = h.app.session.occurrence_bodies(&path, false).unwrap()[0].clone();
+            assert_eq!(world_body == "Plate", named_plate);
+            h.app.tree.collapsed.insert("c0".into());
+            for depth in 1..=path.len() {
+                h.app.tree.collapsed.insert(occurrence_key(&path[..depth]));
+            }
+            h.app.tree.collapsed.insert(format!("{}/bodies", occurrence_key(&path)));
+            find_in_browser(&mut h.app, face(&world_body));
+            for depth in 1..=path.len() {
+                assert!(!h.app.tree.collapsed.contains(&occurrence_key(&path[..depth])), "{world_body}: {:?}", &path[..depth]);
+            }
+            assert!(!h.app.tree.collapsed.contains(&format!("{}/bodies", occurrence_key(&path))), "{world_body}");
+            h.frames(2);
+            assert!(h.app.tree.reveal.is_none(), "{world_body}: the placed body row was drawn and scrolled to");
+            assert_eq!(h.app.session.selection, [Sel::Body { name: world_body }]);
         }
-        h.app.tree.collapsed.insert(format!("{}/bodies", occurrence_key(&path)));
-        find_in_browser(&mut h.app, face(&world_body));
-        h.frames(2);
-        assert!(h.app.tree.reveal.is_none(), "the placed body row was drawn and scrolled to");
-        assert_eq!(h.app.session.selection, [Sel::Body { name: world_body }]);
     }
 
     #[test]
