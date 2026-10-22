@@ -265,11 +265,14 @@ fn the_example_macros_run() {
     let r = play_example(
         &mut sprocket,
         "gear_generator.rhai",
-        json!({"params": {"kind": "sprocket", "chain": "40", "teeth": 12, "thickness": 8, "bore": 10, "hub": "none"}}),
+        json!({"params": {"kind": "sprocket", "chain": "40", "teeth": 12, "bore": 10, "hub": "none"}}),
     );
     assert_eq!(r["ran"], true, "sprocket: {r}");
     let sv = volume(&mut sprocket);
-    assert!(sv > 100.0, "sprocket has volume {sv}");
+    let width = 7.925;
+    let ra = 12.7 * (0.6 + 1.0 / (std::f64::consts::PI / 12.0).tan()) / 2.0;
+    let max = std::f64::consts::PI * ra * ra * width;
+    assert!(sv > max * 0.2 && sv < max, "ANSI #40 sprocket volume {sv} vs disk {max}");
 
     let mut boss = Session::default();
     let r = play_example(
@@ -312,16 +315,15 @@ fn the_example_macros_run() {
 }
 
 #[test]
-fn a_helical_gear_is_refused_without_panic() {
+fn a_helical_gear_uses_sweep() {
     let mut helix = Session::default();
-    helix.macros.loaded = Some(example("gear_generator.rhai"));
-    let e = error(
+    let r = play_example(
         &mut helix,
-        "macro.play",
+        "gear_generator.rhai",
         json!({"params": {"kind": "gear", "teeth": 12, "gear_module": 2, "bore": 8, "thickness": 8, "helix": 15, "pa": "20"}}),
     );
-    assert!(e.to_ascii_lowercase().contains("helical"), "{e}");
-    assert!(helix.doc.features.is_empty(), "a refused helical play rolls back");
+    assert_eq!(r["ran"], true, "helical sweep: {r}");
+    assert!(volume(&mut helix) > 100.0, "helical gear has volume");
 }
 
 fn examples_dir() -> String {
