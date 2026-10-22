@@ -1474,6 +1474,9 @@ pub fn set(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::Valu
     if new.custom_themes.len() > crate::theme_files::MAX_CUSTOM || new.custom_themes.iter().any(|t| t.colors.len() > crate::theme_files::MAX_COLORS) {
         return Err(format!("at most {} imported themes of {} colours each", crate::theme_files::MAX_CUSTOM, crate::theme_files::MAX_COLORS));
     }
+    for theme in &new.custom_themes {
+        theme.validate_radii()?;
+    }
     if !crate::i18n::is_supported(&new.language) {
         return Err(format!("`language` must be one of: {}", crate::i18n::LOCALES.iter().map(|locale| locale.id).collect::<Vec<_>>().join(", ")));
     }
@@ -1675,16 +1678,25 @@ mod tests {
             solidcraft_engine::render::Rgb(hard.viewport_top.r(), hard.viewport_top.g(), hard.viewport_top.b())
         );
 
-        let file = json!({"format": "solidcraft-theme/1", "name": "Paper", "base": "light", "colors": {"panel": "#fffdf0", "accent": "#aa3300"}});
+        let file = json!({"format": "solidcraft-theme/1", "name": "Paper", "base": "light", "colors": {"panel": "#fffdf0", "accent": "#aa3300"}, "radii": {"radius_sm": 0, "control_radius": 0, "radius_xl": 16}});
         let out = h.call("ui.prefs", json!({"theme_import": file, "theme_export": true}));
         assert_eq!(out["result"]["theme_imported"], "paper", "{out}");
         assert_eq!((out["result"]["theme"].as_str(), out["result"]["dark"].as_bool()), (Some("paper"), Some(false)));
         let exported = &out["result"]["theme_file"];
         assert_eq!((exported["name"].as_str(), exported["base"].as_str()), (Some("Paper"), Some("light")));
         assert_eq!(exported["colors"]["panel"], "#fffdf0");
+        assert_eq!(exported["radii"]["control_radius"], 0);
+        assert_eq!(exported["radii"]["radius_xl"], 16);
+        assert_eq!(exported["radii"]["radius_md"], 6);
         assert_eq!(exported["colors"]["text"].as_str().map(str::len), Some(7), "an export is complete: {exported}");
         h.frames(2);
         assert_eq!((Tokens::get().panel, Tokens::get().text), (egui::Color32::from_rgb(0xff, 0xfd, 0xf0), Tokens::light().text));
+        assert_eq!((Tokens::get().control_radius, Tokens::get().radius_xl), (0, 16));
+        let invalid = h.call(
+            "ui.prefs",
+            json!({"theme_import": {"format": "solidcraft-theme/1", "name": "Bad", "base": "dark", "radii": {"control_radius": -1}}}),
+        );
+        assert!(invalid["error"].as_str().is_some_and(|e| e.contains("radii.control_radius")));
         let out = h.call(
             "ui.prefs",
             json!({"theme_import": "{\"format\":\"solidcraft-theme/1\",\"name\":\"x\",\"base\":\"dark\",\"colors\":{\"nope\":\"#000000\"}}"}),
@@ -1696,6 +1708,7 @@ mod tests {
         let mut other = crate::SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
         other.load_prefs(&h.app.prefs());
         assert_eq!((other.preferences.theme.as_str(), other.preferences.custom_themes.len()), ("paper", 1));
+        assert_eq!(other.preferences.custom_themes[0].radii, h.app.preferences.custom_themes[0].radii);
 
         let out = h.call("ui.prefs", json!({"theme_remove": "paper"}));
         assert_eq!((out["result"]["theme"].as_str(), out["result"]["dark"].as_bool()), (Some("light"), Some(false)), "{out}");
@@ -1710,6 +1723,7 @@ mod tests {
         assert!(h.app.preferences.custom_themes.is_empty(), "Cancel takes the import back");
         h.frames(2);
         assert_eq!(Tokens::get().panel, Tokens::dark().panel);
+        assert_eq!((Tokens::get().control_radius, Tokens::get().radius_xl), (6, 10));
     }
 
     /// Picking a font closes the font list, not the Preferences window's body: that folded the

@@ -849,7 +849,11 @@ fn vertical_group_row(
     drop_zones.push((rect, group.id));
     slots.push(VerticalSlot { y: rect.bottom(), position: if open { position } else { end_position }, group: Some(group.id), indent_group: None });
     if selected || response.hovered() {
-        ui.painter().rect_filled(rect, 3.0, if selected { crate::theme::TabAccent::current(ui.ctx()).soft } else { t.hover });
+        ui.painter().rect_filled(
+            rect,
+            t.radius_sm.saturating_sub(1),
+            if selected { crate::theme::TabAccent::current(ui.ctx()).soft } else { t.hover },
+        );
     }
     let offset = if names { depth as f32 * 14.0 } else { 0.0 };
     let centre = pos2(rect.left() + 9.0 + offset, rect.center().y);
@@ -1137,7 +1141,7 @@ fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui, names: bool) {
             folder_drop_zones.iter().find(|(rect, group)| *group == target && rect.shrink2(vec2(0.0, 5.0)).contains(pointer)).map(|(rect, _)| *rect)
         });
         if let Some(rect) = hovered_folder {
-            ui.painter().rect_stroke(rect.shrink(1.0), 3.0, Stroke::new(2.0, t.sketch_accent), egui::StrokeKind::Inside);
+            ui.painter().rect_stroke(rect.shrink(1.0), t.radius_sm.saturating_sub(1), Stroke::new(2.0, t.sketch_accent), egui::StrokeKind::Inside);
         } else {
             let left = vertical_drop_bar_left(ui.min_rect().left(), folder_target, &groups);
             crate::ui_kit::history_drop_bar(

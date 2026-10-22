@@ -76,7 +76,7 @@ pub(crate) fn assistant_bubble<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -
         ui.add_space(width - bubble_width);
         egui::Frame::NONE
             .fill(t.accent_soft)
-            .corner_radius(egui::CornerRadius { nw: t.radius_xl, ne: t.radius_xl, sw: t.radius_xl, se: t.space_3 as u8 })
+            .corner_radius(egui::CornerRadius { nw: t.radius_xl, ne: t.radius_xl, sw: t.radius_xl, se: t.radius_sm.saturating_sub(1) })
             .inner_margin(egui::Margin::symmetric((t.space_8 + t.space_3) as i8, t.space_8 as i8))
             .show(ui, |ui| {
                 let content_width = (bubble_width - (t.space_8 + t.space_3) * 2.0).max(0.0);

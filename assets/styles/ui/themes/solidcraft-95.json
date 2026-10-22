@@ -199,5 +199,13 @@
     "warning": "#ffff00"
   },
   "format": "solidcraft-theme/1",
-  "name": "SolidCraft 95"
+  "name": "SolidCraft 95",
+  "radii": {
+    "radius_sm": 3,
+    "radius_md": 3,
+    "radius_lg": 4,
+    "radius_xl": 4,
+    "control_radius": 3,
+    "sketch_mode_radius": 3
+  }
 }

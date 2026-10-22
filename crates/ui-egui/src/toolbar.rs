@@ -257,10 +257,10 @@ pub(crate) fn offer_pill(
     crate::scenario::publish_target(handle, rect);
     let hot = response.hovered() || response.has_focus();
     let fill = if hot { t.app_bar_hover_button } else { t.accent };
-    let radius = PILL_HEIGHT / 2.0;
+    let radius = PILL_HEIGHT / 2.0 * f32::from(t.radius_xl) / 10.0;
     ui.painter().rect_filled(rect, radius, fill);
     if response.has_focus() {
-        ui.painter().rect_stroke(rect.expand(2.0), radius + 2.0, Stroke::new(1.0, t.app_bar_text), egui::StrokeKind::Outside);
+        ui.painter().rect_stroke(rect.expand(2.0), Tokens::outset_radius(radius, 2.0), Stroke::new(1.0, t.app_bar_text), egui::StrokeKind::Outside);
     }
     let glyph_x = if label.is_some() { rect.left() + icon_x } else { rect.center().x };
     let glyph = Rect::from_center_size(pos2(glyph_x, rect.center().y), vec2(16.0, 16.0));
@@ -810,7 +810,7 @@ fn ribbon_tabs(app: &mut SolveApp, ui: &mut egui::Ui, row: Rect) {
     // edges, so their outer corners are concentric with the card's corners.
     let floating = Container::for_layout(app.ui.layout, Surface::Panel).floating();
     let inset = RIBBON_TAB_INSET;
-    let corner = if floating { t.radius_lg.saturating_sub(inset as u8).max(2) } else { 5 };
+    let corner = if floating { t.radius_lg.saturating_sub(inset as u8).max(t.radius_sm / 2) } else { t.control_radius.saturating_sub(1) };
     let search = Rect::from_min_size(pos2(row.right() - search_width - inset, row.top() + inset), vec2(search_width, TAB_ROW_HEIGHT - 2.0 * inset));
     // The single editor is drawn on the foreground layer by shortcut_box::show, so it
     // can grow over the ribbon without being clipped to the tab row.
@@ -950,7 +950,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
         let accent_inset = if floating { f32::from(t.radius_lg) } else { 0.0 };
         painter.rect_filled(
             Rect::from_min_size(ws.left_top() + vec2(accent_inset, 0.0), vec2((ws.width() - 2.0 * accent_inset).max(0.0), t.space_3)),
-            egui::CornerRadius { nw: 0, ne: 0, sw: if floating { 2 } else { 0 }, se: if floating { 2 } else { 0 } },
+            egui::CornerRadius { nw: 0, ne: 0, sw: if floating { t.radius_sm / 2 } else { 0 }, se: if floating { t.radius_sm / 2 } else { 0 } },
             t.accent,
         );
         if !floating {
@@ -1229,7 +1229,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                     let accent = crate::theme::TabAccent::for_tab(&t, &tab);
                     painter.rect(
                         cell,
-                        4.0,
+                        t.radius_sm,
                         if active {
                             if accent.color == t.accent { t.panel.lerp_to_gamma(command_accent(c.icon), 0.18) } else { accent.soft }
                         } else if resp.hovered() && info.enabled {
@@ -1284,7 +1284,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
             let accent = crate::theme::TabAccent::for_tab(&t, &tab);
             let hot = lresp.hovered() && enabled_panel;
             if panel_open || hot {
-                painter.rect_filled(lr, 4.0, if panel_open { accent.soft } else { t.hover });
+                painter.rect_filled(lr, t.radius_sm, if panel_open { accent.soft } else { t.hover });
             }
             let label = if finish { app.tr("ui.ribbon_exit").to_string() } else { ribbon_label(app, panel) };
             let font = if panel_open || hot {
@@ -1534,7 +1534,7 @@ fn ribbon_tooltip(app: &SolveApp, response: egui::Response, command: &solidcraft
                     egui::Frame::NONE
                         .fill(t.panel_header)
                         .stroke(Stroke::new(1.0, t.border))
-                        .corner_radius(3.0)
+                        .corner_radius(t.radius_sm.saturating_sub(1))
                         .inner_margin(egui::Margin::symmetric(5, 1))
                         .show(ui, |ui| {
                             ui.label(egui::RichText::new(key).monospace().color(t.text_dim));
@@ -1646,7 +1646,7 @@ fn dropdown_row(app: &SolveApp, ui: &mut egui::Ui, c: &'static solidcraft_engine
     let p = ui.painter();
     if pointer_on || resp.has_focus() {
         if pin.hovered() {
-            p.rect_filled(pr, 3.0, t.border.gamma_multiply(0.6));
+            p.rect_filled(pr, t.radius_sm.saturating_sub(1), t.border.gamma_multiply(0.6));
         }
         pin_icon(p, pr, pinned, if pinned { t.accent } else { t.text_dim });
         crate::scenario::publish_handle(&format!("dropdown_pin:{}", c.id), pr.center());

@@ -199,5 +199,13 @@
     "warning": "#f0d18c"
   },
   "format": "solidcraft-theme/1",
-  "name": "Blueprint"
+  "name": "Blueprint",
+  "radii": {
+    "radius_sm": 4,
+    "radius_md": 6,
+    "radius_lg": 8,
+    "radius_xl": 10,
+    "control_radius": 6,
+    "sketch_mode_radius": 7
+  }
 }

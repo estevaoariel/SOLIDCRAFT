@@ -199,5 +199,13 @@
     "warning": "#ad7400"
   },
   "format": "solidcraft-theme/1",
-  "name": "Cupertino"
+  "name": "Cupertino",
+  "radii": {
+    "radius_sm": 6,
+    "radius_md": 8,
+    "radius_lg": 12,
+    "radius_xl": 16,
+    "control_radius": 8,
+    "sketch_mode_radius": 9
+  }
 }

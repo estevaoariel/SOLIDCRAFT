@@ -1875,7 +1875,7 @@ fn analysis_legend(app: &SolveApp, painter: &egui::Painter, rect: Rect) {
     }
     for (c, text, hatched) in rows {
         let sw = Rect::from_min_size(pos2(r.left() + pad, y + 2.0), vec2(12.0, 12.0));
-        painter.rect_filled(sw, 2.0, c);
+        painter.rect_filled(sw, t.radius_sm / 2, c);
         if hatched {
             // The stripes the viewport adds to these faces (colour vision modes).
             for k in [3.0, 7.0, 11.0] {
@@ -3221,8 +3221,8 @@ fn agent_chip(app: &mut SolveApp, ui: &egui::Ui, rect: Rect) {
         let galley = painter.layout_no_wrap(format!("{label} · {computing}"), FontId::proportional(t.font_label), t.text);
         let stop = painter.layout_no_wrap(crate::i18n::tr("ui.agent_chat_stop").to_string(), FontId::proportional(t.font_label), t.text);
         let r = Rect::from_min_size(pos, vec2(galley.size().x + stop.size().x + 54.0, galley.size().y.max(stop.size().y) + 8.0));
-        painter.rect_filled(r, 4.0, t.overlay);
-        painter.rect_stroke(r, 4.0, Stroke::new(1.0, crate::icons::pointer::agent()), egui::StrokeKind::Inside);
+        painter.rect_filled(r, t.radius_sm, t.overlay);
+        painter.rect_stroke(r, t.radius_sm, Stroke::new(1.0, crate::icons::pointer::agent()), egui::StrokeKind::Inside);
         egui::Spinner::new()
             .color(crate::icons::pointer::agent())
             .size(t.space_12)
@@ -3230,7 +3230,7 @@ fn agent_chip(app: &mut SolveApp, ui: &egui::Ui, rect: Rect) {
         painter.galley(pos + vec2(26.0, 4.0), galley.clone(), t.text);
         let button = Rect::from_min_size(pos2(pos.x + galley.size().x + 34.0, r.top() + 2.0), vec2(stop.size().x + 12.0, r.height() - 4.0));
         let clicked = ui.interact(button, egui::Id::new("sc_agent_stop"), Sense::click());
-        painter.rect_filled(button, 3.0, if clicked.hovered() { t.hover } else { t.overlay });
+        painter.rect_filled(button, t.radius_sm.saturating_sub(1), if clicked.hovered() { t.hover } else { t.overlay });
         painter.galley(button.min + vec2(6.0, 2.0), stop, t.text);
         crate::scenario::publish_handle("agent:stop", button.center());
         if clicked.clicked() {

@@ -268,18 +268,18 @@ pub(crate) fn workspace_menu(ui: &mut egui::Ui, items: &[Item], key_row: Option<
                     crate::scenario::publish_target(&handle, r);
                 }
                 if current || (item.enabled && (resp.hovered() || key_row == Some(k))) {
-                    ui.painter().rect_filled(r, 5.0, soft);
+                    ui.painter().rect_filled(r, t.control_radius.saturating_sub(1), soft);
                 }
                 ui.painter().rect_filled(
                     Rect::from_min_max(r.min + vec2(t.space_2, t.space_6 + 1.0), pos2(r.left() + 6.0, r.bottom() - 7.0)),
-                    2.0,
+                    t.radius_sm / 2,
                     accent,
                 );
                 let tile = Rect::from_center_size(
                     pos2(r.left() + 40.0, r.center().y),
                     vec2(t.space_24 + t.space_16 + t.space_4, t.space_24 + t.space_16 + t.space_4),
                 );
-                ui.painter().rect_filled(tile, 9.0, if planned { t.panel_header } else { soft });
+                ui.painter().rect_filled(tile, t.radius_xl.saturating_sub(1), if planned { t.panel_header } else { soft });
                 if !item.icon.is_empty() {
                     icons::paint_icon(ui.painter(), tile.shrink(t.space_6 + 1.0), &item.icon, if item.enabled { 1.0 } else { 0.35 });
                 }
@@ -307,7 +307,7 @@ pub(crate) fn workspace_menu(ui: &mut egui::Ui, items: &[Item], key_row: Option<
                     if current { t.on_accent } else { accent },
                 );
                 let badge_rect = Rect::from_min_size(pos2(badge_x, y - 8.0), badge.size() + vec2(t.space_12, t.space_3));
-                ui.painter().rect_filled(badge_rect, 8.0, if current { accent } else { soft });
+                ui.painter().rect_filled(badge_rect, t.radius_lg, if current { accent } else { soft });
                 ui.painter().galley(badge_rect.min + vec2(t.space_6, t.space_3 / 2.0), badge, accent);
                 let line = |content: String, y: f32| {
                     let mut job =

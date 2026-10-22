@@ -468,3 +468,20 @@ native button used by `button` inside a bounded, centred layout. It preserves
 stable identity, enabled state and exact caller-owned geometry. Recovery actions
 use this component rather than custom button painters. The recovery well renders
 the existing restore artwork through its construction accent ramp.
+
+
+### Theme corner radii
+
+Theme files may override `radius_sm`, `radius_md`, `radius_lg`, `radius_xl`,
+`control_radius` and `sketch_mode_radius` in an optional `radii` object (integer
+UI points, 0–32). Missing entries retain the base palette's shape. Light and dark
+variants of a family should use identical values. Import/export and preferences
+retain these overrides; colour vision modes leave them alone.
+
+Use `Tokens` for decorative UI corners, including hover, selection, focus,
+image thumbnails, popups and nested surfaces. Small legacy accents derive their
+radius from the small token so the default appearance stays unchanged. Expanded
+outlines use `Tokens::outset_radius` so square corners stay square. `Container`
+continues to own outer surface chrome and square dock contacts. Functional
+geometry (circles, model selection boxes, plot clipping, manipulator handles
+and the artwork inside icons) retains its own shape.

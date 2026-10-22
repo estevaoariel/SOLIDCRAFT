@@ -900,7 +900,7 @@ fn measure_line(app: &SolveApp, painter: &egui::Painter, proj: &Proj, r: &serde_
     if app.preferences.measure_axis_distances {
         measure_components(app, painter, proj, a, b, rect);
     }
-    painter.rect(rect, 3.0, t.overlay, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
+    painter.rect(rect, t.radius_sm.saturating_sub(1), t.overlay, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
     painter.galley(rect.min + vec2(5.0, 3.0), galley, t.text);
 }
 
@@ -960,7 +960,7 @@ fn measure_components(app: &SolveApp, painter: &egui::Painter, proj: &Proj, a: V
             }
         }
         painter.line_segment([at, rect.center()], Stroke::new(0.8, color));
-        painter.rect(rect, 3.0, t.overlay, Stroke::new(1.0, color), egui::StrokeKind::Inside);
+        painter.rect(rect, t.radius_sm.saturating_sub(1), t.overlay, Stroke::new(1.0, color), egui::StrokeKind::Inside);
         painter.galley(rect.min + vec2(5.0, 3.0), galley, t.text);
         let handle = format!("measure:label:{axis}");
         crate::scenario::publish_target(&handle, rect);

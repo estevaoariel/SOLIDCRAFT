@@ -67,10 +67,11 @@ pub(crate) struct ThemeSwatch {
     panel: Color32,
     accent: Color32,
     dim: Color32,
+    radius: u8,
 }
 impl From<Tokens> for ThemeSwatch {
     fn from(t: Tokens) -> Self {
-        Self { background: t.viewport_top, panel: t.panel, accent: t.accent, dim: t.text_dim }
+        Self { background: t.viewport_top, panel: t.panel, accent: t.accent, dim: t.text_dim, radius: t.control_radius }
     }
 }
 
@@ -384,7 +385,7 @@ fn clip_half_plane(vertices: Vec<Pos2>, side: impl Fn(Pos2) -> f32) -> Vec<Pos2>
 }
 
 fn theme_swatch(p: &egui::Painter, r: Rect, c: ThemeSwatch, diagonal: bool) {
-    let boundary = rounded_perimeter(r, f32::from(Tokens::get().control_radius));
+    let boundary = rounded_perimeter(r, f32::from(c.radius));
     let fill = |mut vertices: Vec<Pos2>, color: Color32| {
         if diagonal {
             vertices = clip_half_plane(vertices, |v| (v.x - r.left()) / r.width() + (v.y - r.top()) / r.height() - 1.0);

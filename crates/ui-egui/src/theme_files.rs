@@ -1,4 +1,4 @@
-//! Colour themes as files (#2255): a `solidcraft-theme/1` JSON file names a base palette (the
+//! Colour and shape themes as files (#2255): a `solidcraft-theme/1` JSON file names a base palette (the
 //! built-in Dark or Light) and sets any of its [`Tokens`] by name, so a theme can be a handful of
 //! lines. Built-in themes (Gruvbox and others) are such files under `assets/styles/ui/themes/`;
 //! imported ones are kept in the preferences (`Prefs::custom_themes`), so they also work in the
@@ -68,7 +68,7 @@ impl Base {
     }
 }
 
-/// A theme: its id (the `theme` preference's value), name, base and colour overrides, each a
+/// A theme: its id (the `theme` preference's value), name, base, optional radii and colour overrides, each a
 /// `#rrggbb` / `#rrggbbaa` string or a list of them, keyed by [`keys`].
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ThemeFile {
@@ -76,6 +76,40 @@ pub struct ThemeFile {
     pub name: String,
     pub base: Base,
     pub colors: BTreeMap<String, Value>,
+    /// Optional corner radii in logical UI points. Missing entries keep the base values.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub radii: BTreeMap<String, u8>,
+}
+
+/// Maximum imported radius, in logical UI points; widgets clamp to their own bounds.
+const MAX_RADIUS: u8 = 32;
+const RADIUS_KEYS: [&str; 6] = ["radius_sm", "radius_md", "radius_lg", "radius_xl", "control_radius", "sketch_mode_radius"];
+
+fn radius_slot<'a>(t: &'a mut Tokens, key: &str) -> Option<&'a mut u8> {
+    match key {
+        "radius_sm" => Some(&mut t.radius_sm),
+        "radius_md" => Some(&mut t.radius_md),
+        "radius_lg" => Some(&mut t.radius_lg),
+        "radius_xl" => Some(&mut t.radius_xl),
+        "control_radius" => Some(&mut t.control_radius),
+        "sketch_mode_radius" => Some(&mut t.sketch_mode_radius),
+        _ => None,
+    }
+}
+
+impl ThemeFile {
+    /// Validate direct control-channel preference updates as strictly as file imports.
+    pub(crate) fn validate_radii(&self) -> Result<(), String> {
+        for (key, value) in &self.radii {
+            if !RADIUS_KEYS.contains(&key.as_str()) {
+                return Err(format!("`radii.{key}` is not a theme radius"));
+            }
+            if *value > MAX_RADIUS {
+                return Err(format!("`radii.{key}` must be an integer from 0 to {MAX_RADIUS}"));
+            }
+        }
+        Ok(())
+    }
 }
 
 /// The settable colours: a key, and where it lives in [`Tokens`]. `one` keys take a colour,
@@ -176,7 +210,7 @@ fn colors_of(v: &Value, len: usize) -> Result<Vec<Color32>, String> {
 }
 
 /// A theme file's text, checked: the format tag, a name, a base and only known keys with valid
-/// colours. Nothing is taken from a file with any error; the message names every bad key.
+/// colours and bounded radii. Nothing is taken from a file with any error; the message names every bad key.
 pub fn parse(text: &str) -> Result<ThemeFile, String> {
     if text.len() > MAX_BYTES {
         return Err(format!("a theme file is at most {} KiB", MAX_BYTES / 1024));
@@ -220,11 +254,31 @@ pub fn from_value(v: &Value) -> Result<ThemeFile, String> {
             }
         }
     }
+    let radii = match v.get("radii") {
+        None => BTreeMap::new(),
+        Some(Value::Object(values)) => {
+            if values.len() > RADIUS_KEYS.len() {
+                return Err(format!("`radii` has more than {} entries", RADIUS_KEYS.len()));
+            }
+            let mut radii = BTreeMap::new();
+            for (key, value) in values {
+                if !RADIUS_KEYS.contains(&key.as_str()) {
+                    bad.push(format!("`radii.{key}` is not a theme radius"));
+                } else if let Some(n) = value.as_u64().filter(|n| *n <= u64::from(MAX_RADIUS)) {
+                    radii.insert(key.clone(), n as u8);
+                } else {
+                    bad.push(format!("`radii.{key}` must be an integer from 0 to {MAX_RADIUS}"));
+                }
+            }
+            radii
+        }
+        Some(_) => return Err("`radii` must be an object of radius names and values".into()),
+    };
     if !bad.is_empty() {
         bad.truncate(8);
         return Err(bad.join("; "));
     }
-    Ok(ThemeFile { id: slug(name), name: name.to_string(), base, colors: src.into_iter().collect() })
+    Ok(ThemeFile { id: slug(name), name: name.to_string(), base, colors: src.into_iter().collect(), radii })
 }
 
 /// An id from a name: lower-case letters, digits and dashes.
@@ -241,7 +295,7 @@ fn slug(name: &str) -> String {
     if s.is_empty() { "theme".into() } else { s }
 }
 
-/// The theme's palette: its base with its colours on top. A colour the saved preferences hold
+/// The theme's tokens: its base with its colours and radii on top. A colour the saved preferences hold
 /// that this version can't read (a hand edit) is skipped, never an error.
 pub fn resolve(theme: &ThemeFile) -> Tokens {
     let mut t = if theme.base.is_dark() { Tokens::dark() } else { Tokens::light() };
@@ -250,6 +304,13 @@ pub fn resolve(theme: &ThemeFile) -> Tokens {
             && let Ok(c) = colors_of(v, s.len())
         {
             s.copy_from_slice(&c);
+        }
+    }
+    for (key, value) in &theme.radii {
+        if *value <= MAX_RADIUS
+            && let Some(slot) = radius_slot(&mut t, key)
+        {
+            *slot = *value;
         }
     }
     t
@@ -265,7 +326,8 @@ pub fn export(name: &str, base: Base, t: &Tokens) -> Value {
             colors.insert(k.to_string(), v);
         }
     }
-    json!({"format": FORMAT, "name": name, "base": base, "colors": colors})
+    let radii: BTreeMap<_, _> = RADIUS_KEYS.into_iter().filter_map(|key| radius_slot(&mut t, key).map(|value| (key, *value))).collect();
+    json!({"format": FORMAT, "name": name, "base": base, "colors": colors, "radii": radii})
 }
 
 /// The theme files that come with SolidCraft (original files; Gruvbox, Tokyo Night, Solarized, Nord, Nosferatu and Catppuccin map open-source palettes, MIT).
@@ -437,5 +499,74 @@ mod tests {
         }
         assert!(add(&mut custom, mk("one too many")).is_err());
         assert!(find("gruvbox-dark", &custom).is_some() && find("mine", &custom).is_some() && find("dark", &custom).is_none());
+    }
+
+    fn radius_values(mut tokens: Tokens) -> Vec<u8> {
+        RADIUS_KEYS.iter().map(|key| *radius_slot(&mut tokens, key).unwrap()).collect()
+    }
+
+    #[test]
+    fn optional_radii_preserve_old_files_and_saved_preferences() {
+        for base in [Base::Dark, Base::Light] {
+            let file = json!({"format": FORMAT, "name": "Old", "base": base});
+            let parsed = from_value(&file).unwrap();
+            let defaults = if base.is_dark() { Tokens::dark() } else { Tokens::light() };
+            assert_eq!(resolve(&parsed), defaults);
+            // Preferences serialize ThemeFile directly, without the export format wrapper.
+            let stored = json!({"id": "old", "name": "Old", "base": base, "colors": {}});
+            let old: ThemeFile = serde_json::from_value(stored).unwrap();
+            assert_eq!(resolve(&old), defaults);
+            let partial = from_value(&json!({"format": FORMAT, "name": "Partial", "base": base, "radii": {"control_radius": 0}})).unwrap();
+            assert_eq!(resolve(&partial), Tokens { control_radius: 0, ..defaults });
+        }
+    }
+
+    #[test]
+    fn every_radius_round_trips_through_export_and_preferences_on_either_base() {
+        for values in [[0; 6], [1, 2, 3, 4, 5, 6], [32; 6]] {
+            let mut tokens = Tokens::dark();
+            for (key, value) in RADIUS_KEYS.iter().zip(values) {
+                *radius_slot(&mut tokens, key).unwrap() = value;
+            }
+            for base in [Base::Dark, Base::Light] {
+                let parsed = from_value(&export("Shapes", base, &tokens)).unwrap();
+                let restored: ThemeFile = serde_json::from_value(serde_json::to_value(&parsed).unwrap()).unwrap();
+                assert_eq!(radius_values(resolve(&restored)), values);
+                assert_eq!(restored.radii.len(), RADIUS_KEYS.len());
+            }
+        }
+    }
+
+    #[test]
+    fn invalid_radii_are_refused_and_hand_edited_preferences_resolve_safely() {
+        for value in [json!(-1), json!(33), json!(256), json!(1.5), json!("4"), json!(null), json!(true), json!([4]), json!({})] {
+            let error = from_value(&json!({"format": FORMAT, "name": "Bad", "base": "dark", "radii": {"control_radius": value}})).unwrap_err();
+            assert!(error.contains("radii.control_radius"), "{error}");
+        }
+        assert!(from_value(&json!({"format": FORMAT, "name": "Bad", "base": "dark", "radii": []})).unwrap_err().contains("radii"));
+        let error = from_value(&json!({"format": FORMAT, "name": "Bad", "base": "dark", "radii": {"typo": 4, "radius_sm": -1}})).unwrap_err();
+        assert!(error.contains("radii.typo") && error.contains("radii.radius_sm"));
+        let hand_edited = ThemeFile { radii: BTreeMap::from([("radius_sm".into(), 255), ("typo".into(), 6)]), ..Default::default() };
+        assert_eq!(resolve(&hand_edited), Tokens::dark());
+    }
+
+    #[test]
+    fn built_in_shapes_match_their_character_and_light_dark_families_agree() {
+        let values = |id: &str| radius_values(resolve(find(id, &[]).unwrap()));
+        for id in ["platinum-9", "green-phosphor", "amber-phosphor"] {
+            assert_eq!(values(id), [0; 6], "{id}");
+        }
+        assert_eq!(values("solidcraft-95"), [3, 3, 4, 4, 3, 3]);
+        assert_eq!(values("blueprint"), [4, 6, 8, 10, 6, 7]);
+        assert_eq!(values("cupertino"), [6, 8, 12, 16, 8, 9]);
+        let defaults = radius_values(Tokens::dark());
+        assert_eq!(defaults, radius_values(Tokens::light()));
+        for suffix in ["", "-hard", "-soft"] {
+            assert_eq!(values(&format!("gruvbox-dark{suffix}")), defaults);
+            assert_eq!(values(&format!("gruvbox-light{suffix}")), defaults);
+        }
+        for file in builtin().iter().filter(|file| file.radii.is_empty()) {
+            assert_eq!(radius_values(resolve(file)), defaults, "{}", file.id);
+        }
     }
 }

@@ -116,7 +116,7 @@ Gruvbox themes (dark and light, each in hard, normal and soft contrast) and any 
 imported. A choice applies at once.
 
 A theme is a small JSON file that starts from the Dark or Light palette and changes any of its
-colours by name:
+colours and corner radii by name:
 
 ```json
 {
@@ -130,12 +130,30 @@ colours by name:
     "viewport_top": "#32302f",
     "viewport_bottom": "#32302f",
     "triad": ["#fb4934", "#b8bb26", "#83a598"]
+  },
+  "radii": {
+    "radius_sm": 2,
+    "radius_md": 4,
+    "radius_lg": 6,
+    "radius_xl": 8,
+    "control_radius": 4,
+    "sketch_mode_radius": 4
   }
 }
 ```
 
 Colours are `#rrggbb`, or `#rrggbbaa` for translucent ones. A few colours, such as the view
 triad's X, Y and Z, take a list. Any colour the file leaves out keeps the base palette's value.
+
+`radii` is optional. Its six keys above accept integers from 0 to 32 in logical UI points;
+zero makes square corners. Omitted keys keep today's base values: 4, 6, 8, 10, 6 and 7,
+respectively. The first four style small accents through large surfaces; `control_radius`
+styles form controls, and `sketch_mode_radius` styles sketch creation buttons. Themes own
+these settings, with matching shapes across light and dark variants. Dock joins remain
+square, circular controls remain circular, and control sizes and spacing stay the same.
+Platinum 9 and the phosphor themes use square corners, SolidCraft 95 uses subtle 3-point
+corners, Blueprint uses the standard radii, and Cupertino uses softer corners. Other built-in
+themes retain the defaults.
 
 Tab accents also have separate fill, small-text ink and tint keys. Sketch uses
 `sketch_accent`, `sketch_ink`, `sketch_soft`; Surface, Mesh, Sheet Metal and Render
@@ -150,7 +168,7 @@ pills when `on_accent` has less than 4.5:1 contrast with the fill. See the
 - **Import…** adds a theme file and turns it on. Importing a file with the same name again updates
   that theme. A file with an unknown colour name or a malformed colour is refused, and the message
   names every problem.
-- **Export…** saves the theme on now as a complete file listing every colour. It is a good starting
+- **Export…** saves the theme on now as a complete file listing every colour and radius. It is a good starting
   point for your own theme.
 - **Remove** deletes the selected imported theme.
 

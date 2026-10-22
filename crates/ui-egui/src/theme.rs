@@ -40,6 +40,20 @@ pub fn set_custom(custom: Option<Custom>) -> bool {
     CUSTOM.with(|c| c.replace(custom) != custom)
 }
 
+/// Isolated widget tests restore the thread's theme even when an assertion fails.
+#[cfg(test)]
+pub(crate) fn scoped_tokens(tokens: Tokens) -> impl Drop {
+    struct Restore(Option<Custom>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            set_custom(self.0);
+        }
+    }
+    let restore = Restore(CUSTOM.get());
+    set_custom(Some(Custom { dark: is_dark(), tokens }));
+    restore
+}
+
 /// A tab's selection colours. This is deliberately separate from the global widget style:
 /// application chrome, checkboxes, status colours and dialog actions retain their own tokens.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -531,6 +545,11 @@ pub struct Tokens {
 }
 
 impl Tokens {
+    /// An expanded outline follows its fill, including a theme's deliberately square corners.
+    pub(crate) fn outset_radius(radius: f32, outset: f32) -> f32 {
+        if radius > 0.0 { radius + outset } else { 0.0 }
+    }
+
     /// Subtle shell elevation, derived from the semantic application-bar colour.
     pub(crate) fn shell_shadow(self) -> egui::Shadow {
         egui::Shadow { offset: [0, self.space_2 as i8], blur: self.space_8 as u8, spread: 0, color: self.app_bar.gamma_multiply(0.18) }
@@ -606,6 +625,13 @@ fn visuals(dark: bool) -> egui::Visuals {
     // egui uses the open-state fill for a movable window's active title bar.
     v.widgets.open.weak_bg_fill = t.panel_header;
     v.window_corner_radius = egui::CornerRadius::same(t.radius_md);
+    v.menu_corner_radius = egui::CornerRadius::same(t.radius_md);
+    // Keep the existing 2/3 point egui shapes under the default 4 point small token.
+    // Set every interaction state so hovering or focusing cannot restore rounded corners.
+    for widget in [&mut v.widgets.noninteractive, &mut v.widgets.inactive, &mut v.widgets.active, &mut v.widgets.open] {
+        widget.corner_radius = egui::CornerRadius::same(t.radius_sm / 2);
+    }
+    v.widgets.hovered.corner_radius = egui::CornerRadius::same(t.radius_sm.saturating_sub(1));
     v
 }
 
@@ -622,6 +648,39 @@ pub fn apply(ctx: &egui::Context) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn widget_states_and_popup_frames_follow_theme_radii_without_changing_defaults() {
+        use super::*;
+        let old_custom = CUSTOM.get();
+        for dark in [false, true] {
+            set_custom(None);
+            let actual = visuals(dark);
+            let original = if dark { egui::Visuals::dark() } else { egui::Visuals::light() };
+            assert_eq!(actual.menu_corner_radius, original.menu_corner_radius);
+            for (a, b) in [
+                (actual.widgets.noninteractive, original.widgets.noninteractive),
+                (actual.widgets.inactive, original.widgets.inactive),
+                (actual.widgets.hovered, original.widgets.hovered),
+                (actual.widgets.active, original.widgets.active),
+                (actual.widgets.open, original.widgets.open),
+            ] {
+                assert_eq!(a.corner_radius, b.corner_radius);
+            }
+            let tokens = Tokens { radius_sm: 0, radius_md: 0, ..Tokens::dark() };
+            set_custom(Some(Custom { dark, tokens }));
+            let square = visuals(dark);
+            set_custom(old_custom);
+            assert_eq!(square.window_corner_radius, egui::CornerRadius::ZERO);
+            assert_eq!(square.menu_corner_radius, egui::CornerRadius::ZERO);
+            for widget in [square.widgets.noninteractive, square.widgets.inactive, square.widgets.hovered, square.widgets.active, square.widgets.open]
+            {
+                assert_eq!(widget.corner_radius, egui::CornerRadius::ZERO);
+            }
+        }
+        assert_eq!(Tokens::outset_radius(0.0, 3.0), 0.0);
+        assert_eq!(Tokens::outset_radius(6.0, 3.0), 9.0);
+    }
+
     #[test]
     fn file_view_foreground_pairs_hold_small_text_contrast_without_changing_accent() {
         for dark in [false, true] {

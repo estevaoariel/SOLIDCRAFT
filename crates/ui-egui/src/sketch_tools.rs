@@ -204,7 +204,7 @@ fn continuity_legend(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
     let text_width = rows.iter().map(|(label, _)| painter.layout_no_wrap(label.to_string(), font.clone(), tk.text).size().x).fold(0.0, f32::max);
     let size = egui::vec2(pad + swatch + 8.0 + text_width + pad, rows.len() as f32 * row + 2.0 * pad);
     let frame = egui::Rect::from_min_size(proj.rect.left_bottom() + egui::vec2(16.0, -(size.y + 16.0)), size);
-    painter.rect_filled(frame, 4.0, tk.panel.gamma_multiply(0.9));
+    painter.rect_filled(frame, tk.radius_sm, tk.panel.gamma_multiply(0.9));
     crate::scenario::publish_rect("continuity_legend", frame);
     for (i, (label, col)) in rows.iter().enumerate() {
         let y = frame.top() + pad + row * (i as f32 + 0.5);
@@ -251,7 +251,7 @@ fn marks(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
                 egui::FontId::proportional(crate::theme::Tokens::get().font_body),
                 tk.text,
             );
-            painter.rect_filled(r.expand(3.0), 3.0, tk.panel.gamma_multiply(0.85));
+            painter.rect_filled(r.expand(3.0), tk.radius_sm.saturating_sub(1), tk.panel.gamma_multiply(0.85));
             painter.text(
                 q + egui::vec2(12.0, -12.0),
                 egui::Align2::LEFT_BOTTOM,
@@ -1304,8 +1304,13 @@ fn glyphs(app: &SolveApp, painter: &egui::Painter, proj: &Proj, hover: Option<Po
             painter.line_segment([*base, *sp], Stroke::new(0.8, tk.text_dim.gamma_multiply(0.6)));
         }
         let r = egui::Rect::from_center_size(*sp, egui::vec2(GLYPH, GLYPH));
-        painter.rect_filled(r, 3.0, if lit { tk.accent_soft } else { tk.glyph_bg });
-        painter.rect_stroke(r, 3.0, Stroke::new(1.0, if failing || lit { col } else { tk.glyph_edge }), egui::StrokeKind::Inside);
+        painter.rect_filled(r, tk.radius_sm.saturating_sub(1), if lit { tk.accent_soft } else { tk.glyph_bg });
+        painter.rect_stroke(
+            r,
+            tk.radius_sm.saturating_sub(1),
+            Stroke::new(1.0, if failing || lit { col } else { tk.glyph_edge }),
+            egui::StrokeKind::Inside,
+        );
         let pattern_icon = ss.sketch.patterns.iter().find(|p| p.instances.first().and_then(|i| i.constraints.first()) == Some(id)).map(|p| {
             if matches!(p.kind, solidcraft_engine::sketch::SketchPatternKind::Circular { .. }) {
                 "sketch_circ_pattern"
@@ -1338,7 +1343,7 @@ fn glyphs(app: &SolveApp, painter: &egui::Painter, proj: &Proj, hover: Option<Po
         };
         let at = h + egui::vec2(12.0, 12.0);
         let g = painter.layout_no_wrap(label, egui::FontId::proportional(crate::theme::Tokens::get().font_small), tk.text);
-        painter.rect_filled(egui::Rect::from_min_size(at, g.size()).expand(3.0), 3.0, tk.panel);
+        painter.rect_filled(egui::Rect::from_min_size(at, g.size()).expand(3.0), tk.radius_sm.saturating_sub(1), tk.panel);
         painter.galley(at, g, tk.text);
     }
     GLYPHS.with(|g| *g.borrow_mut() = drawn);
@@ -1418,7 +1423,7 @@ fn snap_hint(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
     let Some(sp) = proj.to_screen(ss.plane.to_world(p)) else { return };
     let tk = crate::theme::Tokens::get();
     let r = egui::Rect::from_min_size(sp + egui::vec2(12.0, -24.0), egui::vec2(24.0, 14.0));
-    painter.rect_filled(r, 3.0, tk.accent_soft);
+    painter.rect_filled(r, tk.radius_sm.saturating_sub(1), tk.accent_soft);
     painter.text(r.center(), egui::Align2::CENTER_CENTER, label, egui::FontId::proportional(crate::theme::Tokens::get().font_micro), tk.text);
 }
 

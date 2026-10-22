@@ -645,3 +645,33 @@ fn compact_tool_sheet_corners_follow_its_right_edge_contact() {
     assert_eq!(container.tool_frame(frame, false).corner_radius, egui::CornerRadius::same(t.radius_lg));
     assert_eq!(container.tool_frame(frame, true).corner_radius, egui::CornerRadius { nw: t.radius_lg, ne: 0, sw: t.radius_lg, se: 0 });
 }
+
+#[test]
+fn theme_shape_changes_preserve_panel_geometry_and_dock_contacts() {
+    use crate::{frame::Side, shell::LayoutMode};
+    let ctx = crate::fonts::test_context();
+    let mut results = Vec::new();
+    for name in ["solidcraft-95", "blueprint", "cupertino"] {
+        let t = crate::theme_files::resolve(crate::theme_files::find(name, &[]).unwrap());
+        let _theme = crate::theme::scoped_tokens(t);
+        for surface in [Surface::Panel, Surface::Feature, Surface::Window, Surface::Popup, Surface::Navigation, Surface::Toast] {
+            crate::theme::apply(&ctx);
+            let floating = Container::for_layout(LayoutMode::Floating, surface).frame(&ctx, t.panel, Side::Left);
+            let bounds = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(240.0, 180.0));
+            results.push((name, surface, floating.corner_radius, floating.outer_rect(bounds), t));
+        }
+        let docked = Container::for_layout(LayoutMode::Docked, Surface::Panel)
+            .joined(DockEdges { left: true, top: true, ..Default::default() })
+            .frame(&ctx, t.panel, Side::Left);
+        assert_eq!(docked.corner_radius, egui::CornerRadius { nw: 0, ne: 0, sw: 0, se: t.radius_lg });
+    }
+    for (name, surface, radius, bounds, t) in &results {
+        let expected = match surface {
+            Surface::Panel => t.radius_lg,
+            Surface::Feature | Surface::Window => t.radius_xl,
+            _ => t.radius_md,
+        };
+        assert_eq!(*radius, egui::CornerRadius::same(expected), "{name}: {surface:?}");
+        assert_eq!(*bounds, results.iter().find(|row| row.1 == *surface).unwrap().3, "shape must not change layout");
+    }
+}
