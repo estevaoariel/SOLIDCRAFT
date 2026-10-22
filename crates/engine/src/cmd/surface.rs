@@ -333,7 +333,7 @@ fn surface_revolve(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "surface.revolve";
     let sketch = feature_sketch(s, p, cmd)?;
     let (profiles, curves) = sheet_inputs(p, cmd)?;
-    let axis = axis_param(s, p, cmd)?;
+    let axis = axis_param(s, sketch, p, cmd)?;
     let angle = expr(p, "angle").unwrap_or_else(|| "360 deg".into());
     check_expr(s, &angle, Kind::Angle, cmd, "angle")?;
     let angle2 = expr(p, "angle2");

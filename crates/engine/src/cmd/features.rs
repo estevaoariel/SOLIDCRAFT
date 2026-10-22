@@ -816,7 +816,7 @@ fn revolve(s: &mut Session, p: &Value) -> Result<Value> {
         }
         None => (feature_sketch(s, p, cmd)?, None),
     };
-    let axis = axis_param(s, p, cmd)?;
+    let axis = axis_param(s, sketch, p, cmd)?;
     let angle = expr(p, "angle").unwrap_or_else(|| "360 deg".into());
     check_expr(s, &angle, Kind::Angle, cmd, "angle")?;
     let profiles = match face_profile {
@@ -852,9 +852,10 @@ fn revolve(s: &mut Session, p: &Value) -> Result<Value> {
     add_feature(s, p, kind)
 }
 
-/// A revolve axis from its parameter: a sketch line id, the sketch's x or y axis, a world axis,
-/// a construction axis by name (followed when it is edited) or {origin, dir}.
-pub(super) fn axis_param(s: &Session, p: &Value, cmd: &str) -> Result<AxisRef> {
+/// A revolve axis of `sketch` from its parameter: a sketch line id, the sketch's x or y axis, a
+/// world axis, a construction axis by name (followed when it is edited) or {origin, dir}. A line
+/// of the sketch wins over a construction axis of the same name.
+pub(super) fn axis_param(s: &Session, sketch: u64, p: &Value, cmd: &str) -> Result<AxisRef> {
     if let Some(o) = p.get("axis").filter(|v| v.is_object()) {
         let origin = o.get("origin").and_then(vec3).unwrap_or(Vec3::ZERO);
         let dir = o.get("dir").and_then(vec3).ok_or_else(|| bad(cmd, "axis needs `dir`"))?;
@@ -863,10 +864,15 @@ pub(super) fn axis_param(s: &Session, p: &Value, cmd: &str) -> Result<AxisRef> {
     match str_(p, "axis") {
         Some(a @ ("X" | "Y" | "Z")) => Ok(AxisRef::World { axis: a.into() }),
         Some(a @ ("x" | "y")) => Ok(AxisRef::SketchAxis { axis: a.into() }),
-        Some(name) if is_construction_axis(s, name) => Ok(AxisRef::Construction { name: name.into() }),
+        Some(name) if !is_sketch_line(s, sketch, name) && is_construction_axis(s, name) => Ok(AxisRef::Construction { name: name.into() }),
         Some(id) => Ok(AxisRef::SketchLine { curve: id.into() }),
         None => Err(bad(cmd, "`axis` must be a sketch line id, x, y (sketch axes), X, Y, Z, a construction axis or {origin, dir}")),
     }
+}
+
+/// Whether `curve` is a curve of the sketch feature `sketch`.
+fn is_sketch_line(s: &Session, sketch: u64, curve: &str) -> bool {
+    matches!(s.doc.feature(sketch).map(|f| &f.kind), Some(FeatureKind::Sketch { sketch, .. }) if sketch.curve_index(curve).is_some())
 }
 
 /// Whether `name` is a construction axis feature of the design.
