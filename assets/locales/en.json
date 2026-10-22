@@ -1103,6 +1103,7 @@
   "settings.reset_intro": "These settings don't work on this computer and would keep SolidCraft from starting, so they were changed:",
   "settings.reset_title": "Settings were changed",
   "settings.supersampling_note": "Draws the view at a higher resolution and filters it down: smoother edges, lines and grid on screens below 4K. It costs GPU time: about 2.25× the pixels at 1.5× and 4× at 2×.",
+  "sheet.no_body": "there is no sheet metal body: start one with Flange > Base, or turn a plate into sheet metal with Convert to Sheet Metal (pick its large flat face)",
   "shortcut.json_error": "parameters must be JSON: {error}",
   "shortcut.no_command": "no command `{id}`; the text before the JSON must be a command id",
   "shortcut.pin": "Pin to the top of the S box",
