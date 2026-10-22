@@ -17,7 +17,7 @@ use crate::{EngineError, Result, Session};
 pub const MAX_STEPS: usize = 10_000;
 const MAX_MACRO_BYTES: usize = 4 << 20;
 const MAX_LISTED: usize = 200;
-const MAX_OPS: u64 = 100_000;
+const MAX_OPS: u64 = 1_000_000;
 
 /// A recorded or loaded Rhai macro.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -40,6 +40,9 @@ pub struct MacroParam {
     pub label: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default: Option<Value>,
+    /// Play shows a dropdown when this is not empty (`// @param name Label {a, b} | a`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub choices: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -259,6 +262,48 @@ fn is_param_name(s: &str) -> bool {
     !s.is_empty() && s.len() <= 64 && s.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-')
 }
 
+fn is_choice(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 64 && s.chars().all(|c| c.is_alphanumeric() || matches!(c, '_' | '-' | '.'))
+}
+
+/// Split `name Label {a, b}` into (`name Label`, [a, b]).
+fn param_choices(cmd: &str, left: &str) -> Result<(String, Vec<String>)> {
+    let Some(start) = left.find('{') else {
+        return Ok((left.to_string(), Vec::new()));
+    };
+    let Some(end) = left.rfind('}') else {
+        return Err(bad(cmd, "a @param choice list needs a closing `}`"));
+    };
+    if end < start {
+        return Err(bad(cmd, "a @param choice list needs `{a, b}`"));
+    }
+    let inner = left.get(start + 1..end).unwrap_or("").trim();
+    if inner.is_empty() {
+        return Err(bad(cmd, "a @param choice list cannot be empty"));
+    }
+    let mut choices = Vec::new();
+    for part in inner.split(',') {
+        let c = part.trim();
+        if c.is_empty() {
+            return Err(bad(cmd, "a @param choice cannot be empty"));
+        }
+        if !is_choice(c) {
+            return Err(bad(cmd, format!("choice `{c}` uses letters, digits, `_`, `-` and `.`")));
+        }
+        if choices.iter().any(|q: &String| q == c) {
+            return Err(bad(cmd, format!("choice `{c}` is given twice")));
+        }
+        choices.push(c.to_string());
+        if choices.len() > 64 {
+            return Err(bad(cmd, "a @param has at most 64 choices"));
+        }
+    }
+    let before = left.get(..start).unwrap_or("").trim();
+    let after = left.get(end + 1..).unwrap_or("").trim();
+    let rest = [before, after].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" ");
+    Ok((rest, choices))
+}
+
 fn read_macro_file(cmd: &str, path: &Path) -> Result<String> {
     let text =
         solidcraft_io::vfs::read(&path.display().to_string(), MAX_MACRO_BYTES).map_err(|e| EngineError::Other(format!("{}: {e}", path.display())))?;
@@ -285,6 +330,18 @@ pub(crate) fn parse_rhai_macro(cmd: &str, text: &str) -> Result<Macro> {
                 Some((l, r)) => (l.trim(), Some(Value::String(r.trim().to_string()))),
                 None => (spec, None),
             };
+            let (left, choices) = param_choices(cmd, left)?;
+            let mut default = default;
+            if default.is_none() {
+                if let Some(first) = choices.first() {
+                    default = Some(Value::String(first.clone()));
+                }
+            } else if !choices.is_empty() {
+                let want = default.as_ref().and_then(Value::as_str).unwrap_or("");
+                if !choices.iter().any(|c| c == want) {
+                    return Err(bad(cmd, format!("default `{want}` is not one of the choices for `{left}`")));
+                }
+            }
             let mut bits = left.split_whitespace();
             let n = bits.next().unwrap_or("").trim();
             if !is_param_name(n) {
@@ -294,7 +351,7 @@ pub(crate) fn parse_rhai_macro(cmd: &str, text: &str) -> Result<Macro> {
                 return Err(bad(cmd, format!("parameter `{n}` is given twice")));
             }
             let label = bits.collect::<Vec<_>>().join(" ");
-            params.push(MacroParam { name: n.to_string(), label: if label.is_empty() { None } else { Some(label) }, default });
+            params.push(MacroParam { name: n.to_string(), label: if label.is_empty() { None } else { Some(label) }, default, choices });
             if params.len() > 100 {
                 return Err(bad(cmd, "a macro asks for at most 100 parameters"));
             }
@@ -380,6 +437,7 @@ fn eval_rhai(s: &mut Session, source: &str, bound: &[(String, Value)]) -> Result
     let eval = {
         let mut engine = Engine::new();
         engine.set_max_operations(MAX_OPS);
+        engine.set_max_expr_depths(64, 64);
         let sh = Rc::clone(&shared);
         engine.register_fn("run", move |cmd: ImmutableString, params: Dynamic| -> std::result::Result<Dynamic, Box<EvalAltResult>> {
             let json_params: Value = rhai::serde::from_dynamic(&params).unwrap_or(Value::Null);

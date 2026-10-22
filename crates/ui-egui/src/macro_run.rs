@@ -1,7 +1,7 @@
 //! The Play Macro prompt: the values a macro asks for, then `macro.play`.
 //!
-//! A Rhai macro can declare `// @param name Label | default`.
-//! Playing one shows a row each, prefilled with its default, and runs the macro with what is typed.
+//! A Rhai macro can declare `// @param name Label | default`. With `{a, b}` after the label,
+//! Play shows a dropdown.
 
 use egui::RichText;
 use serde_json::{Value, json};
@@ -16,8 +16,8 @@ use crate::theme::Tokens;
 pub struct MacroRun {
     pub name: String,
     pub description: Option<String>,
-    /// One row per declared parameter: name, label, typed value.
-    pub fields: Vec<(String, String, String)>,
+    /// One row per declared parameter: name, label, typed value, dropdown choices (empty: text).
+    pub fields: Vec<(String, String, String, Vec<String>)>,
     pub error: Option<String>,
 }
 
@@ -35,7 +35,7 @@ pub fn open(app: &mut SolveApp) {
                     Value::String(s) => s.clone(),
                     other => other.to_string(),
                 });
-                (p.name.clone(), p.label.clone().unwrap_or_else(|| p.name.clone()), default.unwrap_or_default())
+                (p.name.clone(), p.label.clone().unwrap_or_else(|| p.name.clone()), default.unwrap_or_default(), p.choices.clone())
             })
             .collect(),
         error: None,
@@ -64,9 +64,19 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         if !d.fields.is_empty() {
             ui.separator();
             egui::Grid::new("sc_macro_run_fields").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
-                for (name, label, value) in &mut d.fields {
+                for (name, label, value, choices) in &mut d.fields {
                     ui.label(format!("{label}:"));
-                    ui.add(egui::TextEdit::singleline(value).hint_text(name.clone()).desired_width(220.0));
+                    if choices.is_empty() {
+                        ui.add(egui::TextEdit::singleline(value).hint_text(name.clone()).desired_width(220.0));
+                    } else {
+                        let mut sel = choices.iter().position(|c| c == value).unwrap_or(0);
+                        let opts: Vec<&str> = choices.iter().map(String::as_str).collect();
+                        let id = format!("macro_{name}");
+                        crate::ui_kit::dropdown(ui, &id, &mut sel, &opts);
+                        if let Some(c) = choices.get(sel) {
+                            *value = c.clone();
+                        }
+                    }
                     ui.end_row();
                 }
             });
@@ -86,7 +96,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     });
     if close_and_run {
         let mut params = json!({});
-        for (name, _, value) in &d.fields {
+        for (name, _, value, _) in &d.fields {
             let value = value.trim();
             if !value.is_empty() {
                 params[name] = json!(value);

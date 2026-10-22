@@ -101,6 +101,21 @@ fn playback_refuses_bad_steps_before_running_any() {
 }
 
 #[test]
+fn a_param_choice_list_becomes_a_dropdown() {
+    let m = super::macros::parse_rhai_macro(
+        "macro.open",
+        "// @param kind Kind {gear, sprocket} | gear\n// @param pa Pressure {14.5, 20, 25} | 20\nrun(\"solid.box\", #{ length: 1, width: 1, height: 1 });\n",
+    )
+    .unwrap();
+    assert_eq!(m.params[0].name, "kind");
+    assert_eq!(m.params[0].choices, vec!["gear", "sprocket"]);
+    assert_eq!(m.params[0].default.as_ref().and_then(Value::as_str), Some("gear"));
+    assert_eq!(m.params[1].choices, vec!["14.5", "20", "25"]);
+    assert!(super::macros::parse_rhai_macro("macro.open", "// @param k K {}\nrun(\"solid.box\", #{});\n").is_err());
+    assert!(super::macros::parse_rhai_macro("macro.open", "// @param k K {gear, sprocket} | worm\nrun(\"solid.box\", #{});\n").is_err());
+}
+
+#[test]
 fn a_macro_asks_for_its_parameters_and_reads_an_earlier_step() {
     let mut s = Session::default();
     let src = "// @param length Length | 40 mm\n// @param width Width\n// @param thick Thickness | 5\nrun(\"solid.box\", #{ length: length, width: width, height: thick });\n";
@@ -215,7 +230,11 @@ fn the_example_macros_run() {
     assert_eq!(tiny["count"], 1, "the 4 mm hole is still a hole: {tiny}");
 
     let mut gear = Session::default();
-    let r = play_example(&mut gear, "gear_generator.rhai", json!({"params": {"teeth": 12, "gear_module": 2, "bore": 8, "thickness": 8, "pa": 20}}));
+    let r = play_example(
+        &mut gear,
+        "gear_generator.rhai",
+        json!({"params": {"kind": "gear", "teeth": 12, "size": 2, "bore": 8, "thickness": 8, "pa": "20"}}),
+    );
     assert_eq!(r["ran"], true, "{r}");
     let m = run(&mut gear, "inspect.measure", json!({}));
     assert_eq!(m["body_count"], 1, "{m}");
@@ -224,6 +243,46 @@ fn the_example_macros_run() {
     let max = std::f64::consts::PI * (ra * ra - bore_r * bore_r) * thick;
     let min = std::f64::consts::PI * (rf * rf - bore_r * bore_r) * thick;
     assert!(v > min && v < max, "involute blank {v} should sit between root {min} and tip {max}");
+
+    let mut dp = Session::default();
+    let r = play_example(
+        &mut dp,
+        "gear_generator.rhai",
+        json!({"params": {"kind": "gear", "sizing": "DP", "teeth": 16, "size": 16, "bore": 8, "thickness": 6, "pa": "20"}}),
+    );
+    assert_eq!(r["ran"], true, "imperial DP: {r}");
+    assert_eq!(run(&mut dp, "inspect.measure", json!({}))["body_count"], 1);
+
+    let mut sprocket = Session::default();
+    let r = play_example(
+        &mut sprocket,
+        "gear_generator.rhai",
+        json!({"params": {"kind": "sprocket", "chain": "40", "teeth": 12, "thickness": 8, "bore": 10, "hub": "none"}}),
+    );
+    assert_eq!(r["ran"], true, "sprocket: {r}");
+    let sv = volume(&mut sprocket);
+    assert!(sv > 100.0, "sprocket has volume {sv}");
+
+    let mut boss = Session::default();
+    let r = play_example(
+        &mut boss,
+        "gear_generator.rhai",
+        json!({"params": {"kind": "gear", "teeth": 12, "size": 2, "bore": 8, "thickness": 8, "hub": "one", "hub_od": 20, "hub_length": 8, "pa": "20"}}),
+    );
+    assert_eq!(r["ran"], true, "hub: {r}");
+    let hv = volume(&mut boss);
+    assert!(hv > v, "a hub adds material: {hv} vs gear {v}");
+
+    let mut ring = Session::default();
+    let r = play_example(
+        &mut ring,
+        "gear_generator.rhai",
+        json!({"params": {"kind": "gear", "hand": "internal", "teeth": 24, "size": 2, "thickness": 8, "rim": 80, "pa": "20", "bore": 0}}),
+    );
+    assert_eq!(r["ran"], true, "internal: {r}");
+    let iv = volume(&mut ring);
+    let rim_disk = std::f64::consts::PI * 40.0 * 40.0 * 8.0;
+    assert!(iv < rim_disk, "internal teeth cut the rim: {iv} vs {rim_disk}");
 
     let dir = temp_dir("stl");
     let step = dir.join("cube.step");
@@ -241,6 +300,18 @@ fn the_example_macros_run() {
     assert_eq!(r["ran"], true, "{r}");
     assert!(out.join("cube.stl").is_file(), "missing STL in {}", out.display());
     std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn a_helical_gear_sweeps_one_body() {
+    let mut helix = Session::default();
+    let r = play_example(
+        &mut helix,
+        "gear_generator.rhai",
+        json!({"params": {"kind": "gear", "teeth": 12, "size": 2, "bore": 8, "thickness": 8, "helix": 15, "pa": "20"}}),
+    );
+    assert_eq!(r["ran"], true, "helical: {r}");
+    assert_eq!(run(&mut helix, "inspect.measure", json!({}))["body_count"], 1);
 }
 
 fn examples_dir() -> String {

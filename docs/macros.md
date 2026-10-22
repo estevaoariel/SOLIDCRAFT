@@ -13,7 +13,8 @@ skips the commands you run until Resume. A chip at the top of the window stays u
 recording.
 
 Save writes a `.rhai` file. Open loads one. Play runs it. A macro can ask for values first
-(`// @param name Label | default`); Play shows one row each.
+(`// @param name Label | default`); Play shows one row each. `{a, b}` after the label is a
+dropdown (`// @param kind Kind {gear, sprocket} | gear`).
 
 ```rhai
 // @param min_dia Minimum diameter | 5 mm
@@ -38,6 +39,6 @@ Examples live in [examples/macros](../examples/macros). Open the `.rhai` file, t
 | `example_fixtureplate.rhai` | after setup | 500×350×8 mm tray, six Ø8 holes chamfered 1 mm both ends, C cut patterned `nx`×`ny` at `spacing_x`/`spacing_y`, centered on the tray |
 | `chamfer_holes.rhai` | a part with holes | Query holes, chamfer by size |
 | `batch_export_stl.rhai` | empty | Folder of STEP → STL |
-| `gear_generator.rhai` | empty | 20° full-depth involute spur gear (Machinery's Handbook) |
+| `gear_generator.rhai` | empty | Involute gears (module or DP, 14.5/20/25°, full/stub, helical, internal) and ISO/ANSI sprockets, optional hub |
 
 The browser plays Rhai in the same engine. `list_dir` / `write_file` are desktop only.
