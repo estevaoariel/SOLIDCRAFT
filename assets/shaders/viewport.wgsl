@@ -156,6 +156,13 @@ fn fs_ao_depth(i: TOut, @builtin(front_facing) front: bool) -> AoDepth {
     return AoDepth(depth, bitcast<u32>(depth));
 }
 
+// The virtual ground preserves the viewport background; only contact occlusion is blended.
+@fragment
+fn fs_ground_ao(i: TOut) -> @location(0) vec4<f32> {
+    if (clipped(i.wp)) { discard; }
+    return vec4<f32>(0.0, 0.0, 0.0, 1.0 - occlusion(i));
+}
+
 // Deterministic cosine-weighted hemisphere samples. Projecting the sample and a point one
 // radius toward the eye supplies a depth range in both orthographic and perspective views;
 // distant foreground geometry cannot cast a dark halo onto a background surface.

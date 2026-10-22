@@ -34,6 +34,10 @@ mod removed_later_tests;
 #[path = "viewport_plane_target_tests.rs"]
 mod plane_target_tests;
 
+#[cfg(test)]
+#[path = "viewport_ground_tests.rs"]
+mod ground_tests;
+
 #[path = "navigation_cube.rs"]
 mod navigation_cube;
 
@@ -316,6 +320,7 @@ fn scene_key(app: &SolveApp) -> u64 {
     app.ui.show_grid.hash(&mut h);
     app.ui.visual_style.hash(&mut h);
     app.ui.ground_shadow.hash(&mut h);
+    app.preferences.ambient_occlusion.hash(&mut h);
     solidcraft_engine::doc::display_quality::current().hash(&mut h);
     lod_generation(app).hash(&mut h);
     // The section plane (its cut outlines are part of the model scene).
@@ -716,8 +721,14 @@ pub(crate) fn build_scene(app: &SolveApp) -> GpuScene {
     if let Ok(mut b) = app.viewport.blocks.lock() {
         *b = made;
     }
-    if app.ui.ground_shadow && app.ui.visual_style != 2 && app.cam.pitch > 0.0 {
-        ground_shadow(&mut sc, app, &st);
+    if app.ui.visual_style != 2 && app.cam.pitch > 0.0 && (app.ui.ground_shadow || app.preferences.ambient_occlusion) {
+        let bounds = ground_bounds(app, &st);
+        if app.ui.ground_shadow {
+            ground_shadow(&mut sc, app, bounds);
+        }
+        if app.preferences.ambient_occlusion {
+            sc.ground_ao = solidcraft_gpu::view::GroundAo::new(bounds, ground_height(bounds), app.cam.up, ambient_occlusion_radius(app));
+        }
     }
     // Section: the outline of each body where the plane cuts it.
     if let Some((o, n)) = section_plane(app) {
@@ -863,7 +874,7 @@ fn build_sketch_scene(app: &SolveApp, proj: &Proj) -> GpuScene {
     sc
 }
 
-fn ground_shadow(sc: &mut GpuScene, app: &SolveApp, st: &std::sync::Arc<solidcraft_engine::doc::ModelState>) {
+fn ground_bounds(app: &SolveApp, st: &std::sync::Arc<solidcraft_engine::doc::ModelState>) -> solidcraft_engine::geom::Aabb3 {
     // The bodies' box in the camera's Z-up frame (the ground is its XY plane).
     let mut b = solidcraft_engine::geom::Aabb3::EMPTY;
     let boxes = body_bounds(app, st);
@@ -880,12 +891,30 @@ fn ground_shadow(sc: &mut GpuScene, app: &SolveApp, st: &std::sync::Arc<solidcra
             b.add(app.cam.to_frame(p));
         }
     }
+    b
+}
+
+/// Both ground effects use the original ellipse's plane, independent of the origin grid.
+fn ground_height(bounds: solidcraft_engine::geom::Aabb3) -> f64 {
+    bounds.min.z - 1e-3 * (1.0 + bounds.diagonal())
+}
+
+fn ambient_occlusion_radius(app: &SolveApp) -> f32 {
+    if app.preferences.ambient_occlusion && app.ui.visual_style != 2 {
+        let radius = model_bounds(app).diagonal() * 0.04;
+        if radius.is_finite() { radius.clamp(1e-4, 1e6) as f32 } else { 0.0 }
+    } else {
+        0.0
+    }
+}
+
+fn ground_shadow(sc: &mut GpuScene, app: &SolveApp, b: solidcraft_engine::geom::Aabb3) {
     if b.is_empty() {
         return;
     }
     let size = b.size();
     let c = b.center();
-    let z = b.min.z - 1e-3 * (1.0 + b.diagonal());
+    let z = ground_height(b);
     let (rx, ry) = (size.x * 0.62 + size.z * 0.15, size.y * 0.62 + size.z * 0.15);
     if !(rx > 0.0 && ry > 0.0) {
         return;
@@ -2505,6 +2534,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             pv_key: app.preview.key,
             pv_slot: app.preview.slot.clone(),
             pv_hide: app.preview.rolled_back,
+            preview_bounds: (app.preview.active && !app.preview.rolled_back).then_some(app.preview.bounds),
             clip: section_clip(app),
             cap: t.section_cap.to_normalized_gamma_f32(),
             view_proj: proj.vp.to_f32(),
@@ -2515,11 +2545,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             analysis_colors: crate::gpu::analysis_colors(&t.analysis),
             access: crate::access::map(app),
             outline: matches!(app.ui.visual_style, 0 | 3),
-            ao_radius: if app.preferences.ambient_occlusion && app.ui.visual_style != 2 {
-                (model_bounds(app).diagonal() * 0.04).clamp(1e-4, 1e6) as f32
-            } else {
-                0.0
-            },
+            ao_radius: ambient_occlusion_radius(app),
             eye: {
                 let e = proj.cam.eye().to_f32();
                 [e[0], e[1], e[2], if proj.cam.fov > 0.0 { 1.0 } else { 0.0 }]

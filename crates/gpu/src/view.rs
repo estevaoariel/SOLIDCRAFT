@@ -15,6 +15,7 @@ use wgpu::util::DeviceExt;
 use crate::pbr;
 
 mod ao;
+pub use ao::GroundAo;
 
 /// Triangle vertex: position (3 × f32), normal (3 × f32), sRGB colour (4 × u8).
 pub const TRI_SIZE: usize = 28;
@@ -38,6 +39,8 @@ pub struct PlannedBody {
 /// highlight scene (hover, selection, the origin widget) changes often and is small.
 #[derive(Default, Clone)]
 pub struct GpuScene {
+    /// Non-selectable virtual ground receiving viewport AO, separate from model triangles.
+    pub ground_ao: Option<GroundAo>,
     /// Opaque triangles. A zero normal draws the colour flat (unlit).
     pub tris: Vec<u8>,
     /// Opaque product PBR vertices; linear base color and explicit optical parameters.
@@ -226,6 +229,9 @@ pub struct Frame {
     pub pv_slot: SceneSlot,
     /// Preview reselect: skip drawing the preview while Primary rolls it back.
     pub pv_hide: bool,
+    /// World bounds of the active preview. Ground effects update their small receiver without
+    /// changing the model scene's key or re-uploading model geometry/colours.
+    pub preview_bounds: Option<solidcraft_geom::Aabb3>,
     /// Column-major view-projection.
     pub view_proj: [[f32; 4]; 4],
     /// Direction toward the eye (for lighting).
@@ -410,6 +416,8 @@ struct Batches {
     blocks: std::collections::HashMap<u64, BlockGpu>,
     key: Option<u64>,
     tris: Option<Batch>,
+    ground_ao: Option<Batch>,
+    ground_input: Option<GroundAo>,
     pbr: Option<Batch>,
     trans: Option<Batch>,
     glass: Option<Batch>,
@@ -463,6 +471,7 @@ impl Batches {
                 }
             }
             self.tris = joined(blocks.iter().map(|b| &b.tris), upload(device, "sc_tris", &sc.tris, TRI_SIZE));
+            self.ground_input = sc.ground_ao;
             self.pbr = upload(device, "sc_pbr", &sc.pbr, PBR_SIZE);
             self.trans = joined(blocks.iter().map(|b| &b.trans), upload(device, "sc_trans", &sc.trans, TRI_SIZE));
             self.glass = upload_with(device, "sc_glass", &sc.glass, TRI_SIZE, wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST);
@@ -550,6 +559,8 @@ impl Batches {
 pub struct Renderer {
     /// The AO depth prepass resources (a 1 × 1 stand-in while ambient occlusion is off).
     ao: ao::Resources,
+    ground_ao: wgpu::RenderPipeline,
+    ground_ao_key: Option<(u64, u64, bool)>,
     tri: wgpu::RenderPipeline,
     /// `tri` and `tri_cut` for planned bodies (positions and normals from the GPU evaluation,
     /// colours per vertex, indexed).
@@ -974,6 +985,27 @@ impl Renderer {
             bind_group_layouts: &[Some(&bgl), Some(&access_bgl), Some(&ao.layout)],
             immediate_size: 0,
         });
+        let ground_ao = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("sc_ground_ao"),
+            layout: Some(&solid_layout),
+            vertex: wgpu::VertexState {
+                module: &module,
+                entry_point: Some("vs_tri"),
+                buffers: &[Some(tri_layout())],
+                compilation_options: Default::default(),
+            },
+            primitive: wgpu::PrimitiveState { cull_mode: Some(wgpu::Face::Back), ..Default::default() },
+            depth_stencil: depth(wgpu::CompareFunction::LessEqual, false),
+            multisample: wgpu::MultisampleState { count: t.samples.max(1), ..Default::default() },
+            fragment: Some(wgpu::FragmentState {
+                module: &module,
+                entry_point: Some("fs_ground_ao"),
+                targets: &[Some(wgpu::ColorTargetState { format: t.format, blend: alpha, write_mask: wgpu::ColorWrites::ALL })],
+                compilation_options: Default::default(),
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
         let built = [Some(tri_layout())];
         let evaluated = [Some(planned_layout()), Some(color_layout())];
         let solid = |label: &str, fs: &str, cull: Option<wgpu::Face>, ds: Option<wgpu::DepthStencilState>, planned: bool| {
@@ -1119,6 +1151,8 @@ impl Renderer {
         });
         Renderer {
             ao,
+            ground_ao,
+            ground_ao_key: None,
             depth_reset,
             target: t,
             max_texture: device.limits().max_texture_dimension_2d,
@@ -1308,6 +1342,12 @@ impl Renderer {
         res.sketch.take(device, cb.sketch_key, &cb.sketch_slot, None);
         res.highlight.take(device, cb.hl_key, &cb.hl_slot, None);
         res.preview.take(device, cb.pv_key, &cb.pv_slot, None);
+        let ground_key = (cb.key, cb.pv_key, cb.pv_hide);
+        if res.ground_ao_key != Some(ground_key) {
+            let preview = if cb.pv_hide { None } else { cb.preview_bounds };
+            res.model.ground_ao = res.model.ground_input.and_then(|ground| upload(device, "sc_ground_ao", &ground.vertices(preview), TRI_SIZE));
+            res.ground_ao_key = Some(ground_key);
+        }
         res.model.sort_glass(queue, cb.back);
         queue.write_buffer(&res.uniform, 0, &uniform_bytes(cb, cb.size_px[0], cb.size_px[1], res.linear_out, res.target.reversed_depth()));
         if let Some(a) = &cb.access
@@ -1316,7 +1356,8 @@ impl Renderer {
             res.access_bind = access_texture(device, Some(queue), &res.access_bgl, a.size, &a.depth);
             res.access_version = a.version;
         }
-        res.ao.prepare(device, encoder, &res.bind, cb.ao_radius, cb.size_px, res.target.reversed_depth(), [&res.model, &res.preview]);
+        let preview = if cb.pv_hide { &res.empty } else { &res.preview };
+        res.ao.prepare(device, encoder, &res.bind, cb.ao_radius, cb.size_px, res.target.reversed_depth(), [&res.model, preview]);
         // Images: upload new or changed textures, drop removed ones, rebuild the quads.
         res.textures.retain(|id, _| cb.images.iter().any(|i| i.id == *id));
         res.quads.clear();
@@ -1467,6 +1508,9 @@ impl Renderer {
         lines(pass, &res.line, &pv.lines);
         lines(pass, &res.line, &h.lines);
         lines(pass, &res.guide_line, &h.guide_lines);
+        if !cb.product && cb.ao_radius > 0.0 {
+            tris(pass, &res.ground_ao, &m.ground_ao);
+        }
         for (id, q) in res.quads.iter().filter(|_| !cb.product) {
             if let Some((_, bind)) = res.textures.get(id) {
                 pass.set_pipeline(&res.image);

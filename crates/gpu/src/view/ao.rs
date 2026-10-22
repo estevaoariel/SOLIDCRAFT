@@ -1,4 +1,4 @@
-//! The optional AO depth prepass. Only opaque model and preview triangles participate: their
+//! The optional AO depth prepass. Opaque model, preview and virtual ground triangles participate: their
 //! depth is drawn once into a single-sample depth map the lit fragment samples for occlusion.
 //! The map is independent of the window's MSAA, and the depth runs the same way as the
 //! viewport's own buffer (see [`super::depth_compare`] and [`super::far_depth`]).
@@ -7,6 +7,62 @@
 //! colour attachments are not available on every GL adapter.
 
 use super::{Batches, color_layout, depth_compare, far_depth, planned_layout, tri_layout};
+
+/// A virtual receiver in the camera's up-axis frame. Geometry is built independently of the
+/// model batches, so moving a preview never re-uploads unchanged model colours or vertices.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GroundAo {
+    bounds: solidcraft_geom::Aabb3,
+    height: f64,
+    up: solidcraft_render::UpAxis,
+    radius: f32,
+}
+
+impl GroundAo {
+    pub fn new(bounds: solidcraft_geom::Aabb3, height: f64, up: solidcraft_render::UpAxis, radius: f32) -> Option<Self> {
+        if bounds.is_empty() || !bounds.min.is_finite() || !bounds.max.is_finite() || !height.is_finite() || !radius.is_finite() || radius <= 0.0 {
+            return None;
+        }
+        Some(Self { bounds, height, up, radius })
+    }
+
+    /// Two triangles (168 bytes), extended to cover an optional preview without moving the
+    /// existing ground height. Invalid preview bounds are ignored.
+    pub fn vertices(&self, preview: Option<solidcraft_geom::Aabb3>) -> Vec<u8> {
+        use solidcraft_geom::Vec3;
+        let cam = solidcraft_render::Camera { up: self.up, ..Default::default() };
+        let mut coverage = self.bounds;
+        if let Some(bb) = preview.filter(|b| !b.is_empty() && b.min.is_finite() && b.max.is_finite()) {
+            for i in 0..8 {
+                coverage.add(cam.to_frame(Vec3::new(
+                    if i & 1 == 0 { bb.min.x } else { bb.max.x },
+                    if i & 2 == 0 { bb.min.y } else { bb.max.y },
+                    if i & 4 == 0 { bb.min.z } else { bb.max.z },
+                )));
+            }
+        }
+        let margin = f64::from(self.radius) * 2.0;
+        let points = [
+            Vec3::new(coverage.min.x - margin, coverage.min.y - margin, self.height),
+            Vec3::new(coverage.max.x + margin, coverage.min.y - margin, self.height),
+            Vec3::new(coverage.max.x + margin, coverage.max.y + margin, self.height),
+            Vec3::new(coverage.min.x - margin, coverage.max.y + margin, self.height),
+        ]
+        .map(|p| cam.from_frame(p).to_f32());
+        if !points.iter().flatten().all(|v| v.is_finite()) {
+            return Vec::new();
+        }
+        let normal = cam.from_frame(Vec3::Z).to_f32();
+        let mut bytes = Vec::with_capacity(6 * super::TRI_SIZE);
+        for i in [0, 1, 2, 0, 2, 3] {
+            for value in points[i].iter().chain(&normal) {
+                bytes.extend_from_slice(&value.to_le_bytes());
+            }
+            bytes.extend_from_slice(&[0, 0, 0, 255]);
+        }
+        bytes
+    }
+}
 
 pub(super) struct Resources {
     pub layout: wgpu::BindGroupLayout,
@@ -148,6 +204,12 @@ impl Resources {
             pass.set_pipeline(&self.pipeline);
             if let Some(tris) = &batch.tris {
                 for (buffer, count) in &tris.parts {
+                    pass.set_vertex_buffer(0, buffer.slice(..));
+                    pass.draw(0..*count, 0..1);
+                }
+            }
+            if let Some(ground) = &batch.ground_ao {
+                for (buffer, count) in &ground.parts {
                     pass.set_vertex_buffer(0, buffer.slice(..));
                     pass.draw(0..*count, 0..1);
                 }
