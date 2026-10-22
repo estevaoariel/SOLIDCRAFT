@@ -136,7 +136,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("SKETCH", "CONSTRAINTS")
         .icon("c_equal")
         .enabled(in_sketch)
-        .params("a, b: lines or circles/arcs"),
+        .params("a, b: lines or circles/arcs; or curves: [2 to 200 lines or circles/arcs], each made equal to the first, in one step"),
     CommandSpec::new("sketch.constraint.parallel", "Parallel", c_parallel)
         .at("SKETCH", "CONSTRAINTS")
         .icon("c_parallel")
@@ -1804,7 +1804,42 @@ fn c_tangent(s: &mut Session, p: &Value) -> Result<Value> {
     })
 }
 fn c_equal(s: &mut Session, p: &Value) -> Result<Value> {
+    if p.get("curves").is_some() {
+        return equal_curves(s, p);
+    }
     constrain(s, p, "sketch.constraint.equal", |sk| two_curves(sk, p, "sketch.constraint.equal").map(|(a, b)| ConstraintKind::Equal { a, b }))
+}
+
+/// Equal over a list of curves (#4985): each one is made equal to the first, in one edit (one
+/// undo step). A pair already made equal is not constrained twice. The solve moves as little as it
+/// can, so a dimensioned curve keeps its size and the others take it, whatever the order.
+fn equal_curves(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "sketch.constraint.equal";
+    let ids = string_list(p, "curves");
+    if !(2..=200).contains(&ids.len()) {
+        return Err(bad(cmd, "`curves` must list 2 to 200 lines or circles/arcs"));
+    }
+    let (out, info) = edit(s, p, cmd, true, |sk, _| {
+        let mut curves: Vec<usize> = Vec::with_capacity(ids.len());
+        for id in &ids {
+            let c = sk.curve_index(id).ok_or_else(|| bad(cmd, format!("unknown curve `{id}`")))?;
+            if curves.contains(&c) {
+                return Err(bad(cmd, format!("`{id}` is listed twice")));
+            }
+            curves.push(c);
+        }
+        let Some((&first, rest)) = curves.split_first() else { return Err(bad(cmd, "`curves` is empty")) };
+        let mut out = Vec::new();
+        for &c in rest {
+            let already =
+                sk.constraints.iter().any(|k| matches!(k.kind, ConstraintKind::Equal { a, b } if (a == first && b == c) || (a == c && b == first)));
+            if !already {
+                out.push(add_c(sk, ConstraintKind::Equal { a: first, b: c })?);
+            }
+        }
+        Ok(out)
+    })?;
+    Ok(json!({"constraints": out, "sketch": info}))
 }
 fn c_parallel(s: &mut Session, p: &Value) -> Result<Value> {
     constrain(s, p, "sketch.constraint.parallel", |sk| {
