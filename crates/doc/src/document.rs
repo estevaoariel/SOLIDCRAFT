@@ -2308,7 +2308,8 @@ pub struct Feature {
     pub body_names: Vec<String>,
     /// Parameter names of the feature's inputs (see `FeatureKind::inputs`), e.g. `d3`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub param_names: Vec<String>,    /// The component the feature (and what it makes) belongs to; 0 = the root.
+    pub param_names: Vec<String>,
+    /// The component the feature (and what it makes) belongs to; 0 = the root.
     #[serde(default, skip_serializing_if = "is_root")]
     pub component: u64,
     /// For each picked edge (fillets, chamfers): where it sat in its body when picked, so it
