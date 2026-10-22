@@ -176,6 +176,43 @@ fn exact_visibility_isolate_rename_and_async_accept() {
 }
 
 #[test]
+fn shown_bodies_answer_as_each_body_does_and_follow_what_is_hidden() {
+    let mut s = Session::default();
+    let (_, first) = created(&mut s, "Part");
+    run(&mut s, "solid.box", json!({"length":2,"width":2,"height":2}));
+    run(&mut s, "solid.box", json!({"length":2,"width":2,"height":2,"corner":[5,0,0]}));
+    let second = run(&mut s, "occurrence.copy", json!({"occurrence":first,"translate":[20,0,0]}))["occurrence"].as_u64().unwrap();
+    run(&mut s, "component.activate", json!({"component":0}));
+    run(&mut s, "solid.box", json!({"length":2,"width":2,"height":2,"corner":[0,30,0]}));
+    let check = |s: &Session, what: &str| {
+        let world = s.world_state();
+        let shown = s.shown_bodies(&world);
+        assert_eq!(shown.len(), world.bodies.len(), "{what}");
+        for (i, b) in world.bodies.iter().enumerate() {
+            assert_eq!(shown.at(i), s.body_visible(&b.name), "{what}: {}", b.name);
+        }
+        assert!(!shown.at(world.bodies.len()), "past the last body");
+        world.bodies.iter().filter(|b| s.body_visible(&b.name)).count()
+    };
+    assert_eq!(check(&s, "nothing hidden"), 5);
+    let second_bodies = s.occurrence_bodies(&[second], true).unwrap();
+    run(&mut s, "browser.visibility", json!({"visible":false,"paths":[[second]]}));
+    assert_eq!(check(&s, "a placement hidden"), 3);
+    run(&mut s, "browser.visibility", json!({"visible":false,"items":[second_bodies[0].clone()]}));
+    run(&mut s, "browser.visibility", json!({"visible":true,"paths":[[second]]}));
+    assert_eq!(check(&s, "a placed body hidden"), 4);
+    run(&mut s, "browser.visibility", json!({"visible":false,"tree_folders":["c0/bodies"]}));
+    assert_eq!(check(&s, "the root's bodies folder hidden"), 3);
+    // Lists set directly (as `ui.set` does), without a new revision.
+    let revision = s.revision;
+    s.visibility = solidcraft_doc::Visibility::default();
+    assert_eq!((s.revision, check(&s, "everything shown again")), (revision, 5));
+    // A change to the design asks again.
+    run(&mut s, "solid.box", json!({"length":2,"width":2,"height":2,"corner":[0,60,0]}));
+    assert_eq!(check(&s, "a body added"), 6);
+}
+
+#[test]
 fn synthesized_name_collision_keeps_source_and_instance_separate() {
     let mut s = Session::default();
     run(&mut s, "solid.box", json!({"length":1,"width":1,"height":1}));
