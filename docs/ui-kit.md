@@ -413,3 +413,49 @@ border strip without changing logical panel allocations. The application bar has
 an independent surface role.
 The saved `Prefs::layout` is changed through `view.layout`; `ui.set` may still make a
 transient automation override.
+## File/start presentation
+
+`FileView` owns File surfaces and controls. It accepts translated strings, existing
+icon ids and cached thumbnail textures; callers retain commands, document state,
+persistence, thumbnail jobs and recovery decisions.
+
+- `page`, `content` and `rail` own the page background, responsive insets and
+  full-height rail fill/clip. `navigation` also supports the narrow navigation menu.
+  Callers supply layout rectangles, scrolling and entry order.
+- `nav_row` accepts a stable id, label, shortcut, selection and enabled state.
+  `back_to` accepts a translated `{name}` template, paints the document name
+  semibold and reuses the mirrored chevron and outlined keycap. `separator`
+  supplies grouped rules. Disabled rows cannot activate.
+- `title`, `subtitle`, `detail` and `section` own typography. `section` accepts a
+  token-based heading/body gap: `space_12` for New, `space_10` for Recent/Samples.
+  Callers retain semantic section order and the larger `file_section_gap`.
+- `grid` provides responsive columns with 14 pt gutters and no trailing row gap.
+  `action_tile` supplies an 84 pt card with 44 pt original artwork and vertically
+  centered label/subtitle. `tile_min_width` informs responsive columns.
+- `recent_list` owns the rounded border and zero row gap. `recent_row` accepts a
+  `RecentRow`, paints internal separators, medium names and workspace dots, and
+  retains title/path at narrow widths. Callers handle unavailable-file actions.
+- `sample_grid(ui, id, &[SampleCard])` measures each row's tallest content and
+  stretches cards to equal bottoms without clipping descriptions. Responses stay
+  in sample order, with stable `{id}:{index}` ids. Artwork inputs remain unchanged.
+- `recovery_banner` accepts `RecoveryMessage` segments for a bold title, normal
+  message, monospace filename and normal suffix. Actions align right or wrap below
+  at narrow widths. Discard is optional for summaries; the return value is
+  `(recover_response, optional_discard_response)`. `recovery_review` uses the same
+  geometry with per-design Discard. Callers provide truthful metadata.
+
+The exported `file_*` colour tokens provide readable light/dark foreground and
+background pairs, including File-specific secondary text. Thumbnails retain the
+neutral `file_image_tint`; icon and text colours do not change their pixels.
+Spacing, dimensions, fonts and radii come from `theme::Tokens`.
+
+Gallery and geometry tests cover these components. To capture the actual File
+view using public temporary fixtures, set `SOLIDCRAFT_FILE_EVIDENCE` to an output
+directory and run `file_view_application_evidence_in_both_themes_and_widths` with
+`--ignored`. It produces desktop and 420 pt narrow PNGs in both themes.
+
+`button_at(ui, id, rect, label, Button::Primary/Normal)` places the same shared
+native button used by `button` inside a bounded, centred layout. It preserves
+stable identity, enabled state and exact caller-owned geometry. Recovery actions
+use this component rather than custom button painters. The recovery well renders
+the existing restore artwork through its construction accent ramp.

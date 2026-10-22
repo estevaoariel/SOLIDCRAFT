@@ -159,7 +159,6 @@ pub mod mouse_gesture;
 pub(crate) mod navigation;
 pub(crate) mod open_meshing;
 pub mod params_dialog;
-pub(crate) mod pick_buffer;
 pub(crate) mod pick_index;
 pub(crate) mod plugins;
 pub mod prefs;
