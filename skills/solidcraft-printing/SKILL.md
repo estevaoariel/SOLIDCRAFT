@@ -40,7 +40,7 @@ Design for **FDM** with a **0.4 mm nozzle** unless told otherwise. Ask for the p
 | M3 self-tapping pilot | ⌀2.4–2.5 | Good twice, loose the third time: prefer inserts |
 | M3 heat-set insert | hole ⌀ = insert OD − 0.1, depth = insert length + 0.5 | Brass insert OD is usually 4.6 mm → ⌀4.5 hole; add a 45° lead-in |
 | Nut trap | across-flats + 0.2, depth = nut thickness + 0.2 | Leave a slot to push it in, or a closed pocket if it goes in from the side |
-| Screw boss OD | 2 × screw ⌀ minimum (M3 → ⌀6) | Rib it to the wall rather than thickening the wall: 3 ribs, 1.5 mm thick, 45° taper |
+| Screw boss OD | **insert boss = insert OD + 4** (⌀4.6 insert → ⌀8.6); self-tapping boss = 2 × screw ⌀ (M3 → ⌀6) | Size it from the hole that is in it, never from the screw: a ⌀4.5 insert hole in a ⌀6 boss leaves 0.75 mm of wall and splits when the insert goes in. Rib it to the wall rather than thickening the wall: 3 ribs, 1.5 mm thick, 45° taper |
 
 - **Do not model threads below M8.** Printed threads work only at coarse pitch and large diameter; use an insert, a self-tapper or a nut trap.
 - **A boss taller than 3 × its OD wobbles** and the screw cams out. Cap it with a rib or shorten it.
@@ -72,7 +72,7 @@ Run these in the design, not from memory. `inspect_design {measure:true}` and `i
 1. **Build volume**: every printed body's bounding box ≤ the volume, with 5 mm to spare on X and Y for a brim.
 2. **Wall thickness**: measure the thinnest wall of each part; it must be ≥ 1.6 mm for anything structural, ≥ 1.35 mm for anything at all.
 3. **Fits**: for each mating pair, measure the gap and compare with the table. Zero gap where parts must move is a bug, not a tight fit.
-4. **Fasteners**: every hole's ⌀ and depth against the table, and every boss OD against 2 × screw ⌀.
+4. **Fasteners**: every hole's ⌀ and depth against the table, and every boss OD against the hole in it — insert boss ≥ insert OD + 4, self-tapping boss ≥ 2 × screw ⌀.
 5. **Overhangs**: list every face steeper than 45° from vertical that is not on the bed; each one is support or a redesign.
 6. **Holes**: every horizontal hole above ⌀6 is teardropped, drilled out or accepted with a stated flat.
 7. **Counts and clearances inside cavities**: the drives, the board, the fan — measure the space they need against the space they have, and state both numbers.
@@ -83,7 +83,7 @@ Report the numbers you measured, not the ones you intended: "cooler clearance 16
 ## Traps
 1. **A hole that measures right and prints small.** Vertical holes shrink in every FDM process; a ⌀3.4 hole can arrive at ⌀3.1. Compensate once, in the parameter, per printer.
 2. **Zero-clearance joints.** Two parts modelled touching cannot be assembled, and the slicer does not care. If the design has a lid, a tray or a drawer, it needs a gap parameter.
-3. **Bosses that split.** A ⌀6 boss on a 1.2 mm wall with a ⌀2.5 pilot leaves 1.75 mm of wall each side; the screw wedges it apart. Rib it, and keep at least 2 mm around the pilot.
+3. **Bosses that split.** A ⌀6 boss with a ⌀2.5 pilot leaves 1.75 mm of wall each side; the same boss with a ⌀4.5 insert hole leaves 0.75 mm and cracks as the insert is pressed in. Keep at least 2 mm of material around the hole, size the boss from the hole, and rib it.
 4. **Thin tall walls** (a 1 mm panel 80 mm high) warp, ring and snap. Rib them or thicken them.
 5. **Sharp inside corners** concentrate stress and are the first place a part cracks. Fillet them.
 6. **Support in a mating surface.** The support scar leaves a 0.2 mm bump, and the parts rock instead of seating. Move the split.
