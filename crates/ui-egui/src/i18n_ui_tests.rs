@@ -292,3 +292,17 @@ fn continuity_gap_and_sheet_metal_gap_are_separate_messages() {
         assert_eq!(locale.text("ui.sheet_gap"), sheet, "{lang}");
     }
 }
+
+/// The reference labels of the cataloguing fix: a label passed as text (`Cylindrical face`) and an
+/// id (`thread.iso_metric`).
+#[test]
+fn newly_catalogued_dialog_labels_show_in_german() {
+    let mut h = Harness::new();
+    h.app.preferences.language = "de".into();
+    h.app.home.open = false;
+    h.call("ui.start", json!({"command":"solid.thread"}));
+    h.frames(3);
+    assert!(h.widget("Zylindrische Fläche").is_some(), "the Cylindrical face row must be translated");
+    assert!(h.widget("ISO metrisch").is_some(), "the thread.iso_metric label must be translated");
+    assert!(h.widget("ISO metric").is_none(), "the label must not fall back to English");
+}
