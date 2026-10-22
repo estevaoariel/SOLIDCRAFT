@@ -40,6 +40,11 @@ pub const FEATURES: Accept = 1024;
 pub const SKETCH_POINTS: Accept = 2048;
 /// The origin point, picked as a vertex of no body (in the viewport or the browser's Origin).
 pub const ORIGIN: Accept = 4096;
+/// What a 3D axis input takes (Revolve, Circular Pattern, Plane at Angle, Move's Rotate): an
+/// origin or construction axis, a straight sketch line, and an edge or face of the model that
+/// has an axis (a straight or circular edge, a cylinder, cone or torus face; the dialog takes
+/// only those, `Dialog::candidate_on`).
+pub const AXIS_PICKS: Accept = AXES | EDGES | FACES;
 
 /// One selection input of a command dialog ("Profiles", "Edges", "Plane", ...).
 #[derive(Clone, Debug, PartialEq)]
