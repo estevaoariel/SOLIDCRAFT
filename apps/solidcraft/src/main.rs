@@ -209,6 +209,10 @@ fn services(cc: &eframe::CreationContext<'_>) -> Services {
                         "GLB",
                         "gltf",
                         "GLTF",
+                        "kicad_pcb",
+                        "KICAD_PCB",
+                        "kicad_pro",
+                        "KICAD_PRO",
                     ],
                 )
                 .add_filter("SolidCraft design (container or JSON)", &[io::DESIGN_EXT, io::LEGACY_DESIGN_EXT, "json"])
@@ -216,6 +220,7 @@ fn services(cc: &eframe::CreationContext<'_>) -> Services {
                 .add_filter("IGES", &["igs", "iges", "IGS", "IGES"])
                 .add_filter("FreeCAD and Rhino", &["FCStd", "fcstd", "3dm", "3DM"])
                 .add_filter("Mesh (3MF, STL, OBJ, glTF)", &["3mf", "3MF", "stl", "STL", "obj", "OBJ", "glb", "GLB", "gltf", "GLTF"])
+                .add_filter("KiCad PCB", &["kicad_pcb", "KICAD_PCB", "kicad_pro", "KICAD_PRO"])
                 .add_filter("Sketch drawings (DXF, SVG)", &["dxf", "DXF", "svg", "SVG"])
                 .add_filter("All files", &["*"])
                 .pick_file();
