@@ -1,7 +1,9 @@
 //! Extrude by dragging: press on a planar face (or a sketch profile) and pull. Once the pointer
 //! has moved far enough upward, or along the surface's normal on screen, Extrude starts on the
-//! pick; the distance follows the pointer along the normal (snapped like the extrude arrow) and
-//! letting go applies it. A release back at zero distance cancels. A press that goes any other
+//! pick; the distance follows the pointer along the normal in steps. Moving the pointer sideways
+//! while pulling sets the step: to the right it grows (1, 2, 3 ... 10 mm), to the left it
+//! shrinks (0.8, 0.5 ... 0.1 mm). The step and the distance show beside the pointer. Letting go
+//! leaves the Extrude window open to adjust and confirm with OK. A press that goes any other
 //! way stays a box selection.
 
 use egui::Pos2;
@@ -16,8 +18,22 @@ use crate::viewport::{Hit, Proj};
 const START_PX: f32 = 6.0;
 /// How closely (cosine) a drag must follow the normal's screen direction to start a pull.
 const ALIGNED: f32 = 0.8;
-/// A distance below this is "no extrude" at release.
-const MIN_DISTANCE: f64 = 1e-6;
+/// Screen distance the pointer travels sideways for one step of the ladder.
+const PX_PER_STEP: f32 = 22.0;
+/// The step sizes (mm) a pull can snap to, finest first.
+const STEPS: [f64; 25] =
+    [0.01, 0.02, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.65, 0.7, 0.8, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 20.0, 50.0, 100.0, 200.0, 500.0, 1000.0];
+
+/// The ladder position nearest to `step`.
+fn nearest_step(step: f64) -> usize {
+    (0..STEPS.len()).min_by(|a, b| (STEPS[*a] / step).ln().abs().total_cmp(&(STEPS[*b] / step).ln().abs())).unwrap_or(0)
+}
+
+/// The ladder position `dx` screen points sideways from `base`, clamped to the ladder.
+fn step_index(base: usize, dx: f32) -> usize {
+    let moved = (dx / PX_PER_STEP).round() as i64;
+    (base as i64 + moved).clamp(0, STEPS.len() as i64 - 1) as usize
+}
 
 /// A press on a surface that may turn into a pull.
 #[derive(Clone, Debug)]
@@ -31,13 +47,19 @@ pub struct Gesture {
     grab: f64,
     /// Extrude has started (the window is open and follows the pointer).
     started: bool,
+    /// The step at the start (a ladder position) and the pointer's x there: sideways moves
+    /// from it change the step.
+    step0: usize,
+    x0: f32,
+    /// The step and distance now, and where the pointer is, for the label.
+    step: f64,
+    distance: f64,
+    at: Pos2,
 }
 
 #[derive(Debug, Default)]
 pub struct State {
     gesture: Option<Gesture>,
-    /// The pull ended with a distance: the dialog applies on its next frame.
-    pub(crate) commit: bool,
 }
 
 /// A pull has started: the box selection stays out of it.
@@ -66,7 +88,19 @@ pub fn press(app: &mut SolveApp, proj: &Proj, at: Pos2) {
         _ => return,
     };
     let Some(grab) = crate::canvas::along(proj, at, base, normal) else { return };
-    app.viewport.drag_extrude.gesture = Some(Gesture { press: at, sel, base, normal, grab, started: false });
+    app.viewport.drag_extrude.gesture = Some(Gesture {
+        press: at,
+        sel,
+        base,
+        normal,
+        grab,
+        started: false,
+        step0: nearest_step(crate::canvas::snap_step(app.cam.half_height())),
+        x0: at.x,
+        step: 0.0,
+        distance: 0.0,
+        at,
+    });
 }
 
 /// Whether the move from the press to `p` is a pull: upward, or along the normal on screen.
@@ -88,7 +122,7 @@ fn pulls(proj: &Proj, g: &Gesture, p: Pos2) -> bool {
 
 /// The pointer is at `p` with the button down.
 pub fn to(app: &mut SolveApp, proj: &Proj, p: Pos2) {
-    let Some(g) = app.viewport.drag_extrude.gesture.clone() else { return };
+    let Some(mut g) = app.viewport.drag_extrude.gesture.clone() else { return };
     if !g.started {
         if app.dialog.is_some() || !pulls(proj, &g, p) {
             return;
@@ -99,32 +133,57 @@ pub fn to(app: &mut SolveApp, proj: &Proj, p: Pos2) {
             app.viewport.drag_extrude.gesture = None;
             return;
         }
-        app.viewport.drag_extrude.gesture = Some(Gesture { started: true, ..g.clone() });
+        g = Gesture { started: true, x0: p.x, ..g };
     }
-    let Some(v) = crate::canvas::along(proj, p, g.base, g.normal) else { return };
+    g.at = p;
+    g.step = STEPS[step_index(g.step0, p.x - g.x0)];
+    let Some(v) = crate::canvas::along(proj, p, g.base, g.normal) else {
+        app.viewport.drag_extrude.gesture = Some(g);
+        return;
+    };
     let free = crate::tool_modifiers::manipulator_free();
-    let step = crate::canvas::snap_step(app.cam.half_height());
     let travelled = v - g.grab;
-    let travelled = if free { travelled } else { (travelled / step).round() * step };
+    let travelled = if free { travelled } else { (travelled / g.step).round() * g.step };
+    g.distance = travelled;
+    app.viewport.drag_extrude.gesture = Some(g);
     let Some(Kind::Extrude { distance, direction, .. }) = app.dialog.as_mut().map(|d| &mut d.kind) else { return };
     // A reversed extrude measures its distance against the normal.
     let sign = if matches!(*direction, 1 | crate::dialogs::TWO_SIDES_REVERSED) { -1.0 } else { 1.0 };
     *distance = crate::canvas::format_len(travelled * sign);
 }
 
-/// The button is up: apply the pull, or drop it when it came back to nothing.
+/// The button is up: the window stays open for the user to adjust and confirm.
 pub fn end(app: &mut SolveApp) {
-    let Some(g) = app.viewport.drag_extrude.gesture.take() else { return };
-    if !g.started {
-        return;
-    }
-    let length = match app.dialog.as_ref().map(|d| &d.kind) {
-        Some(Kind::Extrude { distance, .. }) => app.session.doc.eval(distance, solidcraft_engine::doc::expr::Kind::Length).ok(),
-        _ => return,
-    };
-    if length.is_some_and(|l| l.is_finite() && l.abs() > MIN_DISTANCE) {
-        app.viewport.drag_extrude.commit = true;
-    } else {
-        crate::dialogs::cancel(app);
+    app.viewport.drag_extrude.gesture = None;
+}
+
+/// The step and distance beside the pointer while pulling.
+pub fn show(app: &SolveApp, painter: &egui::Painter) {
+    let Some(g) = app.viewport.drag_extrude.gesture.as_ref().filter(|g| g.started) else { return };
+    let t = crate::theme::Tokens::get();
+    let step = crate::canvas::format_len(g.step);
+    let text = format!("{}   Step {step}  (move sideways)", crate::canvas::format_len(g.distance));
+    let font = egui::FontId::proportional(t.font_body);
+    let galley = painter.layout_no_wrap(text, font, t.text);
+    let pos = g.at + egui::vec2(18.0, -30.0);
+    let rect = egui::Rect::from_min_size(pos, galley.size()).expand(5.0);
+    painter.rect_filled(rect, 4.0, t.overlay);
+    painter.rect_stroke(rect, 4.0, egui::Stroke::new(1.0, t.accent), egui::StrokeKind::Inside);
+    painter.galley(pos, galley, t.text);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sideways_moves_walk_the_step_ladder() {
+        let one = nearest_step(1.0);
+        assert_eq!(STEPS[one], 1.0);
+        assert_eq!(STEPS[step_index(one, PX_PER_STEP)], 2.0);
+        assert_eq!(STEPS[step_index(one, -PX_PER_STEP)], 0.8);
+        assert_eq!(STEPS[step_index(one, -8.0 * PX_PER_STEP)], 0.1);
+        assert_eq!(step_index(one, -1e6), 0);
+        assert_eq!(step_index(one, 1e6), STEPS.len() - 1);
     }
 }

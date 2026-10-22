@@ -3106,6 +3106,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     crate::inference::show(app, &painter, &proj);
     crate::drag_snap::show(app, &painter, &proj);
     hover_highlight(app, &painter, &proj);
+    crate::drag_extrude::show(app, &painter);
     points_2d(app, &painter, &proj);
     if let Some((plane, sketch)) = crate::sketch_attachment_ui::lost_guide(app)
         && let Some((low, high)) = sketch.bounds()

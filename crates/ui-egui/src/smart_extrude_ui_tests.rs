@@ -125,7 +125,7 @@ fn an_explicit_reverse_keeps_the_operation() {
 }
 
 /// Pressing on a top face and pulling it up extrudes it by the distance dragged, without any
-/// tool being started; letting go applies it.
+/// tool being started; letting go leaves the window open until OK.
 #[test]
 fn pulling_a_face_up_extrudes_it() {
     let mut h = Harness::new();
@@ -135,7 +135,10 @@ fn pulling_a_face_up_extrudes_it() {
     h.settle();
     h.step(&json!({"drag":[{"world":[10,10,10]},{"world":[10,10,20]}]})).unwrap();
     h.frames(4);
-    assert!(h.app.dialog.is_none(), "the release applied the extrude");
+    assert!(h.app.dialog.is_some(), "the window stays open after the release");
+    assert_eq!(state(&h), (0, JOIN, true), "pulled out: Join");
+    h.step(&json!({"key":"Enter"})).unwrap();
+    assert!(h.app.dialog.is_none(), "OK applied the extrude");
     let (lo, hi) = bounds_z(&h);
     assert!(lo.abs() < 1e-6 && hi > 10.5, "the box grew upward: z {lo}..{hi}");
 }
@@ -153,4 +156,17 @@ fn dragging_sideways_over_a_face_does_not_extrude() {
     h.frames(4);
     assert!(h.app.dialog.is_none());
     assert!((volume(&h) - before).abs() < 1e-6);
+}
+
+/// Pulling a face down into the body cuts, and the window waits for OK as well.
+#[test]
+fn pulling_a_face_down_into_the_body_cuts() {
+    let mut h = Harness::new();
+    h.app.run("solid.box", json!({"length":20,"width":20,"height":10,"corner":[0,0,0]})).unwrap();
+    h.step(&json!({"call":"ui.view","params":{"view":"home"}})).unwrap();
+    h.step(&json!({"call":"ui.view","params":{"view":"fit"}})).unwrap();
+    h.settle();
+    h.step(&json!({"drag":[{"world":[10,10,10]},{"world":[10,10,5]}]})).unwrap();
+    h.frames(4);
+    assert_eq!(state(&h).1, CUT, "pushed into the box: Cut");
 }
