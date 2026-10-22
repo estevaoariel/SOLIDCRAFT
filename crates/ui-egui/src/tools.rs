@@ -78,7 +78,7 @@ pub struct Tool {
     pub hover: Option<(Vec2, Option<String>)>,
     /// Picked entity ids.
     pub picks: Vec<String>,
-    /// Horizontal/Vertical point references: point ids or `{midpoint: line_id}`.
+    /// Horizontal/Vertical point references, or the Dimension tool's midpoint snaps.
     pub point_picks: Vec<Value>,
     /// Inline dimension boxes for the shape being drawn, the point count they were made for,
     /// and whether the first box should take the keyboard.
@@ -277,24 +277,60 @@ pub fn on_click(app: &mut SolveApp, proj: &Proj, pos: Pos2, shift: bool) {
         Kind::Ext => crate::sketch_tools::on_click(app, &mut tool, proj, pos),
         Kind::Dimension => {
             let hits = pick(app, proj, pos);
-            let hit = hits.iter().find_map(|h| match h {
-                Hit::SketchPoint { id, .. } => Some((id.clone(), false)),
-                Hit::SketchCurve { id, .. } => Some((id.clone(), true)),
-                _ => None,
+            // The snap identifies the intended line even when another (projected) edge
+            // overlaps it and wins the ordinary curve hit. Both picks can be midpoints.
+            let midpoint = sketch_point_at(app, proj, pos).and_then(|(_, snap)| snap).and_then(|id| {
+                if id.starts_with("mid:") { return Some(id); }
+                // An earlier dimension may already have materialized this midpoint.
+                // Picking that point retains the same midpoint intent on subsequent dimensions.
+                let state = app.session.world_state();
+                let ss = app.session.active_sketch.and_then(|sid| state.sketch(sid))?;
+                let point = ss.sketch.resolve_point(&id)?;
+                ss.sketch.constraints.iter().find_map(|c| match c.kind {
+                    solidcraft_engine::sketch::ConstraintKind::Midpoint { p, l } if !c.driven && p == point => {
+                        ss.sketch.curves.get(l).map(|c| format!("mid:{}", c.id))
+                    }
+                    _ => None,
+                })
+            }).filter(|id| {
+                let Some(line) = id.strip_prefix("mid:") else { return false };
+                let state = app.session.world_state();
+                app.session
+                    .active_sketch
+                    .and_then(|sid| state.sketch(sid))
+                    .is_some_and(|ss| {
+                        ss.sketch.curve_index(line).is_some_and(|l| solidcraft_engine::view::sketch_curve_visible(&ss.sketch, l))
+                            // A circle/arc and a line still measure their edge-to-edge gap.
+                            && tool.picks.first().is_none_or(|first| {
+                                ss.sketch.curve_index(first).is_none_or(|l| matches!(ss.sketch.shape(l), Some(solidcraft_engine::sketch::Shape::Line { .. })))
+                            })
+                    })
+            });
+            let hit = midpoint.as_deref().and_then(|id| id.strip_prefix("mid:")).map(|id| (id.to_string(), true, true)).or_else(|| {
+                hits.iter().find_map(|h| match h {
+                    Hit::SketchPoint { sketch, id, .. } if Some(*sketch) == app.session.active_sketch => Some((id.clone(), false, true)),
+                    Hit::SketchCurve { sketch, id, straight, .. } if Some(*sketch) == app.session.active_sketch => {
+                        Some((id.clone(), true, *straight))
+                    }
+                    _ => None,
+                })
             });
             let fresh = |tool: &Tool, id: &String| !tool.picks.contains(id) && tool.picks.len() < 2;
             if let Some(typed) = crate::dim_view::live() {
                 match hit {
                     // Before anything is typed, another entity joins the dimension, as in the
                     // place-first flow (a distance, an angle between lines).
-                    Some((id, _)) if !typed && fresh(&tool, &id) => {
-                        let mut picks = tool.picks.clone();
-                        picks.push(id);
+                    Some((id, _, midpoint_target)) if !typed && fresh(&tool, &id) => {
+                        let picks = dimension_picks(&tool, id, midpoint.as_deref(), midpoint_target);
                         match crate::dim_view::begin_live(app, picks.clone(), Some(pos)) {
-                            Ok(true) => tool.picks = picks,
-                            Ok(false) => {
-                                crate::dim_view::cancel();
+                            Ok(live) => {
+                                if !live {
+                                    crate::dim_view::cancel();
+                                }
                                 tool.picks = picks;
+                                if let Some(midpoint) = midpoint {
+                                    tool.point_picks.push(json!(midpoint));
+                                }
                             }
                             Err(error) => app.set_status(error, true),
                         }
@@ -306,9 +342,12 @@ pub fn on_click(app: &mut SolveApp, proj: &Proj, pos: Pos2, shift: bool) {
                         }
                     }
                 }
-            } else if let Some((id, curve)) = hit {
+            } else if let Some((id, curve, midpoint_target)) = hit {
                 if fresh(&tool, &id) {
-                    tool.picks.push(id);
+                    tool.picks = dimension_picks(&tool, id, midpoint.as_deref(), midpoint_target);
+                    if let Some(midpoint) = midpoint {
+                        tool.point_picks.push(json!(midpoint));
+                    }
                     // As soon as the picks determine a dimension (one line, circle or arc, or a
                     // second entity), its value takes the keyboard: D, click, type. A pick that
                     // doesn't keeps the place-first flow; placing reports why.
@@ -320,7 +359,10 @@ pub fn on_click(app: &mut SolveApp, proj: &Proj, pos: Pos2, shift: bool) {
                 && let Some((at, _)) = sketch_point_at(app, proj, pos)
             {
                 match crate::dim_view::begin_dimension(app, tool.picks.clone(), at) {
-                    Ok(()) => tool.picks.clear(),
+                    Ok(()) => {
+                        tool.picks.clear();
+                        tool.point_picks.clear();
+                    }
                     Err(error) => app.set_status(error, true),
                 }
             }
@@ -329,6 +371,20 @@ pub fn on_click(app: &mut SolveApp, proj: &Proj, pos: Pos2, shift: bool) {
     if !crate::sketch_text::editing(app) {
         app.tool = Some(tool);
     }
+}
+
+/// A single edge still measures its length; a second pick uses the snapped midpoints.
+fn dimension_picks(tool: &Tool, id: String, midpoint: Option<&str>, midpoint_target: bool) -> Vec<String> {
+    let mut picks = tool.picks.clone();
+    if midpoint_target
+        && picks.len() == 1
+        && let Some(midpoint) = tool.point_picks.first().and_then(Value::as_str)
+        && let Some(first) = picks.first_mut()
+    {
+        *first = midpoint.to_string();
+    }
+    picks.push(if picks.len() == 1 { midpoint.map(str::to_string).unwrap_or(id) } else { id });
+    picks
 }
 
 /// Put down the next point of the shape being drawn; the last point runs the command (with
@@ -876,9 +932,10 @@ pub fn preview(app: &SolveApp, t: &Tool, painter: &egui::Painter, proj: &Proj) {
             tk.text_dim,
         );
     }
-    if t.kind == Kind::HorizontalVertical {
+    if matches!(t.kind, Kind::HorizontalVertical | Kind::Dimension) {
         for target in &t.point_picks {
-            let point = if let Some(id) = target.get("midpoint").and_then(Value::as_str) {
+            let midpoint = target.get("midpoint").and_then(Value::as_str).or_else(|| target.as_str().and_then(|id| id.strip_prefix("mid:")));
+            let point = if let Some(id) = midpoint {
                 ss.sketch.curve_index(id).and_then(|l| match ss.sketch.shape(l)? {
                     solidcraft_engine::sketch::Shape::Line { a, b } => Some((a + b) * 0.5),
                     _ => None,

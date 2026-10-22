@@ -2793,7 +2793,14 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             // (#2448): its release clicks.
             app.viewport.tool_click = true;
         }
+        // While acquiring a midpoint dimension's second entity, geometry takes precedence
+        // over existing dimension lines ending on it. Dimension text can still supply a value.
+        let midpoint_geometry = crate::dim_view::live() == Some(false)
+            && app.tool.as_ref().is_some_and(|t| t.kind == crate::tools::Kind::Dimension && t.picks.len() == 1 && !t.point_picks.is_empty())
+            && matches!(cand.as_ref().map(|c| &c.0), Some(Hit::SketchPoint { .. } | Hit::SketchCurve { .. }))
+            && crate::dim_view::hit_text(p).is_none();
         let reference_pick = (resp.clicked() || resp.double_clicked())
+            && !midpoint_geometry
             && !held
             && app.dialog.is_none()
             && crate::dim_view::pick_reference(ui.ctx(), p, resp.double_clicked());
