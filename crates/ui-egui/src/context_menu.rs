@@ -11,6 +11,7 @@
 //! state; [`items`] lists them and [`run_item`] runs one, so the control channel (`ui.menu`,
 //! `ui.menuPick`) and tests reach everything a click does.
 
+use crate::ui_kit::{Container, Surface};
 use egui::{Color32, Pos2, Rect, Sense, Vec2, pos2, vec2};
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -1719,10 +1720,14 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         let area = Rect::from_center_size(c, vec2(2.0 * (RX + 4.0), 2.0 * (RY + 4.0)));
         inside |= pointer.is_some_and(|p| area.contains(p));
         let hot = pointer.and_then(|p| sector(p - c));
-        let resp = crate::frame::area(egui::Id::new("sc_marking_menu")).fixed_pos(area.min).order(egui::Order::Foreground).show(ctx, |ui| {
-            let _ = ui.allocate_exact_size(area.size(), Sense::hover());
-            picked = crate::ui_kit::radial_menu(ui, c, &radial, hot).or(picked.take());
-        });
+        let resp = Container::new(ctx, Surface::Popup)
+            .area(egui::Id::new("sc_marking_menu"))
+            .fixed_pos(area.min)
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                let _ = ui.allocate_exact_size(area.size(), Sense::hover());
+                picked = crate::ui_kit::radial_menu(ui, c, &radial, hot).or(picked.take());
+            });
         inside |= resp.response.contains_pointer();
         list_place(c, list_height(&list), screen)
     } else {
@@ -1750,8 +1755,12 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     }
     let mut submenu_row = None;
     let key_row = app.menu.key_row;
-    let resp =
-        crate::frame::area(egui::Id::new("sc_context_menu")).fixed_pos(list_at).constrain(true).order(egui::Order::Foreground).show(ctx, |ui| {
+    let resp = Container::new(ctx, Surface::Popup)
+        .area(egui::Id::new("sc_context_menu"))
+        .fixed_pos(list_at)
+        .constrain(true)
+        .order(egui::Order::Foreground)
+        .show(ctx, |ui| {
             if target == Target::Workspace {
                 picked = crate::ui_kit::workspace_menu(ui, &list, key_row, (screen.bottom() - list_at.y).max(160.0)).or(picked.take());
             } else {
@@ -1888,9 +1897,13 @@ fn show_rename(app: &mut SolveApp, ctx: &egui::Context) {
     }
     let Some(mut r) = app.menu.rename.take() else { return };
     let mut done: Option<bool> = None;
-    let resp = crate::frame::area(egui::Id::new("sc_rename")).fixed_pos(r.at).constrain(true).order(egui::Order::Foreground).show(ctx, |ui| {
-        done = crate::ui_kit::rename_menu(ui, &mut r.text, &mut r.focused);
-    });
+    let resp =
+        Container::new(ctx, Surface::Popup).area(egui::Id::new("sc_rename")).fixed_pos(r.at).constrain(true).order(egui::Order::Foreground).show(
+            ctx,
+            |ui| {
+                done = crate::ui_kit::rename_menu(ui, &mut r.text, &mut r.focused);
+            },
+        );
     if ctx.input(|i| i.pointer.any_pressed()) && !resp.response.contains_pointer() && r.focused {
         done = Some(true);
     }

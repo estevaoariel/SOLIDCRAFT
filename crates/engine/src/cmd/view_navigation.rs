@@ -7,6 +7,8 @@ use crate::params::{bad, num, req_vec2, req_vec3, vec3};
 use crate::{Result, Sel, Session};
 
 pub static COMMANDS: &[CommandSpec] = &[
+CommandSpec::new("view.layout", "Workspace layout", layout)
+    .icon("settings").noundo().doc_only().params("mode: floating|compact → validated workspace layout; display only, never opens a dialog"),
 CommandSpec::new("view.history_layout", "History layout", history_layout)
     .icon("settings").noundo().doc_only().params("width?: 1..1000000; dock?: bottom|left|under_browser; collapsed?: bool → validated layout request; display only, never opens a dialog"),
 CommandSpec::new("view.graphics_preset", "Graphics Preset", graphics_preset)
@@ -58,6 +60,15 @@ fn normal_to(s: &mut Session, p: &Value) -> Result<Value> {
     to.target = point;
     s.camera = Some(to);
     Ok(json!({"camera": to}))
+}
+
+fn layout(_s: &mut Session, p: &Value) -> Result<Value> {
+    let mode = p
+        .get("mode")
+        .and_then(Value::as_str)
+        .filter(|mode| matches!(*mode, "floating" | "compact"))
+        .ok_or_else(|| bad("view.layout", "mode must be floating or compact"))?;
+    Ok(json!({"mode": mode}))
 }
 
 fn history_layout(_s: &mut Session, p: &Value) -> Result<Value> {
@@ -586,4 +597,19 @@ fn history_layout_validates_geometry_without_changing_the_design() {
     }
     assert_eq!(s.doc, doc);
     assert!(s.undo.is_empty());
+}
+
+#[cfg(test)]
+#[test]
+fn workspace_layout_validates_modes_without_mutating_the_design() {
+    let mut session = Session::default();
+    let before = session.doc.to_json();
+    for mode in ["floating", "compact"] {
+        assert_eq!(session.execute("view.layout", &json!({"mode":mode})).unwrap(), json!({"mode":mode}));
+    }
+    for params in [json!({}), json!({"mode":"wide"}), json!({"mode":true}), json!({"mode":null}), json!({"mode":42})] {
+        assert!(session.execute("view.layout", &params).is_err());
+    }
+    assert_eq!(session.doc.to_json(), before);
+    assert!(session.undo.is_empty());
 }

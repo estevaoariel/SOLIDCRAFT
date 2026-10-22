@@ -1,5 +1,7 @@
 //! Reviewed issue drafts with local evidence; never publishes or uploads a report.
 
+#[cfg(test)]
+use crate::ui_kit::{Container, Surface};
 use std::fmt::Write as _;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
@@ -1052,7 +1054,7 @@ mod tests {
             ui.disable();
             assert_eq!(ui.opacity(), 1.0, "capture must retain normal drawing opacity");
             assert!(!ui.is_enabled());
-            crate::frame::area(egui::Id::new("cad-boundary-proof")).fade_in(false).show(&ctx, |ui| {
+            Container::new(&ctx, Surface::Popup).area(egui::Id::new("cad-boundary-proof")).fade_in(false).show(&ctx, |ui| {
                 assert!(!ui.is_enabled());
                 assert_eq!(ui.opacity(), 1.0);
                 ui.ctx().data_mut(|d| d.insert_temp(state, 42_u32));
@@ -1061,7 +1063,7 @@ mod tests {
             drop(barrier);
             assert_eq!(ctx.memory(|m| m.focused()), Some(focus));
             assert_eq!(ctx.data(|d| d.get_temp::<u32>(state)), Some(42));
-            assert!(crate::frame::area(egui::Id::new("report-boundary-proof")).is_enabled());
+            assert!(Container::new(&ctx, Surface::Popup).area(egui::Id::new("report-boundary-proof")).is_enabled());
         });
         output.textures_delta.clear();
         app.issue_report.draft = None;

@@ -9,6 +9,7 @@
 //! Everything acts through commands: `sketch.dimension_text`, `sketch.delete`,
 //! `parameters.change`.
 
+use crate::ui_kit::{Container, Surface};
 use std::cell::RefCell;
 use std::sync::Arc;
 
@@ -720,8 +721,8 @@ fn edit_box(app: &mut SolveApp, ctx: &egui::Context) {
         anchor.x = anchor.x.clamp(rect.left(), (rect.right() - popup_width - 6.0).max(rect.left()));
         anchor.y = anchor.y.clamp(rect.top(), (rect.bottom() - 80.0).max(rect.top()));
     }
-    crate::frame::area(egui::Id::new("sc_dim_edit_area")).fixed_pos(anchor).order(egui::Order::Foreground).show(ctx, |ui| {
-        egui::Frame::popup(ui.style()).fill(Tokens::get().dialog_body).inner_margin(Tokens::get().space_4).show(ui, |ui| {
+    Container::new(ctx, Surface::Canvas).area(egui::Id::new("sc_dim_edit_area")).fixed_pos(anchor).order(egui::Order::Foreground).show(ctx, |ui| {
+        Container::popup_frame(ui.style()).fill(Tokens::get().dialog_body).inner_margin(Tokens::get().space_4).show(ui, |ui| {
             crate::ui_kit::scope(ui, |ui| {
                 ui.set_max_width(popup_width);
                 crate::ui_kit::text(ui, &crate::i18n::format("dialog.dimension_name", &[("name", &e.param)]), crate::ui_kit::Text::Inline)

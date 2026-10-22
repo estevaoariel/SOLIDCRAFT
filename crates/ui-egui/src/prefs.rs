@@ -483,6 +483,10 @@ preference_settings! {
     custom_themes: Vec<crate::theme_files::ThemeFile> = Vec::new();
     /// Interface language (a registered locale ID).
     language: String = "en".into(), 0;
+    /// Shared workspace composition; system windows and popups retain their purpose.
+    layout: crate::shell::LayoutMode = Default::default(), 0;
+    /// Show command names beneath ribbon icons, independently of workspace layout.
+    ribbon_labels: bool = true, 0 => check_tr("ui.ribbon_labels");
     /// Interface scale (1 = 100 %).
     ui_scale: f32 = 1.0, 0, accept(0.5..=2.5) => slider("ui.ui_scale", 0.5..=2.5, 0.05, |v| format!("{:.0} %", v * 100.0), "prefs:scale");
     /// Interface font: an installed font family (or a font file), or empty for the built-in one
@@ -496,8 +500,6 @@ preference_settings! {
     timeline_under_browser: bool = false, 0;
     /// Fold the shared-column history to its header.
     timeline_collapsed: bool = false, 0;
-    /// Legacy shared-column height, retained for preference compatibility.
-    timeline_left_height: f32 = 360.0, 0;
     /// Whether the browser beside the vertical history is collapsed to its rail.
     timeline_left_browser_collapsed: bool = false, 0;
     /// Width of the browser sidebar, which
@@ -641,6 +643,7 @@ pub fn open_at(app: &mut SolveApp, page: usize) {
 struct Snapshot {
     prefs: Prefs,
     dark: bool,
+    layout: crate::shell::LayoutMode,
     grid: bool,
     shadow: bool,
     perspective: bool,
@@ -657,6 +660,7 @@ impl Snapshot {
         Snapshot {
             prefs: app.preferences.clone(),
             dark: app.ui.dark,
+            layout: app.ui.layout,
             grid: app.ui.show_grid,
             shadow: app.ui.ground_shadow,
             perspective: app.ui.perspective,
@@ -675,6 +679,7 @@ impl Snapshot {
         app.preferences = self.prefs;
         app.preferences.update = update;
         app.ui.dark = self.dark;
+        app.ui.layout = self.layout;
         app.ui.show_grid = self.grid;
         app.ui.ground_shadow = self.shadow;
         app.ui.perspective = self.perspective;
@@ -808,6 +813,7 @@ fn defaults(app: &mut SolveApp, page: usize) {
     match page {
         0 => {
             app.ui.dark = true;
+            app.ui.layout = app.preferences.layout;
             app.ui.agent_cursor = Default::default();
             app.autosave_minutes = 5.0;
             set_autosave(app);
@@ -1187,6 +1193,18 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                 });
             });
             theme_row(app, ui);
+            ui_kit::row(ui, app.tr("ui.workspace_layout"), |ui| {
+                let mut selected = usize::from(app.ui.layout == crate::shell::LayoutMode::Docked);
+                if ui_kit::segmented(
+                    ui,
+                    &mut selected,
+                    &[crate::i18n::tr("ui.layout_floating"), crate::i18n::tr("ui.layout_compact")],
+                    Default::default(),
+                ) {
+                    let _ = app.run("view.layout", json!({"mode": if selected == 1 { "compact" } else { "floating" }}));
+                }
+            });
+            setting::ribbon_labels(app, ui);
             setting::ui_scale(app, ui);
             if !cfg!(target_arch = "wasm32") {
                 ui_kit::row(ui, app.tr_label("Interface font"), |ui| ui_font_row(app, ui));
@@ -1208,7 +1226,7 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             });
             ui_kit::text(ui, app.tr("ui.timeline_left_note"), ui_kit::Text::Note("timeline"));
             ui_kit::row(ui, app.tr_label("Parts browser"), |ui| {
-                setting::browser_float(app, ui);
+                ui.add_enabled_ui(app.ui.layout == crate::shell::LayoutMode::Floating, |ui| setting::browser_float(app, ui));
             });
             ui_kit::text(
                 ui,
@@ -2299,6 +2317,9 @@ pub fn set(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::Valu
     }
     let up_changed = new.up_axis != app.preferences.up_axis;
     let msaa_changed = new.msaa != app.preferences.msaa;
+    if p.get("layout").is_some() {
+        app.ui.layout = new.layout;
+    }
     app.preferences = new;
     if msaa_changed {
         save_graphics(app);
@@ -3163,7 +3184,7 @@ mod tests {
         let mut h = crate::scenario::Harness::new();
         let out = h.call("ui.prefs", json!({"theme": "gruvbox-dark-hard"}));
         assert_eq!(out["result"]["theme"], "gruvbox-dark-hard", "{out}");
-        assert!(out["result"]["theme_ids"].as_array().is_some_and(|ids| ids.len() == 9), "{out}");
+        assert!(out["result"]["theme_ids"].as_array().is_some_and(|ids| ids.len() == 3 + crate::theme_files::builtin().len()), "{out}");
         h.frames(2);
         let hard = crate::theme_files::find("gruvbox-dark-hard", &[]).map(crate::theme_files::resolve).unwrap();
         assert!(h.app.ui.dark);
@@ -3712,7 +3733,6 @@ mod tests {
 
         // Switch language to Japanese
         set(&mut app, &json!({"language": "ja", "timeline_left": true})).unwrap();
-        app.preferences.timeline_left_height = 275.0;
         app.preferences.timeline_left_browser_collapsed = true;
         assert_eq!(app.preferences.language, "ja");
         assert!(app.preferences.timeline_left);
@@ -3724,7 +3744,6 @@ mod tests {
         other.load_prefs(&app.prefs());
         assert_eq!(other.preferences.language, "ja");
         assert!(other.preferences.timeline_left);
-        assert_eq!(other.preferences.timeline_left_height, 275.0);
         assert!(other.preferences.timeline_left_browser_collapsed);
         assert_eq!(other.tr("ui.preferences"), "環境設定");
     }
