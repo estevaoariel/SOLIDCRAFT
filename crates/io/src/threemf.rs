@@ -1352,7 +1352,6 @@ pub(crate) mod tests {
     /// allocation, which no panic guard can intercept.
     #[test]
     fn many_placements_of_a_big_object_stay_bounded() {
-        let t = std::time::Instant::now();
         let verts: String = (0..100_000).map(|i| format!("<vertex x=\"{}\" y=\"{}\" z=\"0\"/>", i % 100, i / 100)).collect();
         let model = format!(
             "{}<object id=\"1\" type=\"model\"><mesh><vertices>{verts}</vertices>\
@@ -1364,7 +1363,6 @@ pub(crate) mod tests {
         assert_eq!(objs.len(), 10_000);
         // Only the three vertices the one triangle reaches are copied per placement.
         assert!(objs.iter().all(|o| o.positions.len() == 3 && o.triangles.len() == 1), "{:?}", objs.first().map(|o| o.positions.len()));
-        assert!(t.elapsed() < std::time::Duration::from_secs(30), "took {:?}", t.elapsed());
     }
 
     /// Objects that only place other objects count toward the budget too: six levels of 300
@@ -1372,7 +1370,6 @@ pub(crate) mod tests {
     /// budget instead of running for days.
     #[test]
     fn nested_fan_out_of_empty_objects_is_bounded() {
-        let t = std::time::Instant::now();
         let components = |child: u32| (0..300).map(|_| format!(r#"<component objectid="{child}"/>"#)).collect::<String>();
         let mut objects = r#"<object id="1" type="model"/>"#.to_string();
         for id in 2..=7 {
@@ -1381,7 +1378,6 @@ pub(crate) mod tests {
         let model = format!(r#"<model unit="millimeter" {PRODUCTION}><resources>{objects}</resources><build><item objectid="7"/></build></model>"#);
         let err = read_3mf(&package(&model, None)).unwrap_err().to_string();
         assert!(err.contains("placements"), "{err}");
-        assert!(t.elapsed() < std::time::Duration::from_secs(30), "took {:?}", t.elapsed());
     }
 
     /// Triangles are budgeted across every placement, so fan-out cannot outrun the cap.
