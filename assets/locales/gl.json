@@ -1774,6 +1774,8 @@
   "ui.space_mouse_circles_help": "Os círculos mostran o que envía o dispositivo tras a calibración. O modelo de proba mostra o que fai a vista con iso, tras a inversión, a velocidade e a asignación de eixes.",
   "ui.space_mouse_dead_zone": "Zona morta",
   "ui.space_mouse_dead_zone_tip": "Canto ten que moverse o capuchón antes de que se mova a vista, como parte do seu percorrido completo. Auméntaa se a vista se despraza co capuchón en repouso.",
+  "ui.space_mouse_denied": "SolidCraft ve un rato 3D, pero non ten permiso para lelo. A regra udev está nas notas de configuración do rato 3D.",
+  "ui.space_mouse_denied_short": "Atopado, pero non se pode ler",
   "ui.space_mouse_driven_by": "Que movemento calibrado do dispositivo controla este eixe. Se escolles un que xa usa outro eixe, intercámbianse.",
   "ui.space_mouse_driven_by_label": "controlado por",
   "ui.space_mouse_driver": "Controlador do rato 3D",

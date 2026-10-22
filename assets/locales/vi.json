@@ -1774,6 +1774,8 @@
   "ui.space_mouse_circles_help": "Các vòng tròn cho thấy thiết bị gửi gì sau khi hiệu chuẩn. Mô hình thử cho thấy khung nhìn làm gì với nó, sau đảo chiều, tốc độ và gán trục.",
   "ui.space_mouse_dead_zone": "Vùng chết",
   "ui.space_mouse_dead_zone_tip": "Núm điều khiển phải di chuyển bao xa thì khung nhìn mới di chuyển, tính theo tỷ lệ hành trình tối đa. Hãy tăng giá trị này nếu khung nhìn bị trôi khi núm đang đứng yên.",
+  "ui.space_mouse_denied": "SolidCraft thấy một chuột 3D nhưng không được phép đọc nó. Xem ghi chú thiết lập chuột 3D để biết quy tắc udev.",
+  "ui.space_mouse_denied_short": "Đã thấy, nhưng không đọc được",
   "ui.space_mouse_driven_by": "Chuyển động đã hiệu chuẩn nào của thiết bị điều khiển trục này. Chọn chuyển động mà trục khác đang dùng sẽ hoán đổi hai trục.",
   "ui.space_mouse_driven_by_label": "điều khiển bởi",
   "ui.space_mouse_driver": "Trình điều khiển chuột 3D",

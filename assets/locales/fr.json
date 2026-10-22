@@ -1780,6 +1780,8 @@
   "ui.space_mouse_circles_help": "Les cercles montrent ce que l'appareil envoie après calibrage. Le modèle d'essai montre ce que la vue en fait, après inversion, vitesse et affectation des axes.",
   "ui.space_mouse_dead_zone": "Zone morte",
   "ui.space_mouse_dead_zone_tip": "De combien le capuchon doit bouger avant que la vue ne bouge, en part de sa course complète. Augmentez-la si la vue dérive alors que le capuchon est au repos.",
+  "ui.space_mouse_denied": "SolidCraft voit une souris 3D mais n'a pas le droit de la lire. La règle udev est dans les notes d'installation de la souris 3D.",
+  "ui.space_mouse_denied_short": "Trouvée, mais illisible",
   "ui.space_mouse_driven_by": "Quel mouvement calibré de l'appareil pilote cet axe. Choisir un mouvement déjà utilisé par un autre axe les échange.",
   "ui.space_mouse_driven_by_label": "piloté par",
   "ui.space_mouse_driver": "Pilote de la souris 3D",

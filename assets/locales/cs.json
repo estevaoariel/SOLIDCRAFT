@@ -1774,6 +1774,8 @@
   "ui.space_mouse_circles_help": "Kruhy ukazují, co zařízení posílá po kalibraci. Zkušební model ukazuje, co s tím udělá pohled po obrácení, rychlosti a přiřazení os.",
   "ui.space_mouse_dead_zone": "Mrtvá zóna",
   "ui.space_mouse_dead_zone_tip": "Jak daleko se musí hlavice pohnout, než se pohne pohled, jako podíl jejího plného rozsahu. Zvyšte ji, pokud pohled ujíždí, i když je hlavice v klidu.",
+  "ui.space_mouse_denied": "SolidCraft vidí 3D myš, ale nesmí ji číst. Pravidlo udev najdete v poznámkách k nastavení 3D myši.",
+  "ui.space_mouse_denied_short": "Nalezeno, ale nelze číst",
   "ui.space_mouse_driven_by": "Který kalibrovaný pohyb zařízení ovládá tuto osu. Když vyberete pohyb, který už používá jiná osa, obě se prohodí.",
   "ui.space_mouse_driven_by_label": "ovládá",
   "ui.space_mouse_driver": "Ovladač 3D myši",

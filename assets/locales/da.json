@@ -1774,6 +1774,8 @@
   "ui.space_mouse_circles_help": "Cirklerne viser, hvad enheden sender efter kalibrering. Testmodellen viser, hvad visningen gør med det efter omvending, hastighed og akseplacering.",
   "ui.space_mouse_dead_zone": "Dødzone",
   "ui.space_mouse_dead_zone_tip": "Hvor langt knoppen skal bevæges, før visningen reagerer, angivet som en andel af dens fulde bevægelse. Øg værdien, hvis visningen bevæger sig, når du ikke rører knoppen.",
+  "ui.space_mouse_denied": "SolidCraft kan se en 3D-mus, men må ikke læse den. Se opsætningsnoterne til 3D-mus for udev-reglen.",
+  "ui.space_mouse_denied_short": "Fundet, men kan ikke læses",
   "ui.space_mouse_driven_by": "Hvilken kalibreret bevægelse af enheden der styrer denne akse. Vælger du en bevægelse, som en anden akse allerede bruger, bytter de to plads.",
   "ui.space_mouse_driven_by_label": "styres af",
   "ui.space_mouse_driver": "3D-musedriver",

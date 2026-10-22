@@ -1778,6 +1778,8 @@
   "ui.space_mouse_circles_help": "Die Kreise zeigen, was das Gerät nach der Kalibrierung sendet. Das Testmodell zeigt, was die Ansicht daraus macht, nach Umkehren, Geschwindigkeit und Achsenzuordnung.",
   "ui.space_mouse_dead_zone": "Totzone",
   "ui.space_mouse_dead_zone_tip": "Wie weit sich die Kappe bewegen muss, bevor sich die Ansicht bewegt, als Anteil ihres vollen Wegs. Erhöhen Sie sie, wenn die Ansicht wandert, obwohl die Kappe ruht.",
+  "ui.space_mouse_denied": "SolidCraft sieht eine 3D-Maus, darf sie aber nicht lesen. Die udev-Regel steht in den Einrichtungshinweisen zur 3D-Maus.",
+  "ui.space_mouse_denied_short": "Gefunden, aber nicht lesbar",
   "ui.space_mouse_driven_by": "Welche kalibrierte Bewegung des Geräts diese Achse steuert. Wählen Sie eine, die schon eine andere Achse nutzt, werden die beiden getauscht.",
   "ui.space_mouse_driven_by_label": "gesteuert von",
   "ui.space_mouse_driver": "3D-Maus-Treiber",

@@ -1774,6 +1774,8 @@
   "ui.space_mouse_circles_help": "Los círculos muestran lo que envía el dispositivo tras la calibración. El modelo de prueba muestra lo que hace la vista con ello, tras la inversión, la velocidad y la asignación de ejes.",
   "ui.space_mouse_dead_zone": "Zona muerta",
   "ui.space_mouse_dead_zone_tip": "Cuánto tiene que moverse el capuchón antes de que se mueva la vista, como parte de su recorrido completo. Auméntala si la vista se desplaza con el capuchón en reposo.",
+  "ui.space_mouse_denied": "SolidCraft ve un ratón 3D, pero no tiene permiso para leerlo. La regla udev está en las notas de configuración del ratón 3D.",
+  "ui.space_mouse_denied_short": "Encontrado, pero no se puede leer",
   "ui.space_mouse_driven_by": "Qué movimiento calibrado del dispositivo controla este eje. Si eliges uno que ya usa otro eje, se intercambian.",
   "ui.space_mouse_driven_by_label": "controlado por",
   "ui.space_mouse_driver": "Controlador del ratón 3D",

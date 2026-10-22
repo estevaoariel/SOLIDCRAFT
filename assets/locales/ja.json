@@ -1817,6 +1817,8 @@
   "ui.space_mouse_circles_help": "円はデバイスがキャリブレーション後に送る値を示します。テストモデルは、反転・速度・軸の割り当てを経て、表示がそれをどう扱うかを示します。",
   "ui.space_mouse_dead_zone": "デッドゾーン",
   "ui.space_mouse_dead_zone_tip": "視点が動き出すまでにキャップを動かす量（全ストロークに対する割合）。キャップに触れていないのに視点が動く場合は大きくしてください。",
+  "ui.space_mouse_denied": "SolidCraftは3Dマウスを認識していますが、読み取る権限がありません。udevルールは3Dマウスのセットアップ手順を参照してください。",
+  "ui.space_mouse_denied_short": "見つかりましたが読み取れません",
   "ui.space_mouse_driven_by": "この軸を操作するデバイスのキャリブレーション済みの動き。他の軸で使われている動きを選ぶと、2つが入れ替わります。",
   "ui.space_mouse_driven_by_label": "操作元",
   "ui.space_mouse_driver": "3Dマウスのドライバー",

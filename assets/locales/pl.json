@@ -1774,6 +1774,8 @@
   "ui.space_mouse_circles_help": "Koła pokazują, co urządzenie wysyła po kalibracji. Model testowy pokazuje, co widok z tym robi po odwróceniu, szybkości i przypisaniu osi.",
   "ui.space_mouse_dead_zone": "Strefa martwa",
   "ui.space_mouse_dead_zone_tip": "O ile trzeba wychylić nakładkę, zanim widok się poruszy, jako część pełnego wychylenia. Zwiększ, jeśli widok dryfuje przy nieruszanej nakładce.",
+  "ui.space_mouse_denied": "SolidCraft widzi mysz 3D, ale nie ma pozwolenia, by ją odczytać. Regułę udev opisują uwagi o konfiguracji myszy 3D.",
+  "ui.space_mouse_denied_short": "Znaleziono, ale nie można odczytać",
   "ui.space_mouse_driven_by": "Który skalibrowany ruch urządzenia steruje tą osią. Wybranie ruchu używanego już przez inną oś zamienia je miejscami.",
   "ui.space_mouse_driven_by_label": "sterowana przez",
   "ui.space_mouse_driver": "Sterownik myszy 3D",

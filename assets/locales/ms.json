@@ -1774,6 +1774,8 @@
   "ui.space_mouse_circles_help": "Bulatan menunjukkan apa yang dihantar peranti selepas penentukuran. Model ujian menunjukkan apa yang dilakukan paparan dengannya, selepas songsangan, kelajuan dan penetapan paksi.",
   "ui.space_mouse_dead_zone": "Zon mati",
   "ui.space_mouse_dead_zone_tip": "Sejauh mana penutup perlu bergerak sebelum pandangan bergerak, sebagai bahagian daripada julat penuhnya. Naikkan jika pandangan hanyut semasa penutup dalam keadaan rehat.",
+  "ui.space_mouse_denied": "SolidCraft nampak tetikus 3D tetapi tidak dibenarkan membacanya. Lihat nota persediaan tetikus 3D untuk peraturan udev.",
+  "ui.space_mouse_denied_short": "Dijumpai, tetapi tidak boleh dibaca",
   "ui.space_mouse_driven_by": "Gerakan peranti yang telah ditentukur yang memacu paksi ini. Memilih gerakan yang sudah digunakan paksi lain akan menukar kedua-duanya.",
   "ui.space_mouse_driven_by_label": "dipacu oleh",
   "ui.space_mouse_driver": "Pemacu tetikus 3D",

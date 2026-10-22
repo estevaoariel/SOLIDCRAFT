@@ -1778,6 +1778,8 @@
   "ui.space_mouse_circles_help": "원은 보정 후 장치가 보내는 값을 보여 줍니다. 테스트 모델은 반전, 속도, 축 할당을 거쳐 화면이 그 값으로 하는 일을 보여 줍니다.",
   "ui.space_mouse_dead_zone": "데드존",
   "ui.space_mouse_dead_zone_tip": "뷰가 움직이기 전에 캡이 움직여야 하는 정도로, 전체 이동 범위에 대한 비율입니다. 캡을 건드리지 않았는데 뷰가 움직이면 높이세요.",
+  "ui.space_mouse_denied": "SolidCraft가 3D 마우스를 찾았지만 읽을 권한이 없습니다. udev 규칙은 3D 마우스 설정 안내를 참고하세요.",
+  "ui.space_mouse_denied_short": "찾았지만 읽을 수 없음",
   "ui.space_mouse_driven_by": "이 축을 움직이는 장치의 보정된 동작입니다. 다른 축이 이미 쓰는 동작을 고르면 둘이 서로 바뀝니다.",
   "ui.space_mouse_driven_by_label": "제어 동작",
   "ui.space_mouse_driver": "3D 마우스 드라이버",

@@ -1817,6 +1817,8 @@
   "ui.space_mouse_circles_help": "The circles show what the device sends, after calibration. The test model shows what the view does with it, after invert, speed and the axis assignment.",
   "ui.space_mouse_dead_zone": "Dead zone",
   "ui.space_mouse_dead_zone_tip": "How far the cap has to move before the view does, as a share of its full travel. Raise it if the view drifts while the cap is at rest.",
+  "ui.space_mouse_denied": "SolidCraft can see a 3D mouse but isn't allowed to read it. See the 3D mouse setup notes for the udev rule.",
+  "ui.space_mouse_denied_short": "Found, but not readable",
   "ui.space_mouse_driven_by": "Which calibrated motion of the device drives this axis. Picking a motion another axis already uses swaps the two.",
   "ui.space_mouse_driven_by_label": "driven by",
   "ui.space_mouse_driver": "3D mouse driver",

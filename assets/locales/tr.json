@@ -1773,6 +1773,8 @@
   "ui.space_mouse_circles_help": "Daireler, aygıtın kalibrasyondan sonra gönderdiğini gösterir. Test modeli, görünümün bunu ters çevirme, hız ve eksen atamasından sonra ne yaptığını gösterir.",
   "ui.space_mouse_dead_zone": "Ölü bölge",
   "ui.space_mouse_dead_zone_tip": "Görünüm hareket etmeden önce başlığın ne kadar hareket etmesi gerektiği, tam hareket aralığının oranı olarak. Başlık dururken görünüm kayıyorsa artırın.",
+  "ui.space_mouse_denied": "SolidCraft bir 3D fare görüyor ama onu okumasına izin verilmiyor. udev kuralı için 3D fare kurulum notlarına bakın.",
+  "ui.space_mouse_denied_short": "Bulundu, ancak okunamıyor",
   "ui.space_mouse_driven_by": "Bu ekseni cihazın hangi kalibre edilmiş hareketinin yönettiği. Başka bir eksenin zaten kullandığını seçerseniz ikisi yer değiştirir.",
   "ui.space_mouse_driven_by_label": "kumanda eden",
   "ui.space_mouse_driver": "3B fare sürücüsü",

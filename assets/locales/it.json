@@ -1777,6 +1777,8 @@
   "ui.space_mouse_circles_help": "I cerchi mostrano ciò che il dispositivo invia dopo la calibrazione. Il modello di prova mostra cosa ne fa la vista, dopo inversione, velocità e assegnazione degli assi.",
   "ui.space_mouse_dead_zone": "Zona morta",
   "ui.space_mouse_dead_zone_tip": "Quanto deve muoversi la manopola prima che si muova la vista, come quota della sua corsa completa. Aumentala se la vista si sposta con la manopola a riposo.",
+  "ui.space_mouse_denied": "SolidCraft vede un mouse 3D ma non ha il permesso di leggerlo. La regola udev è nelle note di configurazione del mouse 3D.",
+  "ui.space_mouse_denied_short": "Trovato, ma non leggibile",
   "ui.space_mouse_driven_by": "Quale movimento calibrato del dispositivo comanda questo asse. Se ne scegli uno già usato da un altro asse, i due si scambiano.",
   "ui.space_mouse_driven_by_label": "comandato da",
   "ui.space_mouse_driver": "Driver del mouse 3D",

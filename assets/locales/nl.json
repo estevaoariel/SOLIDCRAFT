@@ -1764,6 +1764,8 @@
   "ui.space_mouse_circles_help": "De cirkels tonen wat het apparaat na kalibratie stuurt. Het testmodel toont wat de weergave ermee doet, na omkeren, snelheid en asindeling.",
   "ui.space_mouse_dead_zone": "Dode zone",
   "ui.space_mouse_dead_zone_tip": "Hoe ver de dop moet bewegen voordat de weergave dat doet, als aandeel van de volledige slag. Verhoog dit als de weergave afdrijft terwijl de dop in rust is.",
+  "ui.space_mouse_denied": "SolidCraft ziet een 3D-muis maar mag hem niet lezen. Zie de installatienotities voor de 3D-muis voor de udev-regel.",
+  "ui.space_mouse_denied_short": "Gevonden, maar niet leesbaar",
   "ui.space_mouse_driver_fallback": "Voorlopig via spacenavd gelezen: het apparaat zelf kon niet worden geopend.",
   "ui.space_mouse_forget": "Kalibratie vergeten",
   "ui.space_mouse_ghost_left_viewport": "Viewport links",

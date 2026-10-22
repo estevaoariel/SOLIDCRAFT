@@ -1774,6 +1774,8 @@
   "ui.space_mouse_circles_help": "Os círculos mostram o que o dispositivo envia após a calibração. O modelo de teste mostra o que a vista faz com isso, após inversão, velocidade e atribuição de eixos.",
   "ui.space_mouse_dead_zone": "Zona morta",
   "ui.space_mouse_dead_zone_tip": "Quanto a tampa precisa se mover antes de a vista se mover, como fração do curso completo. Aumente se a vista se mexer com a tampa parada.",
+  "ui.space_mouse_denied": "O SolidCraft vê um mouse 3D, mas não tem permissão para lê-lo. A regra udev está nas notas de configuração do mouse 3D.",
+  "ui.space_mouse_denied_short": "Encontrado, mas não legível",
   "ui.space_mouse_driven_by": "Qual movimento calibrado do dispositivo controla este eixo. Escolher um que outro eixo já usa troca os dois.",
   "ui.space_mouse_driven_by_label": "controlado por",
   "ui.space_mouse_driver": "Driver do mouse 3D",
