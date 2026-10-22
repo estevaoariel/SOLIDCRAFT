@@ -225,6 +225,64 @@ fn exact_extend_arc_rejects_interior_hit_atomically() {
 }
 
 #[test]
+fn arc_extend_runs_both_ways_as_a_new_arc_to_the_first_geometry() {
+    let mut s = new_sketch();
+    let arc = ids(&run(&mut s, "sketch.arc.center_point", json!({"center":[0,0],"start":[10,0],"end":[0,10],"connect":false}))["curves"])[0].clone();
+    // A cutter crossing the circle at `deg`, two millimetres either side of it.
+    let cut = |s: &mut Session, deg: f64| {
+        let a = deg.to_radians();
+        let (ux, uy) = (a.cos(), a.sin());
+        let (x, y) = (10.0 * ux, 10.0 * uy);
+        run(s, "sketch.line", json!({"points": [[x - 2.0 * ux, y - 2.0 * uy], [x + 2.0 * ux, y + 2.0 * uy]], "connect": false, "infer": false}));
+    };
+    // Past the arc's end there are two: the extension stops at the nearer one.
+    cut(&mut s, 200.0);
+    cut(&mut s, 260.0);
+    run(&mut s, "sketch.extend", json!({"curve": arc, "at": [0, 10]}));
+    let sk = sketch(&s);
+    let ci = sk.curve_index(&arc).unwrap();
+    let on_circle = |deg: f64| Vec2::new(10.0 * deg.to_radians().cos(), 10.0 * deg.to_radians().sin());
+    // The arc being extended keeps its own geometry...
+    assert!(matches!(sk.shape(ci).unwrap(), solidcraft_sketch::Shape::Round { sweep, .. } if (sweep - std::f64::consts::FRAC_PI_2).abs() < 1e-9));
+    // ...and the extension is a new, separate arc from (0,10) to the 200° stop.
+    let grown = (0..sk.curves.len()).find(|i| *i != ci && matches!(sk.curves[*i].kind, CurveKind::Arc { .. })).expect("a new arc");
+    let sh = sk.shape(grown).unwrap();
+    assert!(sh.dist(on_circle(90.0)) < 1e-6 && sh.dist(on_circle(200.0)) < 1e-6, "{sh:?}");
+    assert!(matches!(sh, solidcraft_sketch::Shape::Round { sweep, .. } if (sweep - 110.0_f64.to_radians()).abs() < 1e-9), "{sh:?}");
+    // The other way round: clockwise from the arc's start to the 300° cutter.
+    cut(&mut s, 300.0);
+    run(&mut s, "sketch.extend", json!({"curve": arc, "at": [10, 0]}));
+    let sk = sketch(&s);
+    let back = (0..sk.curves.len())
+        .filter(|i| *i != ci)
+        .find(|i| matches!(sk.curves[*i].kind, CurveKind::Arc { .. }) && sk.shape(*i).is_some_and(|sh| sh.dist(on_circle(300.0)) < 1e-6))
+        .expect("a new arc back from the start");
+    let sh = sk.shape(back).unwrap();
+    assert!(sh.dist(on_circle(0.0)) < 1e-6, "{sh:?}");
+    assert!(matches!(sh, solidcraft_sketch::Shape::Round { sweep, .. } if (sweep - 60.0_f64.to_radians()).abs() < 1e-9), "{sh:?}");
+}
+
+#[test]
+fn arc_extend_closes_the_gap_onto_the_arcs_own_far_end() {
+    let mut s = new_sketch();
+    let arc = ids(&run(&mut s, "sketch.arc.center_point", json!({"center":[0,0],"start":[10,0],"end":[0,10],"connect":false}))["curves"])[0].clone();
+    // A line touching the circle at the arc's far end: the only geometry on the way round.
+    run(&mut s, "sketch.line", json!({"points":[[-3,10],[3,10]],"connect":false,"infer":false}));
+    let before = sketch(&s);
+    // Growing the arc's start clockwise runs three quarters round to its end.
+    run(&mut s, "sketch.extend", json!({"curve": arc, "at": [10, 0]}));
+    let sk = sketch(&s);
+    let ci = sk.curve_index(&arc).unwrap();
+    assert!(matches!(sk.shape(ci).unwrap(), solidcraft_sketch::Shape::Round { sweep, .. } if (sweep - std::f64::consts::FRAC_PI_2).abs() < 1e-9));
+    let closed = (0..sk.curves.len()).find(|i| *i != ci && matches!(sk.curves[*i].kind, CurveKind::Arc { .. })).expect("a new arc");
+    let sh = sk.shape(closed).unwrap();
+    assert!(sh.dist(Vec2::new(0.0, 10.0)) < 1e-6 && sh.dist(Vec2::new(10.0, 0.0)) < 1e-6, "{sh:?}");
+    assert!(matches!(sh, solidcraft_sketch::Shape::Round { sweep, .. } if (sweep - 3.0 * std::f64::consts::FRAC_PI_2).abs() < 1e-9), "{sh:?}");
+    // The new arc joins the arc's far end instead of laying a second point over it.
+    assert_eq!(sk.points.len(), before.points.len());
+}
+
+#[test]
 fn exact_extend_refuses_ambiguous_stop_without_history_change() {
     let mut s = new_sketch();
     run(&mut s, "sketch.line", json!({"points":[[0,0],[5,0]],"connect":false,"infer":false}));
