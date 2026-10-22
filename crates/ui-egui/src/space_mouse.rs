@@ -91,11 +91,13 @@ pub struct Input {
     pub drivers: Option<DriversPresent>,
 }
 
-/// What the Linux reader found: the spacenavd socket and a direct (hidraw) 3D mouse.
+/// What the Linux reader found: the spacenavd socket and a direct (hidraw) 3D mouse, and whether that
+/// device was found but could not be opened (no permission), the last time it tried.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct DriversPresent {
     pub spacenavd: bool,
     pub direct: bool,
+    pub denied: bool,
 }
 
 /// What the reader saw of the buttons, taken in one look: the device they came from, those down

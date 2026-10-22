@@ -262,9 +262,9 @@ mod tests {
         for device in ["spacenavd", "hid 046d:c62b", "hid 256f:c63a", "3dxware", "web 256f:c63a"] {
             for drivers in [
                 None,
-                Some(DriversPresent { spacenavd: true, direct: false }),
-                Some(DriversPresent { spacenavd: true, direct: true }),
-                Some(DriversPresent { spacenavd: false, direct: true }),
+                Some(DriversPresent { spacenavd: true, direct: false, denied: false }),
+                Some(DriversPresent { spacenavd: true, direct: true, denied: false }),
+                Some(DriversPresent { spacenavd: false, direct: true, denied: false }),
             ] {
                 for driver in [Automatic, Spacenavd, Direct] {
                     let expected = device == "spacenavd" && driver == Spacenavd && drivers.is_some_and(|d| d.direct);
@@ -490,7 +490,7 @@ mod preferences_tests {
         let mut h = crate::scenario::Harness::new();
         h.app.home.open = false;
         h.app.space_mouse.device = Some("spacenavd".into());
-        h.app.space_mouse.drivers = Some(crate::space_mouse::DriversPresent { spacenavd: true, direct: true });
+        h.app.space_mouse.drivers = Some(crate::space_mouse::DriversPresent { spacenavd: true, direct: true, denied: false });
         // Spacenavd chosen by the user, so the card may offer the swap to the device.
         h.app.preferences.space_mouse_driver = crate::prefs::SpaceMouseDriver::Spacenavd;
         h.frames(4);
@@ -508,7 +508,7 @@ mod preferences_tests {
         assert!(h.app.space_mouse.offer_since.is_none());
         // Without a direct device there is no such button.
         let mut h = spacenavd_harness();
-        h.app.space_mouse.drivers = Some(crate::space_mouse::DriversPresent { spacenavd: true, direct: false });
+        h.app.space_mouse.drivers = Some(crate::space_mouse::DriversPresent { spacenavd: true, direct: false, denied: false });
         h.frames(3);
         assert!(h.step(&serde_json::json!({"widget": "Swap to Hidraw (Direct Driver)"})).is_err());
     }
@@ -769,7 +769,7 @@ mod preferences_tests {
     fn the_offer_follows_the_first_record_and_a_hidden_offer_stays_hidden() {
         let mut h = crate::scenario::Harness::new();
         h.app.home.open = false;
-        h.app.space_mouse.drivers = Some(crate::space_mouse::DriversPresent { spacenavd: true, direct: true });
+        h.app.space_mouse.drivers = Some(crate::space_mouse::DriversPresent { spacenavd: true, direct: true, denied: false });
         h.app.preferences.space_mouse_driver = crate::prefs::SpaceMouseDriver::Spacenavd;
         h.app.space_mouse.device = None;
         run(&mut h, 3.0);
@@ -791,14 +791,14 @@ mod preferences_tests {
         // a device there is a device that does not open: a swap would do nothing, and is not offered.
         let mut h = crate::scenario::Harness::new();
         h.app.home.open = false;
-        h.app.space_mouse.drivers = Some(crate::space_mouse::DriversPresent { spacenavd: true, direct: true });
+        h.app.space_mouse.drivers = Some(crate::space_mouse::DriversPresent { spacenavd: true, direct: true, denied: false });
         h.app.space_mouse.device = Some("spacenavd".into());
         run(&mut h, 2.0);
         assert!(card_up(&h) && h.widget("Swap to Hidraw (Direct Driver)").is_none(), "no Swap under Automatic");
         // Without a direct device there is no Swap.
         let mut h = crate::scenario::Harness::new();
         h.app.home.open = false;
-        h.app.space_mouse.drivers = Some(crate::space_mouse::DriversPresent { spacenavd: true, direct: false });
+        h.app.space_mouse.drivers = Some(crate::space_mouse::DriversPresent { spacenavd: true, direct: false, denied: false });
         h.app.space_mouse.device = Some("spacenavd".into());
         run(&mut h, 2.0);
         assert!(card_up(&h) && h.widget("Swap to Hidraw (Direct Driver)").is_none());

@@ -2367,7 +2367,7 @@ mod tests {
         for width in [420.0_f32, 560.0, 700.0, 900.0, 1200.0] {
             let mut app = crate::SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
             app.space_mouse.device = Some("hid 046d:c62b".into());
-            app.space_mouse.drivers = Some(crate::space_mouse::DriversPresent { spacenavd: true, direct: true });
+            app.space_mouse.drivers = Some(crate::space_mouse::DriversPresent { spacenavd: true, direct: true, denied: false });
             app.preferences.space_mouse_in_view = true;
             // Calibrated, so the device's picture and the test model sit side by side where there is room.
             let axes = std::array::from_fn(|source| solidcraft_space_mouse::AxisCalibration {
@@ -2451,18 +2451,18 @@ mod tests {
     #[test]
     fn the_device_line_asks_for_a_movement_when_a_reader_is_reachable_and_only_then_says_none_found() {
         use crate::space_mouse::DriversPresent;
-        let none = DriversPresent { spacenavd: false, direct: false };
+        let none = DriversPresent { spacenavd: false, direct: false, denied: false };
         assert!(!waiting_for_a_record(None) && !waiting_for_a_record(Some(none)));
-        assert!(waiting_for_a_record(Some(DriversPresent { spacenavd: true, direct: false })), "a daemon, no record yet");
-        assert!(waiting_for_a_record(Some(DriversPresent { spacenavd: false, direct: true })), "a readable device, no record yet");
-        assert!(waiting_for_a_record(Some(DriversPresent { spacenavd: true, direct: true })));
+        assert!(waiting_for_a_record(Some(DriversPresent { spacenavd: true, direct: false, denied: false })), "a daemon, no record yet");
+        assert!(waiting_for_a_record(Some(DriversPresent { spacenavd: false, direct: true, denied: false })), "a readable device, no record yet");
+        assert!(waiting_for_a_record(Some(DriversPresent { spacenavd: true, direct: true, denied: false })));
         // The texts differ, and the first one is the Calibrate hint.
         assert_ne!(crate::i18n::tr("ui.space_mouse_none"), crate::i18n::tr("ui.space_mouse_calibrate_wait"));
         // A confirmed device is neither (the status names it).
         let mut h = crate::scenario::Harness::new();
         h.app.home.open = false;
         h.app.space_mouse.device = Some("spacenavd".into());
-        h.app.space_mouse.drivers = Some(DriversPresent { spacenavd: true, direct: false });
+        h.app.space_mouse.drivers = Some(DriversPresent { spacenavd: true, direct: false, denied: false });
         crate::prefs::open_at(&mut h.app, 1);
         h.frames(3);
         assert!(h.app.prefs_window.open);
@@ -2782,7 +2782,7 @@ mod tests {
             h.app.home.open = false;
             h.app.preferences.space_mouse_driver = driver;
             h.app.space_mouse.device = Some(device.into());
-            h.app.space_mouse.drivers = Some(crate::space_mouse::DriversPresent { spacenavd: true, direct });
+            h.app.space_mouse.drivers = Some(crate::space_mouse::DriversPresent { spacenavd: true, direct, denied: false });
             h.call("ui.resize", serde_json::json!({"width": 1600, "height": 4000}));
             crate::prefs::open_at(&mut h.app, 1);
             h.frames(6);
@@ -2961,7 +2961,7 @@ mod tests {
         let mut h = crate::scenario::Harness::new();
         h.app.home.open = false;
         h.app.space_mouse.device = None;
-        h.app.space_mouse.drivers = Some(crate::space_mouse::DriversPresent { spacenavd: true, direct: false });
+        h.app.space_mouse.drivers = Some(crate::space_mouse::DriversPresent { spacenavd: true, direct: false, denied: false });
         h.call("ui.resize", serde_json::json!({"width": 1600, "height": 4000}));
         crate::prefs::open_at(&mut h.app, 1);
         h.frames(5);
@@ -2971,7 +2971,7 @@ mod tests {
         h.frames(3);
         assert!(crate::scenario::rect_of("dialog:section:3D mouse:count").is_some());
         h.app.space_mouse.device = None;
-        h.app.space_mouse.drivers = Some(crate::space_mouse::DriversPresent { spacenavd: false, direct: false });
+        h.app.space_mouse.drivers = Some(crate::space_mouse::DriversPresent { spacenavd: false, direct: false, denied: false });
         h.frames(3);
         assert!(crate::scenario::rect_of("dialog:section:3D mouse:count").is_none());
     }
