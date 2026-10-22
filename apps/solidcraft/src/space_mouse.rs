@@ -1649,7 +1649,12 @@ mod tests {
                 let until = Instant::now() + Duration::from_secs(3);
                 while self.key().as_deref() != Some(key) {
                     assert!(Instant::now() < until, "still reading {:?}, not {key}", self.key());
-                    self.fake.daemon_sends_a_record();
+                    // Only while the daemon is what is wanted: a daemon that streams without a pause is not
+                    // left for the device until it pauses (a read looks for a change when it goes idle), so
+                    // sending to it while the device is awaited would keep the test from ever seeing the switch.
+                    if key == "spacenavd" {
+                        self.fake.daemon_sends_a_record();
+                    }
                     std::thread::sleep(Duration::from_millis(5));
                 }
             }
@@ -1780,7 +1785,11 @@ mod tests {
             let settle = |mouse: &mut SpaceMouse, app: &mut SolveApp, want: &str| {
                 let until = Instant::now() + Duration::from_secs(3);
                 loop {
-                    fake.daemon_sends_a_record();
+                    // A daemon that streams without a pause is not left until it pauses, so it is only fed
+                    // while it is the reader that is awaited.
+                    if want == "spacenavd" {
+                        fake.daemon_sends_a_record();
+                    }
                     mouse.tick_at(app, &ctx, Instant::now());
                     if app.space_mouse.device.as_deref() == Some(want) {
                         return;
