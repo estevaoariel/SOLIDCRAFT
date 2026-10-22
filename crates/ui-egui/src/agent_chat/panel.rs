@@ -553,7 +553,7 @@ fn strip(app: &mut SolveApp, ui: &mut egui::Ui) {
     }
     ui.painter().line_segment(
         if app.preferences.agent_chat_side == "left" { [r.right_top(), r.right_bottom()] } else { [r.left_top(), r.left_bottom()] },
-        Stroke::new(1.0, t.border),
+        t.primary_border(t.border),
     );
     let tip = format!("{} · {}", tip(), state.label());
     if resp.on_hover_text(tip).clicked() {
@@ -1453,7 +1453,7 @@ fn loading_chip(ui: &mut egui::Ui, name: &str, importing: bool, i: usize, w: f32
     let mut clicked = false;
     let r = egui::Frame::NONE
         .fill(t.toolbar)
-        .stroke(Stroke::new(1.0, t.border))
+        .stroke(t.control_border_stroke(t.border))
         .corner_radius(t.control_radius)
         .inner_margin(egui::Margin::symmetric(4, 3))
         .show(ui, |ui| {
@@ -1490,7 +1490,7 @@ fn chip(ui: &mut egui::Ui, thumbs: &mut std::collections::HashMap<u64, egui::Tex
     let mut clicked = false;
     let r = egui::Frame::NONE
         .fill(t.toolbar)
-        .stroke(Stroke::new(1.0, t.border))
+        .stroke(t.control_border_stroke(t.border))
         .corner_radius(t.control_radius)
         .inner_margin(egui::Margin::symmetric(4, 3))
         .show(ui, |ui| {

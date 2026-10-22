@@ -1224,7 +1224,7 @@ pub fn timeline_joints(app: &mut SolveApp, ui: &mut egui::Ui, p: &egui::Painter,
         } else {
             t.timeline_item
         };
-        p.rect(br, t.radius_sm.saturating_sub(1), bg, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
+        p.rect(br, t.radius_sm.saturating_sub(1), bg, t.control_border_stroke(t.border), egui::StrokeKind::Inside);
         crate::icons::paint_icon(p, br.shrink(4.0), "joint", f32::from((if suppressed { t.border } else { t.icon }).a()) / 255.0);
         if suppressed {
             p.line_segment([br.left_bottom() + vec2(4.0, -4.0), br.right_top() + vec2(-4.0, 4.0)], Stroke::new(1.5, t.text_dim));

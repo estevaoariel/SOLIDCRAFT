@@ -207,5 +207,28 @@
     "radius_xl": 10,
     "control_radius": 6,
     "sketch_mode_radius": 7
+  },
+  "borders": {
+    "primary": {
+      "width": 2.0,
+      "color": "#ffffff"
+    },
+    "secondary": {
+      "width": 1.0,
+      "color": "#e5efff"
+    },
+    "tertiary": {
+      "width": 1.0,
+      "color": "#102748"
+    },
+    "control": {
+      "width": 1.0,
+      "color": "#a8c8ed"
+    },
+    "primary_inset": {
+      "width": 0.75,
+      "color": "#e5efff",
+      "gap": 3.0
+    }
   }
 }

@@ -201,3 +201,11 @@ lightly damped spring transition and a small boundary margin to prevent flicker.
 On desktop, Ctrl/Cmd+Plus (or Equals) enlarges the interface, Ctrl/Cmd+Minus reduces it,
 and Ctrl/Cmd+0 restores 100%. These shortcuts update the UI scale preference. The UI scale
 slider in Preferences applies the new layout when released, so it stays still while dragging.
+
+
+Theme files can also define `borders`: `primary` outer outlines, `secondary` major section
+rules, `tertiary` small dividers and independent `control` outlines. Each accepts a `width`
+from 0 to 4 UI points and a `color` in hex. Optional `primary_inset` adds a companion outline
+inside panel chrome, with a `gap` from 0 to 12 points. Missing settings keep existing borders.
+Blueprint uses white outer and section lines with dark minor dividers. Focus, selection and
+error outlines retain their semantic colours. See the UI-kit border hierarchy for the schema.

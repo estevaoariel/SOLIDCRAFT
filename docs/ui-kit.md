@@ -485,3 +485,47 @@ outlines use `Tokens::outset_radius` so square corners stay square. `Container`
 continues to own outer surface chrome and square dock contacts. Functional
 geometry (circles, model selection boxes, plot clipping, manipulator handles
 and the artwork inside icons) retains its own shape.
+
+## Theme border hierarchy
+
+Three structural levels and one independent control role are sufficient. More structural
+levels make a hierarchy difficult to distinguish and assign consistently.
+
+| Role | UI audit / assignment |
+| --- | --- |
+| Primary | Ribbon/workspace cards, Browser/History, feature and palette sheets, system windows, menus/popups, navigation/status surfaces |
+| Secondary | Ribbon tab/content rule, Browser/History heading rule, feature/window header and footer, Preferences page/navigation division, disclosure section rules, Assistant header/composer division, File navigation sections |
+| Tertiary | Ribbon category dividers, menu groups, report/table rows, neutral History items, File cards/thumbnails, ordinary inherited egui separators |
+| Control | Neutral fields, buttons, checkboxes, segmented choices, search, list wells, Assistant content cards and chips |
+
+Focus, selection, active commands, errors, recovery warnings and status keep their existing
+semantic strokes. Icon artwork, example mouse diagrams, plots, model edges, manipulator
+geometry and the compass are content; structural border roles do not recolour them.
+
+`solidcraft-theme/1` optionally accepts `borders`. Each role has a `width` (finite 0–4
+logical UI points; zero hides the stroke) and a `color` (`#rrggbb` or `#rrggbbaa`).
+`primary_inset` also requires `gap` (finite 0–12 points of clear distance inside the
+primary border). This companion is painted inside panel/ribbon/window/menu chrome,
+without extra input targets or layout space; tiny surfaces omit it. Compact contacts
+remain square and collapse adjoining primary strokes. Other ornament, such as the
+circular compass and native widget-owned tooltip content, does not acquire an inset.
+
+```json
+"borders": {
+  "primary": {"width": 2, "color": "#ffffff"},
+  "primary_inset": {"width": 0.75, "color": "#e5efff", "gap": 3},
+  "secondary": {"width": 1, "color": "#e5efff"},
+  "tertiary": {"width": 1, "color": "#102748"},
+  "control": {"width": 1, "color": "#a8c8ed"}
+}
+```
+
+Those are Blueprint's settings. Every other existing theme retains its previous appearance.
+Missing roles preserve each surface's existing width and colour, including overrides in
+`colors`; exporting keeps omitted roles absent so reimport cannot flatten those legacy
+surface differences. Dark/Light and the Gruvbox families share border geometry.
+Imports and direct preference updates reject unknown roles/settings, invalid colours,
+non-finite/out-of-range numbers and missing required settings. Invalid hand-edited saved
+border settings safely fall back to legacy styling. The optional field requires no format
+version change. There is no general border editor in Preferences; theme file import/export
+and the existing preference/control workflow own this extension.

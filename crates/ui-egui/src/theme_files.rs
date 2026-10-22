@@ -79,6 +79,9 @@ pub struct ThemeFile {
     /// Optional corner radii in logical UI points. Missing entries keep the base values.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub radii: BTreeMap<String, u8>,
+    /// Optional border roles; absent entries retain the existing surface-specific styling.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub borders: BTreeMap<String, Value>,
 }
 
 /// Maximum imported radius, in logical UI points; widgets clamp to their own bounds.
@@ -112,6 +115,44 @@ impl ThemeFile {
     }
 }
 
+/// Strictly bounded strokes shared by file imports and direct preference updates.
+pub(crate) fn parse_borders(values: &BTreeMap<String, Value>) -> Result<crate::theme::Borders, String> {
+    use crate::theme::{Borders, InsetBorder};
+    if values.len() > 5 {
+        return Err("`borders` has more than five roles".into());
+    }
+    let mut borders = Borders::default();
+    for (key, value) in values {
+        let obj = value.as_object().ok_or_else(|| format!("`borders.{key}` must be an object"))?;
+        if obj.keys().any(|k| k != "color" && k != "width" && !(key == "primary_inset" && k == "gap")) {
+            return Err(format!("`borders.{key}` has an unknown setting"));
+        }
+        let number = |name: &str, max: f64| -> Result<f32, String> {
+            obj.get(name)
+                .and_then(Value::as_f64)
+                .filter(|v| v.is_finite() && *v >= 0.0 && *v <= max)
+                .map(|v| v as f32)
+                .ok_or_else(|| format!("`borders.{key}.{name}` must be a finite number from 0 to {max}"))
+        };
+        let width = number("width", 4.0)?;
+        let color = obj
+            .get("color")
+            .and_then(Value::as_str)
+            .and_then(parse_color)
+            .ok_or_else(|| format!("`borders.{key}.color` must be #rrggbb or #rrggbbaa"))?;
+        let stroke = egui::Stroke::new(width, color);
+        match key.as_str() {
+            "primary" => borders.primary = Some(stroke),
+            "secondary" => borders.secondary = Some(stroke),
+            "tertiary" => borders.tertiary = Some(stroke),
+            "control" => borders.control = Some(stroke),
+            "primary_inset" => borders.primary_inset = Some(InsetBorder { stroke, gap: number("gap", 12.0)? }),
+            _ => return Err(format!("`borders.{key}` is not a border role")),
+        }
+    }
+    Ok(borders)
+}
+
 /// The settable colours: a key, and where it lives in [`Tokens`]. `one` keys take a colour,
 /// `many` keys a list of exactly as many colours as the token has; `icons.*` are the colours
 /// viewport glyphs draw of their own. The destructuring below fails to build when a token is added
@@ -140,7 +181,7 @@ macro_rules! theme_keys {
             // Not colours: the hover lift is a grey step, the analysis colours belong to shaders.
             let Tokens {
                 $($one: _,)* $($many: _,)*
-                hover_face_lift: _, analysis: _, icons: _,
+                hover_face_lift: _, analysis: _, icons: _, borders: _,
                 file_action_height: _, file_back_height: _, file_recovery_icon: _, file_grid_gap: _,
                 file_nav_width: _, file_nav_height: _, file_tile_height: _, file_tile_icon: _, file_recent_height: _,
                 file_sample_image_height: _, file_content_inset_x: _, file_content_inset_y: _, file_section_gap: _, font_start_title: _,
@@ -278,7 +319,13 @@ pub fn from_value(v: &Value) -> Result<ThemeFile, String> {
         bad.truncate(8);
         return Err(bad.join("; "));
     }
-    Ok(ThemeFile { id: slug(name), name: name.to_string(), base, colors: src.into_iter().collect(), radii })
+    let borders = match v.get("borders") {
+        None => BTreeMap::new(),
+        Some(Value::Object(values)) => values.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+        Some(_) => return Err("`borders` must be an object of border roles".into()),
+    };
+    parse_borders(&borders)?;
+    Ok(ThemeFile { id: slug(name), name: name.to_string(), base, colors: src.into_iter().collect(), radii, borders })
 }
 
 /// An id from a name: lower-case letters, digits and dashes.
@@ -313,6 +360,8 @@ pub fn resolve(theme: &ThemeFile) -> Tokens {
             *slot = *value;
         }
     }
+    // Malformed hand-edited saved settings cannot introduce non-finite drawing geometry.
+    t.borders = parse_borders(&theme.borders).unwrap_or_default();
     t
 }
 
@@ -327,7 +376,18 @@ pub fn export(name: &str, base: Base, t: &Tokens) -> Value {
         }
     }
     let radii: BTreeMap<_, _> = RADIUS_KEYS.into_iter().filter_map(|key| radius_slot(&mut t, key).map(|value| (key, *value))).collect();
-    json!({"format": FORMAT, "name": name, "base": base, "colors": colors, "radii": radii})
+    let mut borders = serde_json::Map::new();
+    for (key, stroke) in
+        [("primary", t.borders.primary), ("secondary", t.borders.secondary), ("tertiary", t.borders.tertiary), ("control", t.borders.control)]
+    {
+        if let Some(stroke) = stroke {
+            borders.insert(key.into(), json!({"width": stroke.width, "color": format_color(stroke.color)}));
+        }
+    }
+    if let Some(inset) = t.borders.primary_inset {
+        borders.insert("primary_inset".into(), json!({"width": inset.stroke.width, "color": format_color(inset.stroke.color), "gap": inset.gap}));
+    }
+    json!({"format": FORMAT, "name": name, "base": base, "colors": colors, "radii": radii, "borders": borders})
 }
 
 /// The theme files that come with SolidCraft (original files; Gruvbox, Tokyo Night, Solarized, Nord, Nosferatu and Catppuccin map open-source palettes, MIT).
@@ -400,6 +460,61 @@ pub fn add(custom: &mut Vec<ThemeFile>, mut theme: ThemeFile) -> Result<String, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn border_roles_roundtrip_on_either_base_and_preserve_legacy_defaults() {
+        use crate::theme::{BorderRole, Borders};
+        let settings = json!({
+            "primary":{"width":4,"color":"#ffffff"}, "secondary":{"width":1.5,"color":"#aabbcc"},
+            "tertiary":{"width":0,"color":"#00000000"}, "control":{"width":0.5,"color":"#123456"},
+            "primary_inset":{"width":0.75,"color":"#ffffff80","gap":12}
+        });
+        for base in ["dark", "light"] {
+            let old = from_value(&json!({"format":FORMAT,"name":"Old","base":base})).unwrap();
+            assert_eq!(resolve(&old).borders, Borders::LEGACY);
+            let legacy = egui::Stroke::new(2.5, Color32::RED);
+            for role in [BorderRole::Primary, BorderRole::Secondary, BorderRole::Tertiary, BorderRole::Control] {
+                assert_eq!(resolve(&old).borders.stroke(role, legacy), legacy);
+            }
+            let file = from_value(&json!({"format":FORMAT,"name":"New","base":base,"borders":settings})).unwrap();
+            let t = resolve(&file);
+            assert_eq!(t.primary_border(Color32::BLACK).width, 4.0);
+            assert_eq!(t.tertiary_border(Color32::WHITE).width, 0.0);
+            assert_eq!(t.control_border_stroke(Color32::WHITE).color, Color32::from_rgb(0x12, 0x34, 0x56));
+            assert_eq!(resolve(&from_value(&export("New", file.base, &t)).unwrap()), t);
+            assert_eq!(serde_json::from_value::<ThemeFile>(serde_json::to_value(&file).unwrap()).unwrap(), file);
+        }
+        let saved: ThemeFile = serde_json::from_value(json!({"id":"old","name":"Old","base":"dark","colors":{}})).unwrap();
+        assert!(saved.borders.is_empty());
+        let partial =
+            from_value(&json!({"format":FORMAT,"name":"Partial","base":"dark","borders":{"secondary":{"width":2,"color":"#ffffff"}}})).unwrap();
+        assert_eq!(resolve(&partial).primary_border(Color32::RED), egui::Stroke::new(1.0, Color32::RED));
+    }
+
+    #[test]
+    fn malformed_border_settings_are_refused_and_saved_settings_are_safe() {
+        for settings in [
+            json!([]),
+            json!({"unknown":{"width":1,"color":"#ffffff"}}),
+            json!({"primary":true}),
+            json!({"primary":{"width":-1,"color":"#ffffff"}}),
+            json!({"primary":{"width":4.1,"color":"#ffffff"}}),
+            json!({"primary":{"width":"1","color":"#ffffff"}}),
+            json!({"primary":{"width":1,"color":"white"}}),
+            json!({"primary":{"width":1,"color":"#ffffff","gap":1}}),
+            json!({"primary_inset":{"width":1,"color":"#ffffff","gap":13}}),
+            json!({"primary_inset":{"width":1,"color":"#ffffff"}}),
+        ] {
+            assert!(from_value(&json!({"format":FORMAT,"name":"Bad","base":"dark","borders":settings})).is_err(), "{settings}");
+        }
+        let file = ThemeFile { borders: BTreeMap::from([("primary".into(), json!({"width":1e100,"color":"#ffffff"}))]), ..Default::default() };
+        assert_eq!(resolve(&file).borders, crate::theme::Borders::LEGACY);
+        assert!(parse_borders(&BTreeMap::from([("primary".into(), json!({"width":null,"color":"#ffffff"}))])).is_err());
+        assert_eq!(resolve(find("blueprint", &[]).unwrap()).borders.primary.unwrap().color, Color32::WHITE);
+        for id in ["gruvbox-dark", "gruvbox-light", "gruvbox-dark-soft", "gruvbox-light-soft"] {
+            assert_eq!(resolve(find(id, &[]).unwrap()).borders, crate::theme::Borders::LEGACY);
+        }
+    }
 
     #[test]
     fn built_in_themes_read_and_differ_from_their_base() {

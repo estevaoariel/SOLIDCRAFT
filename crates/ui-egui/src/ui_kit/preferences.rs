@@ -224,7 +224,7 @@ pub(crate) fn option_card(ui: &mut Ui, label: &str, note: Option<&str>, selected
         } else {
             t.control_fill
         },
-        Stroke::new(if selected { 2.0 } else { 1.0 }, if selected { t.form_primary } else { t.control_border }),
+        if selected { Stroke::new(2.0, t.form_primary) } else { t.control_border_stroke(t.control_border) },
         egui::StrokeKind::Inside,
     );
     let mut preview = Rect::from_min_size(rect.min + vec2(t.space_6, t.space_6), vec2((rect.width() - t.space_12).max(0.0), preview_height));
@@ -296,7 +296,7 @@ fn paint_preference_figure(p: &egui::Painter, rect: Rect, figure: PreferenceFigu
         return;
     }
     p.rect_filled(rect, t.control_radius, t.viewport_top);
-    p.rect_stroke(rect, t.control_radius, Stroke::new(1.0, t.dialog_rule), egui::StrokeKind::Inside);
+    p.rect_stroke(rect, t.control_radius, t.secondary_border(t.dialog_rule), egui::StrokeKind::Inside);
     match figure {
         PreferenceFigure::Theme { .. } => {}
         PreferenceFigure::Quality(sides) => {
@@ -309,7 +309,7 @@ fn paint_preference_figure(p: &egui::Painter, rect: Rect, figure: PreferenceFigu
                     centre + vec2(a.cos(), a.sin()) * radius
                 })
                 .collect();
-            p.extend(egui::Shape::dashed_line(&guide, Stroke::new(1.0, t.control_border), t.space_2, t.space_3));
+            p.extend(egui::Shape::dashed_line(&guide, t.control_border_stroke(t.control_border), t.space_2, t.space_3));
             let points = (0..n)
                 .map(|i| {
                     let a = std::f32::consts::TAU * i as f32 / n as f32;
@@ -454,7 +454,7 @@ pub(crate) fn scale_specimen(ui: &mut Ui, scale: f32) {
     let t = Tokens::get();
     let scale = if scale.is_finite() { scale.clamp(0.5, 2.5) / ui.ctx().zoom_factor().max(0.5) } else { 1.0 };
     let (r, _) = ui.allocate_exact_size(vec2(dimension(ui.available_width()), t.space_24 * 4.0 + t.space_16), Sense::hover());
-    ui.painter().rect(r, t.radius_lg, t.control_fill, Stroke::new(1.0, t.dialog_rule), egui::StrokeKind::Inside);
+    ui.painter().rect(r, t.radius_lg, t.control_fill, t.secondary_border(t.dialog_rule), egui::StrokeKind::Inside);
     let p = ui.painter().with_clip_rect(r.shrink(t.space_8));
     let font = FontId::proportional(t.font_label * scale);
     p.text(
@@ -470,7 +470,7 @@ pub(crate) fn scale_specimen(ui: &mut Ui, scale: f32) {
     let label = p.layout_no_wrap(distance.to_owned(), font.clone(), t.form_dim);
     p.galley(origin + vec2(0.0, (line_h - label.size().y) / 2.0), label.clone(), t.form_dim);
     let field = Rect::from_min_size(origin + vec2(label.size().x + t.space_8 * scale, 0.0), vec2((t.form_label_width + t.space_6) * scale, line_h));
-    p.rect(field, t.control_radius, t.control_fill, Stroke::new(1.0, t.control_border), egui::StrokeKind::Inside);
+    p.rect(field, t.control_radius, t.control_fill, t.control_border_stroke(t.control_border), egui::StrokeKind::Inside);
     centred_text(&p, field, "12.50", FontId::monospace(t.font_body * scale), t.form_ink);
     let button = Rect::from_min_size(field.right_top() + vec2(t.space_8 * scale, 0.0), vec2(t.space_24 * 1.5 * scale, line_h));
     p.rect_filled(button, t.control_radius, t.form_primary);
@@ -516,7 +516,7 @@ pub(crate) fn settings_inline_note(ui: &mut Ui, text: &str) {
 pub(crate) fn font_specimen(ui: &mut Ui, text: &str) {
     let t = Tokens::get();
     let (r, _) = ui.allocate_exact_size(vec2(dimension(ui.available_width()), t.control_height + t.space_10), Sense::hover());
-    ui.painter().rect(r, t.control_radius, t.control_fill, Stroke::new(1.0, t.dialog_rule), egui::StrokeKind::Inside);
+    ui.painter().rect(r, t.control_radius, t.control_fill, t.secondary_border(t.dialog_rule), egui::StrokeKind::Inside);
     paint_text(ui, r.shrink2(vec2(t.space_12, 0.0)), text, FontId::proportional(t.font_button), t.form_ink, false);
 }
 

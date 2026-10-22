@@ -3296,7 +3296,7 @@ fn paint_toast(ui: &egui::Ui, free: Rect, text: String, error: bool, computing: 
         return None;
     }
     let frame = Container::new(ui.ctx(), Surface::Toast).frame(ui.ctx(), t.panel, crate::frame::Side::Left);
-    ui.painter().add(frame.paint(r.shrink(frame.stroke.width)));
+    Container::paint_frame(ui.painter(), frame, r.shrink(frame.stroke.width));
     let dot = pos2(r.left() + 14.0, r.center().y);
     if computing {
         egui::Spinner::new().size(12.0).color(t.text).paint_at(ui, Rect::from_center_size(dot, vec2(12.0, 12.0)));
@@ -4068,7 +4068,7 @@ fn nav_bar(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect) {
     let mut painter = ui.painter_at(rect);
     painter.set_opacity(if active || app.preferences.navigator_style == crate::prefs::NavigatorStyle::Axes { 1.0 } else { 0.45 });
     let surface = Container::new(ui.ctx(), Surface::Navigation).frame(ui.ctx(), t.overlay, crate::frame::Side::Left);
-    painter.add(surface.paint(bar.shrink(surface.stroke.width)));
+    Container::paint_frame(&painter, surface, bar.shrink(surface.stroke.width));
     let columns = ((bar.width() - 10.0) / 30.0).round().clamp(1.0, 10.0) as usize;
     for (i, (icon, tip)) in items.iter().enumerate() {
         let br = Rect::from_min_size(

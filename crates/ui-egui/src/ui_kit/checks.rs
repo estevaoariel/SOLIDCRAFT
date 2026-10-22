@@ -30,7 +30,13 @@ pub(super) fn paint_box(ui: &Ui, square: Rect, response: &Response, on: bool, mi
     } else {
         t.control_fill
     };
-    ui.painter().rect(square, t.radius_sm, fill, egui::Stroke::new(1.0, border), egui::StrokeKind::Inside);
+    ui.painter().rect(
+        square,
+        t.radius_sm,
+        fill,
+        if selected || response.hovered() || response.has_focus() { egui::Stroke::new(1.0, border) } else { t.control_border_stroke(border) },
+        egui::StrokeKind::Inside,
+    );
     if selected {
         paint_check_glyph(ui.painter(), square, mixed, t.on_accent);
     }

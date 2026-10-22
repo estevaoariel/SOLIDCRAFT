@@ -75,7 +75,7 @@ pub(crate) fn segmented(ui: &mut Ui, selected: &mut usize, options: &[&str], con
             );
         }
         if index > 0 {
-            ui.painter().vline(segment.left(), segment.y_range(), egui::Stroke::new(1.0, t.control_border));
+            ui.painter().vline(segment.left(), segment.y_range(), t.control_border_stroke(t.control_border));
         }
         let font = if on { crate::fonts::semibold(t.font_label) } else { egui::FontId::proportional(t.font_label) };
         let galley = ui.painter().layout_no_wrap((*option).to_string(), font.clone(), t.form_ink);
@@ -103,7 +103,7 @@ pub(crate) fn segmented(ui: &mut Ui, selected: &mut usize, options: &[&str], con
             clicked = true;
         }
     }
-    ui.painter().rect_stroke(rect, t.control_radius, egui::Stroke::new(1.0, t.control_border), egui::StrokeKind::Inside);
+    ui.painter().rect_stroke(rect, t.control_radius, t.control_border_stroke(t.control_border), egui::StrokeKind::Inside);
     scenario::publish_target_as(&format!("dialog:{}", label(ui)), &format!("dialog:segments:{}", label(ui)), rect);
     clicked
 }
@@ -140,7 +140,7 @@ pub(crate) fn segmented_icons(ui: &mut Ui, selected: &mut usize, options: &[Icon
             ui.painter().rect_filled(segment, rounding, if on { t.selected_bg } else { t.hover });
         }
         if index > 0 {
-            ui.painter().vline(segment.left(), segment.y_range(), egui::Stroke::new(1.0, t.control_border));
+            ui.painter().vline(segment.left(), segment.y_range(), t.control_border_stroke(t.control_border));
         }
         // A square icon area inside the segment: dash gaps and dots need the room to read apart.
         let side = (segment.width().min(segment.height()) - t.space_4).max(t.space_12);
@@ -154,7 +154,7 @@ pub(crate) fn segmented_icons(ui: &mut Ui, selected: &mut usize, options: &[Icon
             clicked = true;
         }
     }
-    ui.painter().rect_stroke(rect, t.control_radius, egui::Stroke::new(1.0, t.control_border), egui::StrokeKind::Inside);
+    ui.painter().rect_stroke(rect, t.control_radius, t.control_border_stroke(t.control_border), egui::StrokeKind::Inside);
     scenario::publish_target_as(&format!("dialog:{}", label(ui)), &format!("dialog:segments:{}", label(ui)), rect);
     clicked
 }
@@ -250,7 +250,7 @@ pub(crate) fn tool_choices<'a>(ui: &mut Ui, label: &str, current: &str, choices:
                 enabled,
                 egui::Button::new("")
                     .fill(fill)
-                    .stroke(egui::Stroke::new(if on { t.sketch_mode_border } else { 1.0 }, if on { t.sketch_accent } else { t.control_border }))
+                    .stroke(if on { egui::Stroke::new(t.sketch_mode_border, t.sketch_accent) } else { t.control_border_stroke(t.control_border) })
                     .corner_radius(t.sketch_mode_radius)
                     .min_size(vec2(t.sketch_mode_size, t.sketch_mode_size)),
             );
@@ -329,7 +329,7 @@ pub(crate) fn color_swatch<T: Send + Sync + 'static>(
                     }
                 }
             }
-            ui.painter().rect(rect, t.control_radius, color, egui::Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
+            ui.painter().rect(rect, t.control_radius, color, t.control_border_stroke(t.border), egui::StrokeKind::Inside);
         })
         .response;
     let response = ui.interact(response.rect, id.with("click"), egui::Sense::click()).on_hover_text(tip);
@@ -382,7 +382,7 @@ pub(crate) fn popup_list(
     let area = popup.order(egui::Order::Tooltip).fixed_pos(anchor.left_bottom() + egui::vec2(0.0, t.space_2)).show(ctx, |ui| {
         Container::popup_frame(ui.style())
             .fill(t.control_fill)
-            .stroke(egui::Stroke::new(1.0, t.dialog_border))
+            .stroke(t.primary_border(t.dialog_border))
             .corner_radius(t.radius_lg)
             .inner_margin(t.space_4)
             .show(ui, |ui| {
@@ -444,7 +444,7 @@ pub(crate) fn color_thumbnail<T: Send + Sync + 'static>(ui: &mut Ui, id: egui::I
     let t = Tokens::get();
     ui.dnd_drag_source(id, payload, |ui| {
         let (rect, _) = ui.allocate_exact_size(vec2(t.space_16, t.space_16), egui::Sense::hover());
-        ui.painter().rect(rect, t.radius_sm, color, egui::Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
+        ui.painter().rect(rect, t.radius_sm, color, t.control_border_stroke(t.border), egui::StrokeKind::Inside);
     })
     .response
     .on_hover_text(tip)

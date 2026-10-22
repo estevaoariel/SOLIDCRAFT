@@ -38,7 +38,9 @@ impl Menu {
             ui.spacing_mut().item_spacing.y = 0.0;
             // The opening gesture belongs to the parent even when a narrow popup overlaps it.
             ui.ctx().data_mut(|d| d.insert_temp(gate_id, first_click && !released));
-            ui.add_enabled_ui(!opening_press, add).inner
+            let result = ui.add_enabled_ui(!opening_press, add).inner;
+            Container::finish_content(ui, frame);
+            result
         };
         let popup = if nested {
             let submenu = Container::new(ui.ctx(), Surface::Popup).submenu();
@@ -60,20 +62,24 @@ impl Menu {
         super::Container::menu_frame()
     }
 
+    pub(crate) fn show_frame<R>(ui: &mut Ui, frame: egui::Frame, add: impl FnOnce(&mut Ui) -> R) -> egui::InnerResponse<R> {
+        let bounds = ui.max_rect();
+        Container::new(ui.ctx(), Surface::Popup).show_frame(ui, frame, bounds, add)
+    }
+
     pub(crate) fn show<R>(ui: &mut Ui, width: f32, add: impl FnOnce(&mut Ui) -> R) -> R {
-        Self::frame()
-            .show(ui, |ui| {
-                ui.set_width((width - Tokens::get().space_6 * 2.0 - 2.0).max(0.0));
-                ui.spacing_mut().item_spacing.y = 0.0;
-                ui.with_layout(egui::Layout::top_down(egui::Align::Min), add).inner
-            })
-            .inner
+        Self::show_frame(ui, Self::frame(), |ui| {
+            ui.set_width((width - Tokens::get().space_6 * 2.0 - 2.0).max(0.0));
+            ui.spacing_mut().item_spacing.y = 0.0;
+            ui.with_layout(egui::Layout::top_down(egui::Align::Min), add).inner
+        })
+        .inner
     }
 
     pub(crate) fn separator(ui: &mut Ui) {
         let t = Tokens::get();
         let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), t.space_10 + 1.0), Sense::hover());
-        ui.painter().hline(r.x_range(), r.center().y, Stroke::new(1.0, t.dialog_rule));
+        ui.painter().hline(r.x_range(), r.center().y, t.tertiary_border(t.dialog_rule));
     }
 
     pub(crate) fn heading(ui: &mut Ui, label: &str) {
@@ -187,7 +193,7 @@ impl<'a> MenuItem<'a> {
                 super::checks::paint_check_glyph(&painter, icon, false, t.form_primary);
             }
         } else if let Some(color) = self.swatch {
-            painter.rect(icon, t.radius_sm, color, Stroke::new(1.0, t.control_border), egui::StrokeKind::Inside);
+            painter.rect(icon, t.radius_sm, color, t.control_border_stroke(t.control_border), egui::StrokeKind::Inside);
         } else if !self.icon.is_empty() {
             if self.danger {
                 icons::paint_danger(&painter, icon, self.icon, 1.0);
@@ -230,7 +236,7 @@ pub(crate) fn workspace_menu(ui: &mut egui::Ui, items: &[Item], key_row: Option<
     let t = Tokens::get();
     let width = t.form_card_width + t.form_label_width * 2.0 + t.space_24 + t.space_16 + t.space_6;
     let mut picked = None;
-    Menu::frame().inner_margin(t.space_8 + 1.0).show(ui, |ui| {
+    Menu::show_frame(ui, Menu::frame().inner_margin(t.space_8 + 1.0), |ui| {
         ui.set_width(width);
         ui.spacing_mut().item_spacing.y = 0.0;
         ui.add_space(t.space_4);

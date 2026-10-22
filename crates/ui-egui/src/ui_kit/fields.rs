@@ -209,7 +209,7 @@ pub(crate) fn selection_field(ui: &mut Ui, text: &str, options: Selection) -> Re
         if active && !filled { rect.shrink(t.space_2) } else { rect },
         t.control_radius,
         if filled { t.selected_bg } else { t.control_fill },
-        egui::Stroke::new(1.0, if active || filled { t.form_primary } else { t.control_border }),
+        if active || filled { egui::Stroke::new(1.0, t.form_primary) } else { t.control_border_stroke(t.control_border) },
         egui::StrokeKind::Inside,
     );
     let end = if filled { t.space_24 } else { t.space_8 };
@@ -528,7 +528,7 @@ pub(crate) fn placement_field(ui: &mut Ui, id: egui::Id, value: &mut String, hin
 pub(crate) fn library_cell(ui: &mut Ui, id: egui::Id, value: &mut String, hint: &str, menu: impl FnOnce(&mut Ui)) -> Response {
     let t = Tokens::get();
     let (rect, _) = ui.allocate_exact_size(vec2(dimension(ui.available_width()), row_height()), egui::Sense::hover());
-    ui.painter().rect(rect, t.control_radius, t.control_fill, egui::Stroke::new(1.0, t.control_border), egui::StrokeKind::Inside);
+    ui.painter().rect(rect, t.control_radius, t.control_fill, t.control_border_stroke(t.control_border), egui::StrokeKind::Inside);
     let split = (rect.right() - t.space_24).max(rect.left());
     let field = egui::Rect::from_min_max(rect.min, egui::pos2(split, rect.bottom()));
     let response = ui
@@ -538,7 +538,7 @@ pub(crate) fn library_cell(ui: &mut Ui, id: egui::Id, value: &mut String, hint: 
         })
         .inner;
     let button = egui::Rect::from_min_max(egui::pos2(split, rect.top()), rect.max);
-    ui.painter().vline(split, rect.y_range(), egui::Stroke::new(1.0, t.dialog_rule));
+    ui.painter().vline(split, rect.y_range(), t.secondary_border(t.dialog_rule));
     let library = super::icon_button_at(ui, button, "chevron", "Library");
     scenario::publish_handle("dialog:menu:Library", button.center());
     scenario::publish_rect("dialog:menu:Library", button);

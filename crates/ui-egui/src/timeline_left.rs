@@ -255,7 +255,7 @@ pub fn left_timeline(app: &mut SolveApp, ui: &mut egui::Ui) {
     {
         return;
     }
-    ui.painter().hline(ui.max_rect().x_range(), ui.cursor().top(), Stroke::new(1.0, t.border));
+    ui.painter().hline(ui.max_rect().x_range(), ui.cursor().top(), t.secondary_border(t.border));
     ui.add_space(t.space_3);
     egui::ScrollArea::vertical()
         .id_salt("sc_left_timeline_scroll")

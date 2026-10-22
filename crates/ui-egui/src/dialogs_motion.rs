@@ -175,7 +175,7 @@ fn transport(ui: &mut egui::Ui, what: Transport, tip: &str) -> egui::Response {
     let t = Tokens::get();
     let (r, resp) = ui.allocate_exact_size(vec2(26.0, 22.0), Sense::click());
     let fill = if resp.hovered() { t.hover } else { t.field };
-    ui.painter().rect(r, t.radius_sm.saturating_sub(1), fill, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
+    ui.painter().rect(r, t.radius_sm.saturating_sub(1), fill, t.control_border_stroke(t.border), egui::StrokeKind::Inside);
     let c = r.center();
     let ink = if matches!(what, Transport::Play | Transport::Stop) { t.accent } else { t.icon };
     let p = ui.painter();

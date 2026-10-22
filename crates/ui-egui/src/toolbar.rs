@@ -489,7 +489,7 @@ fn file_menu(app: &mut SolveApp, ctx: &egui::Context) {
         .fixed_pos(pos2(ctx.data(|d| d.get_temp::<f32>(egui::Id::new("sc_file_menu_x"))).unwrap_or(100.0), APP_BAR_HEIGHT))
         .order(egui::Order::Foreground)
         .show(ctx, |ui| {
-            crate::ui_kit::Menu::frame().show(ui, |ui| {
+            crate::ui_kit::Menu::show_frame(ui, crate::ui_kit::Menu::frame(), |ui| {
                 ui.set_min_width(190.0);
                 ui.visuals_mut().widgets.inactive.weak_bg_fill = Color32::TRANSPARENT;
                 ui.visuals_mut().widgets.inactive.bg_stroke = Stroke::NONE;
@@ -898,7 +898,7 @@ fn ribbon_tabs(app: &mut SolveApp, ui: &mut egui::Ui, row: Rect) {
     } else {
         ui.painter().line_segment(
             [row.left_bottom() - vec2(0.0, 0.5), row.right_bottom() - vec2(0.0, 0.5)],
-            Stroke::new(1.0, t.toolbar.lerp_to_gamma(t.border, 0.5)),
+            t.secondary_border(t.toolbar.lerp_to_gamma(t.border, 0.5)),
         );
     }
 }
@@ -922,7 +922,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
     let fill = if floating { Color32::TRANSPARENT } else { t.toolbar };
     let ribbon = Container::new(ui.ctx(), Surface::Chrome).edge("sc_toolbar", Edge::Top);
     let frame = Container::new(ui.ctx(), Surface::Chrome).edge_frame(fill);
-    ribbon.exact_size(height).show_separator_line(false).frame(frame).show(ui, |ui| {
+    let chrome = ribbon.exact_size(height).show_separator_line(false).frame(frame).show(ui, |ui| {
         let r = if floating { Rect::from_min_max(cards.workspace.min, cards.ribbon.max) } else { frame.outer_rect(ui.max_rect()) };
         let ws = if floating { cards.workspace } else { Rect::from_min_size(r.left_top(), vec2(WORKSPACE_WIDTH, ribbon_height - 1.0)) };
         let ribbon_left = if floating { cards.ribbon.left() } else { ws.right() };
@@ -954,7 +954,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
             t.accent,
         );
         if !floating {
-            painter.line_segment([ws.right_top(), ws.right_bottom()], Stroke::new(1.0, t.border));
+            painter.line_segment([ws.right_top(), ws.right_bottom()], t.secondary_border(t.border));
         }
         let render = crate::render_workspace::active(app);
         let workspace_icon = if render { "ws_render" } else { "ws_design" };
@@ -1067,7 +1067,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
             let width = if finish { finish_width } else { plan.width() };
             if finish && finish_right {
                 px = right - finish_width;
-                painter.line_segment([pos2(px, top), pos2(px, r.bottom() - 1.0)], Stroke::new(1.0, t.border));
+                painter.line_segment([pos2(px, top), pos2(px, r.bottom() - 1.0)], t.tertiary_border(t.border));
             }
             let button_widths = &plan.widths;
             let sketch_create = tab == "SKETCH" && *panel == "CREATE";
@@ -1213,7 +1213,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                     // A quiet rule sets the grid apart from the large button before it.
                     painter.line_segment(
                         [pos2(button_x - 1.5, top + 8.0), pos2(button_x - 1.5, top + button_height.min(46.0))],
-                        Stroke::new(1.0, t.toolbar.lerp_to_gamma(t.border, 0.5)),
+                        t.secondary_border(t.toolbar.lerp_to_gamma(t.border, 0.5)),
                     );
                 }
                 for c in &gallery {
@@ -1334,7 +1334,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                 let area = Container::new(ui.ctx(), Surface::Popup).area(popup_id).fixed_pos(lr.left_bottom()).order(egui::Order::Foreground).show(
                     ui.ctx(),
                     |ui| {
-                        section_frame(ui).show(ui, |ui| {
+                        crate::ui_kit::Menu::show_frame(ui, crate::ui_kit::Menu::frame(), |ui| {
                             ui.spacing_mut().item_spacing.y = 0.0;
                             ui.set_min_width(200.0);
                             if *panel == "SELECT" {
@@ -1406,7 +1406,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                 }
             }
             px += width;
-            painter.line_segment([pos2(px, top + 4.0), pos2(px, top + group_height - 3.0)], Stroke::new(1.0, t.border));
+            painter.line_segment([pos2(px, top + 4.0), pos2(px, top + group_height - 3.0)], t.tertiary_border(t.border));
             px += PANEL_GAP;
         }
         if !overflow.is_empty() {
@@ -1465,6 +1465,14 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
             crate::context_menu::open_for(app, at, crate::context_menu::Target::ToolbarCommand { id: id.to_string() });
         }
     });
+    if floating {
+        let frame = Container::new(ui.ctx(), Surface::Chrome).frame(ui.ctx(), t.toolbar, crate::frame::Side::Left);
+        for card in [cards.workspace, cards.ribbon] {
+            Container::paint_inset(ui.painter(), frame.widget_rect(card), frame);
+        }
+    } else {
+        Container::paint_inset(ui.painter(), chrome.response.rect - frame.outer_margin, frame);
+    }
 }
 
 /// A short divider between the brand, file actions and document tabs.
@@ -1533,7 +1541,7 @@ fn ribbon_tooltip(app: &SolveApp, response: egui::Response, command: &solidcraft
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     egui::Frame::NONE
                         .fill(t.panel_header)
-                        .stroke(Stroke::new(1.0, t.border))
+                        .stroke(t.tertiary_border(t.border))
                         .corner_radius(t.radius_sm.saturating_sub(1))
                         .inner_margin(egui::Margin::symmetric(5, 1))
                         .show(ui, |ui| {
@@ -1558,10 +1566,6 @@ fn ribbon_tooltip(app: &SolveApp, response: egui::Response, command: &solidcraft
             ui.add(egui::Label::new(egui::RichText::new(reason).color(t.text_dim)).wrap());
         }
     })
-}
-
-fn section_frame(_ui: &egui::Ui) -> egui::Frame {
-    crate::ui_kit::Menu::frame()
 }
 
 fn section_heading(ui: &mut egui::Ui, label: &str, width: f32) {

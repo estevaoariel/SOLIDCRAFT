@@ -27,6 +27,75 @@ thread_local! {
     static CUSTOM: Cell<Option<Custom>> = const { Cell::new(None) };
 }
 
+/// Three structural border levels plus independent neutral control outlines.
+/// Focus, selection, status, artwork and CAD geometry do not use these roles.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BorderRole {
+    Primary,
+    Secondary,
+    Tertiary,
+    Control,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Borders {
+    pub primary: Option<Stroke>,
+    pub secondary: Option<Stroke>,
+    pub tertiary: Option<Stroke>,
+    pub control: Option<Stroke>,
+    pub primary_inset: Option<InsetBorder>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct InsetBorder {
+    pub stroke: Stroke,
+    /// Clear distance from the inner edge of the primary stroke, in logical points.
+    pub gap: f32,
+}
+
+impl Borders {
+    pub const LEGACY: Self = Self { primary: None, secondary: None, tertiary: None, control: None, primary_inset: None };
+
+    pub fn stroke(self, role: BorderRole, fallback: Stroke) -> Stroke {
+        match role {
+            BorderRole::Primary => self.primary,
+            BorderRole::Secondary => self.secondary,
+            BorderRole::Tertiary => self.tertiary,
+            BorderRole::Control => self.control,
+        }
+        .unwrap_or(fallback)
+    }
+}
+
+impl Tokens {
+    pub fn primary_border(&self, color: Color32) -> Stroke {
+        self.borders.stroke(BorderRole::Primary, Stroke::new(1.0, color))
+    }
+    pub fn secondary_border(&self, color: Color32) -> Stroke {
+        self.borders.stroke(BorderRole::Secondary, Stroke::new(1.0, color))
+    }
+    pub fn tertiary_border(&self, color: Color32) -> Stroke {
+        self.borders.stroke(BorderRole::Tertiary, Stroke::new(1.0, color))
+    }
+    pub fn control_border_stroke(&self, color: Color32) -> Stroke {
+        self.borders.stroke(BorderRole::Control, Stroke::new(1.0, color))
+    }
+}
+
+/// Isolated widget tests restore the thread's custom theme even when an assertion fails.
+#[cfg(test)]
+pub(crate) fn scoped_tokens(tokens: Tokens) -> impl Drop {
+    struct Restore(Option<Custom>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            set_custom(self.0);
+        }
+    }
+    let restore = Restore(CUSTOM.get());
+    set_custom(Some(Custom { dark: is_dark(), tokens }));
+    restore
+}
+
 /// A theme file's palette and whether it is dark.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Custom {
@@ -239,6 +308,8 @@ pub struct IconColors {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Tokens {
+    /// Optional structural/control strokes. None retains each surface’s legacy styling.
+    pub borders: Borders,
     /// File/start presentation, with explicit foreground/background pairs.
     pub file_dim: Color32,
     pub file_recovery_well: Color32,
@@ -608,7 +679,7 @@ fn visuals(dark: bool) -> egui::Visuals {
     let mut v = if dark { egui::Visuals::dark() } else { egui::Visuals::light() };
     v.panel_fill = t.panel;
     v.window_fill = t.panel;
-    v.window_stroke = Stroke::new(1.0, t.border);
+    v.window_stroke = t.primary_border(t.border);
     v.extreme_bg_color = t.field;
     v.faint_bg_color = t.panel_header;
     v.override_text_color = Some(t.text);
@@ -617,13 +688,16 @@ fn visuals(dark: bool) -> egui::Visuals {
     v.widgets.active.weak_bg_fill = t.accent_soft;
     v.selection.bg_fill = t.accent_soft;
     v.selection.stroke = Stroke::new(1.0, t.accent);
-    v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, t.border);
+    v.widgets.noninteractive.bg_stroke = t.tertiary_border(t.border);
     v.widgets.noninteractive.fg_stroke = Stroke::new(1.0, t.text);
     v.widgets.inactive.fg_stroke = Stroke::new(1.0, t.text);
     v.widgets.hovered.weak_bg_fill = t.hover;
     v.widgets.hovered.bg_fill = t.hover;
     // egui uses the open-state fill for a movable window's active title bar.
     v.widgets.open.weak_bg_fill = t.panel_header;
+    for state in [&mut v.widgets.inactive, &mut v.widgets.hovered, &mut v.widgets.active, &mut v.widgets.open] {
+        state.bg_stroke = t.borders.stroke(BorderRole::Control, state.bg_stroke);
+    }
     v.window_corner_radius = egui::CornerRadius::same(t.radius_md);
     v.menu_corner_radius = egui::CornerRadius::same(t.radius_md);
     // Keep the existing 2/3 point egui shapes under the default 4 point small token.

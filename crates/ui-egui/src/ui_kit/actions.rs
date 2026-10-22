@@ -114,7 +114,7 @@ pub(super) fn footer_with_left(
         egui::CornerRadius { nw: 0, ne: 0, sw: corners.sw.saturating_sub(1), se: corners.se.saturating_sub(1) },
         t.dialog_footer,
     );
-    ui.painter().hline(band.x_range(), band.top(), egui::Stroke::new(1.0, t.dialog_rule));
+    ui.painter().hline(band.x_range(), band.top(), t.secondary_border(t.dialog_rule));
     scenario::publish_rect("dialog:footer", band);
     scenario::publish_count("dialog:ok:enabled", f64::from(ok_enabled && ui.is_enabled()));
     let inner = band.shrink2(vec2(t.space_12, t.space_10));
@@ -152,10 +152,13 @@ pub(super) fn footer_with_left(
                         } else {
                             t.control_fill
                         })
-                        .stroke(egui::Stroke::new(
-                            if primary && ok_enabled { 0.0 } else { 1.0 },
-                            if marked && !primary { t.form_primary } else { t.control_border },
-                        ))
+                        .stroke(if primary && ok_enabled {
+                            egui::Stroke::NONE
+                        } else if marked && !primary {
+                            egui::Stroke::new(1.0, t.form_primary)
+                        } else {
+                            t.control_border_stroke(t.control_border)
+                        })
                         .wrap_mode(egui::TextWrapMode::Extend)
                         .corner_radius(t.control_radius)
                         .min_size(vec2(if primary { t.space_24 * 3.0 } else { 0.0 }, t.form_button_height)),
@@ -213,7 +216,7 @@ pub(crate) struct PairButton<'a> {
 /// Equal-width secondary actions with optional icons and selected state. Tokens: `form_button_height, control_*, selected_bg, hover, font_label, text, icon/fill, accent, sketch_footer_icon_size, space_4/6/10`.
 pub(crate) fn button_pair(ui: &mut egui::Ui, key: &str, states: [bool; 2], buttons: [PairButton<'_>; 2]) -> (bool, bool) {
     let t = Tokens::get();
-    ui.painter().hline(ui.max_rect().x_range(), ui.cursor().top(), egui::Stroke::new(1.0, t.dialog_rule));
+    ui.painter().hline(ui.max_rect().x_range(), ui.cursor().top(), t.secondary_border(t.dialog_rule));
     let mut clicked = [false; 2];
     egui::Frame::NONE.inner_margin(egui::Margin::symmetric(t.space_10 as i8, t.space_6 as i8)).show(ui, |ui| {
         ui.horizontal(|ui| {
@@ -232,7 +235,7 @@ pub(crate) fn button_pair(ui: &mut egui::Ui, key: &str, states: [bool; 2], butto
                     } else {
                         t.control_fill
                     },
-                    egui::Stroke::new(1.0, t.control_border),
+                    t.control_border_stroke(t.control_border),
                     egui::StrokeKind::Inside,
                 );
                 let label = crate::i18n::tr_label(button.label);
@@ -417,7 +420,7 @@ pub(crate) fn icon_label_button(ui: &mut Ui, label: &str, icon: &str, enabled: b
                 rect,
                 t.control_radius,
                 if response.hovered() { t.hover } else { t.control_fill },
-                egui::Stroke::new(1.0, t.control_border),
+                t.control_border_stroke(t.control_border),
                 egui::StrokeKind::Inside,
             );
             let icon_rect =
