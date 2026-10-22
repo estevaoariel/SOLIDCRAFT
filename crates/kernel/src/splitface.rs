@@ -395,7 +395,10 @@ fn trace(face: &mt::Face, g: &Field, size: f64) -> Result<Vec<Chain>> {
             links.entry(y).or_default().push(x);
         }
     }
-    // Exact point on a crossed mesh edge: bisection along its parameter segment.
+    // Exact point on a crossed mesh edge: a root of the field along its parameter segment,
+    // bracketed (regula falsi with the Illinois step, bisecting when the bracket stops halving).
+    // Each value is a search of the tool; 48 bisection steps per crossed edge were nearly all of
+    // a join's time where a lofted wall runs close beside a bore (#4542).
     let exact = |k: (usize, usize)| -> Option<(mt::Point3, (f64, f64))> {
         let (ua, ub) = *node_uv.get(&k)?;
         // Each step searches the tool from where the last one found it: the points are close.
@@ -406,17 +409,49 @@ fn trace(face: &mt::Face, g: &Field, size: f64) -> Result<Vec<Chain>> {
             near.set(at);
             (val, uv)
         };
-        let (mut lo, mut hi) = (0.0, 1.0);
-        let s0 = f(0.0).0 >= 0.0;
-        for _ in 0..48 {
-            let mid = 0.5 * (lo + hi);
-            if (f(mid).0 >= 0.0) == s0 {
-                lo = mid;
-            } else {
-                hi = mid;
+        let (f0, f1) = (f(0.0).0, f(1.0).0);
+        // No value is farther from zero than its point is from the tool, so where the field
+        // crosses zero on this side its ends are no farther from zero, together, than the side
+        // is long. Ends farther than that change sign by a jump (past the edge of a bounded
+        // tool face the nearest point turns round it): no crossing to search for. Such sides
+        // were thousands of searches in a join beside a bore (#4542).
+        let (pa, pb) = (from_p3(surface.subs(ua.0, ua.1)), from_p3(surface.subs(ub.0, ub.1)));
+        if f0.abs() + f1.abs() > 4.0 * (pb - pa).len() + size * 1e-7 {
+            return None;
+        }
+        let s0 = f0 >= 0.0;
+        // Ends on one side (a corner exactly on the tool) or not found: the middle, which the
+        // check below turns away unless it is on the tool.
+        let mut at = 0.5;
+        if f0.is_finite() && f1.is_finite() && (f1 >= 0.0) != s0 {
+            let (mut lo, mut flo, mut hi, mut fhi) = (0.0, f0, 1.0, f1);
+            // Which end the last step moved (-1 low, 1 high), and steps that didn't halve it.
+            let (mut moved, mut slow) = (0i8, 0u8);
+            for _ in 0..64 {
+                let width = hi - lo;
+                let secant = (lo * fhi - hi * flo) / (fhi - flo);
+                at = if slow < 2 && secant.is_finite() && secant > lo && secant < hi { secant } else { 0.5 * (lo + hi) };
+                let v = f(at).0;
+                if !v.is_finite() || v.abs() <= size * 1e-10 || width <= 1e-12 {
+                    break;
+                }
+                if (v >= 0.0) == s0 {
+                    (lo, flo) = (at, v);
+                    if moved == -1 {
+                        fhi *= 0.5;
+                    }
+                    moved = -1;
+                } else {
+                    (hi, fhi) = (at, v);
+                    if moved == 1 {
+                        flo *= 0.5;
+                    }
+                    moved = 1;
+                }
+                slow = if hi - lo > 0.5 * width { slow + 1 } else { 0 };
             }
         }
-        let (val, uv) = f(0.5 * (lo + hi));
+        let (val, uv) = f(at);
         // A side whose ends were on the same side after all (a corner exactly on the tool).
         if !(val.abs() <= size * 1e-7) {
             return None;

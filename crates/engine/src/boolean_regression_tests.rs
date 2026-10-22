@@ -1244,3 +1244,24 @@ fn spline_ring_joins_onto_a_revolved_base() {
     assert_eq!(apart.model.state().bodies.len(), 2);
     assert!((joined - parts).abs() < 1e-4 * parts, "joined {joined}, base and ring {parts}");
 }
+
+/// A lofted duct joined flush onto a bored plate, its foot 0.2 mm from the bore's rim (posted
+/// on #4611 for #4542). Splitting the plate's top along the duct's wall searched thousands of
+/// mesh sides where the field only jumps sign past the wall's edge, and the join took over a
+/// minute and a half. It finishes as one body holding both: the duct stands on the plate, so
+/// their volumes add.
+#[test]
+fn duct_joins_flush_beside_a_bore() {
+    let mut script: Value = serde_json::from_str(include_str!("../../../examples/regressions/duct_on_bored_plate.json")).unwrap();
+    let s = replay_value(&script);
+    let bodies = &s.model.state().bodies;
+    assert_eq!(bodies.len(), 1);
+    assert!(bodies[0].body.validity().is_empty(), "{:?}", bodies[0].body.validity());
+    assert_eq!(bodies[0].body.shell_count(), 1);
+    let joined = volume(&s, "Plate");
+    script["commands"].as_array_mut().unwrap().pop();
+    let apart = replay_value(&script);
+    let parts: f64 = apart.model.state().bodies.iter().map(|b| solidcraft_kernel::measure(&b.body).unwrap().volume).sum();
+    assert_eq!(apart.model.state().bodies.len(), 2);
+    assert!((joined - parts).abs() < 1e-4 * parts, "joined {joined}, plate and duct {parts}");
+}
