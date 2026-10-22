@@ -1765,6 +1765,22 @@ fn clearance_diameter(size: &str, fit: &str) -> Option<f64> {
     }
 }
 
+/// The refusal for a thread designation `parse_metric_thread` does not know. A plain `M<d>` with
+/// a sane diameter but no ISO coarse pitch (M28, M7) gets two pitches to try: the largest common
+/// pitch up to about an eighth of the diameter, and the next finer one.
+fn unknown_metric_thread(t: &str, examples: &str) -> String {
+    const PITCHES: [f64; 9] = [2.0, 1.5, 1.25, 1.0, 0.75, 0.5, 0.35, 0.25, 0.2];
+    let diameter = t.trim().strip_prefix(['M', 'm']).and_then(|d| d.trim().parse::<f64>().ok());
+    if let Some(d) = diameter.filter(|d| d.is_finite() && *d > 0.2 && *d <= 1e4) {
+        let first = PITCHES.iter().position(|p| *p <= 0.12 * d).unwrap_or(PITCHES.len() - 1);
+        let pitches: Vec<String> = PITCHES.iter().skip(first).take(2).filter(|p| **p < d).map(|p| format!("M{d}x{p}")).collect();
+        if !pitches.is_empty() {
+            return format!("M{d} has no coarse ISO pitch: give one, e.g. {}", pitches.join(" or "));
+        }
+    }
+    format!("unknown thread `{t}` (ISO metric, like {examples})")
+}
+
 fn hole(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "solid.hole";
     // At sketch points: the holes go perpendicular to the sketch and follow its points.
@@ -1802,7 +1818,7 @@ fn hole(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(t) = &thread
         && solidcraft_doc::parse_metric_thread(t).is_none()
     {
-        return Err(bad(cmd, format!("unknown thread `{t}` (ISO metric, like M6 or M6x0.75)")));
+        return Err(bad(cmd, unknown_metric_thread(t, "M6 or M6x0.75")));
     }
     // A position given as length expressions (#1678), say `["leg_h*0.4", "width/2", "t"]`: kept,
     // so the hole follows the parameters; drilled where they evaluate now.
@@ -2195,7 +2211,7 @@ fn thread(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(t) = &designation
         && solidcraft_doc::parse_metric_thread(t).is_none()
     {
-        return Err(bad(cmd, format!("unknown thread `{t}` (ISO metric, like M8 or M8x1)")));
+        return Err(bad(cmd, unknown_metric_thread(t, "M8 or M8x1")));
     }
     let length = expr(p, "length");
     if let Some(l) = &length {
