@@ -683,6 +683,17 @@ fn main() -> eframe::Result {
         safe_mode = true;
         notes.push(format!("The last {failed_starts} launches stopped before the window opened, so this one is in safe mode."));
     }
+    // Crashes leave a report in the crash folder (solidcraft_engine::crash, docs/crash-reports.md).
+    let crashed = solidcraft_engine::crash::default_dir()
+        .map(|dir| {
+            let build = solidcraft_engine::crash::Build {
+                version: solidcraft_ui_egui::help::VERSION,
+                commit: solidcraft_ui_egui::help::COMMIT,
+                built: solidcraft_ui_egui::help::BUILD_DATE,
+            };
+            solidcraft_engine::crash::install(dir, build)
+        })
+        .unwrap_or_default();
     // The graphics API and anti-aliasing: the saved ones, or ones tried from Preferences (#4015).
     let mut graphics = startup::graphics_start(graphics().as_ref(), safe_mode);
     if let Some(file) = graphics.rewrite.take() {
@@ -699,6 +710,18 @@ fn main() -> eframe::Result {
         }
     }
     notes.extend(graphics.note());
+    // The last launch crashed on an API Preferences warns about on this system: back to Automatic.
+    let last_crashed = crashed.iter().any(|r| startup::launch_crashed(&r.kind));
+    if !safe_mode
+        && graphics.trial == startup::Trial::None
+        && let Some(auto) = startup::after_crash(&graphics.saved, last_crashed, || {
+            startup::apis_that_freeze(cfg!(target_os = "windows"), startup::hardware_adapters_once)
+        })
+    {
+        notes.push(startup::after_crash_note(&graphics.saved.backend));
+        remember_backend(&auto.backend);
+        graphics.saved = auto;
+    }
     let current = graphics.current().clone();
     let trying = matches!(graphics.trial, startup::Trial::Trying(_));
     // The software renderer: safe mode, SOLIDCRAFT_RENDERER, or kept after the GPU hung on every
@@ -720,17 +743,6 @@ fn main() -> eframe::Result {
     let samples = if safe_mode { MSAA } else { current.msaa };
     let wgpu_options = wgpu_options(cpu_renderer, (!safe_mode).then_some(current.backend.as_str()));
     let depth_bits = if !safe_mode && startup::float_depth_everywhere(&wgpu_options) { FLOAT_DEPTH_BITS } else { DEPTH_BITS };
-    // Crashes leave a report in the crash folder (solidcraft_engine::crash, docs/crash-reports.md).
-    let crashed = solidcraft_engine::crash::default_dir()
-        .map(|dir| {
-            let build = solidcraft_engine::crash::Build {
-                version: solidcraft_ui_egui::help::VERSION,
-                commit: solidcraft_ui_egui::help::COMMIT,
-                built: solidcraft_ui_egui::help::BUILD_DATE,
-            };
-            solidcraft_engine::crash::install(dir, build)
-        })
-        .unwrap_or_default();
     // A crash in native code (a graphics driver) says where it happened: the exception and the
     // module on Windows, and on every system the startup step the app was in.
     #[cfg(target_os = "windows")]

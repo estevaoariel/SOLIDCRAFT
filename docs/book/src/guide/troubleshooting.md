@@ -100,7 +100,9 @@ previous ones. If the new settings leave the window white or black, crash it, or
 next start goes back to the previous settings and says so, so a choice can't leave SolidCraft
 stuck. A change made over the control channel (`ui.prefs`) is saved at once, without a trial.
 On AMD integrated graphics, Preferences warns when Direct3D 12 is chosen: there it has frozen
-the whole screen, at times until the computer was restarted, which no trial start can undo.
+the whole screen, at times until the computer was restarted, which no trial start can undo. If
+SolidCraft crashes there on Direct3D 12 after you kept it (opening a design, say), the next
+start goes back to Automatic and says so; Preferences can choose Direct3D 12 again.
 
 In any version, you can also open a Command Prompt and start SolidCraft from it:
 

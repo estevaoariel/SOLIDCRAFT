@@ -351,6 +351,33 @@ pub fn apis_that_freeze(windows: bool, hardware: impl FnOnce(eframe::wgpu::Backe
     if !found.is_empty() && found.iter().all(HardwareAdapter::hangs_on_d3d12) { vec!["dx12"] } else { Vec::new() }
 }
 
+/// The saved settings to start with after the last launch crashed (`crashed`) on `saved`: an API
+/// Preferences warns about on this system (`freezes`, [`apis_that_freeze`]) goes back to Automatic.
+/// AMD's integrated GPUs crashed on D3D12 once a design opened, after the start and its trial had
+/// gone fine and the user kept it (#4015). `None`: they stay.
+pub fn after_crash(saved: &GraphicsChoice, crashed: bool, freezes: impl FnOnce() -> Vec<&'static str>) -> Option<GraphicsChoice> {
+    let chosen: Vec<&str> = saved.backend.split(',').map(str::trim).filter(|b| !b.is_empty() && *b != "auto").collect();
+    if !crashed || chosen.is_empty() {
+        return None;
+    }
+    let freezes = freezes();
+    chosen.iter().any(|b| freezes.contains(b)).then(|| GraphicsChoice { backend: "auto".into(), msaa: saved.msaa })
+}
+
+/// The notice when [`after_crash`] put `backend` (a backend's name) back to Automatic.
+pub fn after_crash_note(backend: &str) -> String {
+    format!(
+        "SolidCraft closed unexpectedly on {}, which can freeze this computer's graphics, so it went back to Automatic. Preferences can choose it again.",
+        api_name(backend)
+    )
+}
+
+/// Whether a crash report `kind` ([`solidcraft_engine::crash::Summary`]) means the launch ended:
+/// a panic nothing caught or an unclean exit, not a command or kernel call recovered from.
+pub fn launch_crashed(kind: &str) -> bool {
+    matches!(kind, "panic" | "unclean_exit")
+}
+
 /// [`hardware_adapters`], keeping D3D12's: the start asks for them ([`choose_backends`]), then
 /// Preferences ([`apis_that_freeze`]).
 pub fn hardware_adapters_once(backends: eframe::wgpu::Backends) -> Vec<HardwareAdapter> {
@@ -745,6 +772,22 @@ mod tests {
         assert!(apis_that_freeze(true, with(vec![NVIDIA])).is_empty());
         assert!(apis_that_freeze(true, with(Vec::new())).is_empty(), "WARP alone");
         assert!(apis_that_freeze(false, |_| panic!("only Windows has D3D12")).is_empty());
+    }
+
+    #[test]
+    fn a_crash_on_an_api_that_freezes_this_gpu_goes_back_to_automatic() {
+        let d3d12 = GraphicsChoice { backend: "dx12".into(), msaa: 1 };
+        let freezes = || vec!["dx12"];
+        assert_eq!(after_crash(&d3d12, true, freezes), Some(GraphicsChoice { backend: "auto".into(), msaa: 1 }), "anti-aliasing stays");
+        assert_eq!(after_crash(&d3d12, false, freezes), None, "no crash");
+        assert_eq!(after_crash(&d3d12, true, Vec::new), None, "D3D12 doesn't freeze this GPU");
+        let vulkan = GraphicsChoice { backend: "vulkan".into(), msaa: 4 };
+        assert_eq!(after_crash(&vulkan, true, freezes), None);
+        let auto = GraphicsChoice { backend: "auto".into(), msaa: 4 };
+        assert_eq!(after_crash(&auto, true, || panic!("Automatic isn't probed")), None);
+        assert!(launch_crashed("unclean_exit") && launch_crashed("panic"));
+        assert!(!launch_crashed("command_panic") && !launch_crashed("kernel_panic_recovered"));
+        assert!(after_crash_note("dx12").contains("on Direct3D 12"));
     }
 
     #[test]
