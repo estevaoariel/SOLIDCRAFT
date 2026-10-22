@@ -1943,13 +1943,24 @@ fn quad(sc: &mut GpuScene, q: &[Vec3; 4], fill: Color32, edge: Color32, through:
     }
 }
 
+/// What the highlight draws of the hovered item. A face or a plane is lit the same wherever on it
+/// the pointer is, so the point under the pointer is left out: the highlight (a whole scanned
+/// mesh is one face) is not built again at every move of the pointer across it.
+fn hover_drawn(hover: &Option<Hit>) -> String {
+    match hover {
+        Some(Hit::Face { body, index, .. }) => format!("face {body:?} {index}"),
+        Some(Hit::Plane { name, .. }) => format!("plane {name:?}"),
+        other => format!("{other:?}"),
+    }
+}
+
 fn highlight_geometry_key(app: &SolveApp) -> u64 {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     let selected = app.highlighted();
     app.session.revision.hash(&mut h);
     (std::sync::Arc::as_ptr(&crate::open_meshing::shown_world(app)) as usize).hash(&mut h);
     serde_json::to_string(&selected).unwrap_or_default().hash(&mut h);
-    format!("{:?}", app.viewport.hover).hash(&mut h);
+    hover_drawn(&app.viewport.hover).hash(&mut h);
     app.viewport.hover_feature.hash(&mut h);
     app.viewport.hover_bodies.hash(&mut h);
     // Which mesh lights a face follows how the model draws its body (see `shown_mesh`).
@@ -5356,6 +5367,31 @@ mod tests {
         let mut app = SolveApp::new(s, crate::Services::default());
         app.ui.show_origin = false;
         app
+    }
+
+    /// Moving the pointer across a face keeps its highlight (a scanned mesh is one face of
+    /// millions of triangles): only another face, edge or plane builds it again.
+    #[test]
+    fn a_face_highlight_is_kept_while_the_pointer_moves_across_the_face() {
+        let mut app = cylinder_app();
+        let hover = |index: usize, x: f64| Hit::Face { body: "Body1".into(), index, point: Vec3::new(x, 0.0, 5.0) };
+        app.viewport.hover = Some(hover(0, 10.0));
+        let key = highlight_key(&app);
+        let before = build_highlight(&app).merged();
+        assert!(!before.tris.is_empty(), "the face is lit");
+        app.viewport.hover = Some(hover(0, 9.0));
+        assert_eq!(highlight_key(&app), key, "the same face, another point");
+        assert_eq!(build_highlight(&app).merged().tris, before.tris);
+        app.viewport.hover = Some(hover(1, 9.0));
+        assert_ne!(highlight_key(&app), key, "another face");
+        app.viewport.hover = Some(Hit::Edge { body: "Body1".into(), index: 0, mid: Vec3::ZERO });
+        let edge = highlight_key(&app);
+        app.viewport.hover = Some(Hit::Edge { body: "Body1".into(), index: 0, mid: Vec3::X });
+        assert_ne!(highlight_key(&app), edge, "an edge's middle picks which part of it is lit");
+        app.viewport.hover = Some(Hit::Plane { name: "XY".into(), point: Vec3::ZERO });
+        let plane = highlight_key(&app);
+        app.viewport.hover = Some(Hit::Plane { name: "XY".into(), point: Vec3::X });
+        assert_eq!(highlight_key(&app), plane, "the same plane, another point");
     }
 
     #[test]
