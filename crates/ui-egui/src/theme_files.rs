@@ -26,6 +26,33 @@ pub const MAX_COLORS: usize = 512;
 const MAX_NAME: usize = 80;
 pub const MAX_CUSTOM: usize = 64;
 
+// Older exports contain colours for retired window bands and procedural icons.
+// Discard them at import; they have no token, renderer, or exported setting now.
+const RETIRED_COLORS: &[&str] = &[
+    "icon_fill",
+    "heading_bg",
+    "subheading_bg",
+    "app_bar_icon",
+    "icons.sheet",
+    "icons.sheet_2",
+    "icons.sheet_light",
+    "icons.sheet_line",
+    "icons.glint",
+    "icons.folder",
+    "icons.plane",
+    "icons.fold",
+    "icons.stripe",
+    "icons.sky",
+    "icons.floor",
+    "icons.paint",
+    "icons.axes",
+    "icons.access",
+    "icons.draft",
+    "icons.curvature",
+    "icons.interference",
+    "icons.warning",
+];
+
 /// The palette a theme starts from.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -53,15 +80,15 @@ pub struct ThemeFile {
 
 /// The settable colours: a key, and where it lives in [`Tokens`]. `one` keys take a colour,
 /// `many` keys a list of exactly as many colours as the token has; `icons.*` are the colours
-/// icons draw of their own. The destructuring below fails to build when a token is added
+/// viewport glyphs draw of their own. The destructuring below fails to build when a token is added
 /// without a key here, so every colour stays themeable.
 macro_rules! theme_keys {
     (one: [$($one:ident),* $(,)?], many: [$($many:ident),* $(,)?],
-     icons_one: [$($ione:ident),* $(,)?], icons_many: [$($imany:ident),* $(,)?] $(,)?) => {
+     icons: [$($ione:ident),* $(,)?] $(,)?) => {
         /// Every key a theme file may set, in the order an export writes them.
         pub fn keys() -> Vec<&'static str> {
             let mut k = vec![$(stringify!($one),)* $(stringify!($many),)*];
-            k.extend([$(concat!("icons.", stringify!($ione)),)* $(concat!("icons.", stringify!($imany)),)*]);
+            k.extend([$(concat!("icons.", stringify!($ione)),)*]);
             k
         }
 
@@ -70,7 +97,6 @@ macro_rules! theme_keys {
                 $(stringify!($one) => Some(std::slice::from_mut(&mut t.$one)),)*
                 $(stringify!($many) => Some(&mut t.$many[..]),)*
                 $(concat!("icons.", stringify!($ione)) => Some(std::slice::from_mut(&mut t.icons.$ione)),)*
-                $(concat!("icons.", stringify!($imany)) => Some(&mut t.icons.$imany[..]),)*
                 _ => None,
             }
         }
@@ -91,7 +117,7 @@ macro_rules! theme_keys {
                 form_checkbox_height: _, form_button_height: _, sketch_palette_width: _, sketch_mode_size: _, sketch_mode_radius: _, sketch_mode_border: _,
                 sketch_palette_alpha: _, sketch_mode_tint: _, sketch_footer_icon_size: _, font_section_tracking: _,
             } = t;
-            let IconColors { $($ione: _,)* $($imany: _,)* } = &t.icons;
+            let IconColors { $($ione: _,)* } = &t.icons;
         }
     };
 }
@@ -99,12 +125,12 @@ macro_rules! theme_keys {
 theme_keys! {
     one: [
         app_bar, toolbar, panel, panel_header, border, text, text_dim, accent, accent_soft, sketch_accent, error, warning,
-        icon, icon_fill, timeline, hover, sel_face, sel_edge, sel_edge_rim, hover_edge, hover_edge_halo, sel_profile,
+        icon, timeline, hover, sel_face, sel_edge, sel_edge_rim, hover_edge, hover_edge_halo, sel_profile,
         sel_profile_edge, hover_profile, hover_profile_edge, sel_vertex, origin_plane, origin_plane_edge, origin_plane_hover,
         origin_point, axis_x, axis_y, axis_z, construction_plane, construction_geom, body, body_edge, manipulator,
         preview_add, preview_new, preview_sketch, preview_cut, cube_face, cube_border, cube_text, cube_hover, viewport_top,
         viewport_bottom, grid, grid_major, body_selected, sketch, sketch_fixed, sketch_locked, dimension, dimension_driven,
-        sketch_point, sketch_point_free, dialog_bg, dialog_border, chip, heading_bg, subheading_bg, section_cap,
+        sketch_point, sketch_point_free, dialog_bg, dialog_border, chip, section_cap,
         profile_fill, glyph_bg, glyph_edge, glyph_text, overlay, rubber_band, app_bar_text, app_bar_hover, timeline_item,
         timeline_item_error, timeline_marker, field, box_window, box_crossing, sketch_projected, sketch_lost,
         sketch_construction, sketch_centerline, bend_up, bend_down, interference,
@@ -113,12 +139,8 @@ theme_keys! {
         app_bar_hover_button, app_bar_hover_strong, app_bar_tab_active,
         form_ink, form_dim, form_primary, form_error, form_error_fill, form_success, form_success_fill, dialog_body, dialog_footer, dialog_rule, control_fill, control_border, dialog_label, selected_ink, selected_bg,
     ],
-    many: [triad, gizmo, continuity, app_bar_icon, logo],
-    icons_one: [
-        sheet, sheet_2, sheet_light, sheet_line, highlight, glint, folder, plane, fold, stripe, sky, floor, interference,
-        warning, agent, marker_halo,
-    ],
-    icons_many: [paint, axes, access, draft, curvature],
+    many: [triad, gizmo, continuity, logo],
+    icons: [highlight, agent, marker_halo],
 }
 
 /// `#rrggbb` or `#rrggbbaa` (alpha not premultiplied).
@@ -172,7 +194,7 @@ pub fn from_value(v: &Value) -> Result<ThemeFile, String> {
         Some("light") => Base::Light,
         _ => return Err("`base` must be \"dark\" or \"light\"".into()),
     };
-    let src = match v.get("colors") {
+    let mut src = match v.get("colors") {
         None => serde_json::Map::new(),
         Some(Value::Object(o)) => o.clone(),
         Some(_) => return Err("`colors` must be an object of colour names and values".into()),
@@ -180,6 +202,7 @@ pub fn from_value(v: &Value) -> Result<ThemeFile, String> {
     if src.len() > MAX_COLORS {
         return Err(format!("`colors` has more than {MAX_COLORS} entries"));
     }
+    src.retain(|key, _| !RETIRED_COLORS.contains(&key.as_str()));
     let mut probe = Tokens::light();
     let mut bad = Vec::new();
     for (k, c) in &src {
@@ -307,16 +330,6 @@ mod tests {
         }
     }
 
-    /// Title and section bands stand out from a dialog in every built-in theme, as in Dark and
-    /// Light (`heading_bands_are_darker_than_the_dialog_in_order`).
-    #[test]
-    fn built_in_themes_keep_heading_bands_in_order() {
-        let luma = |c: Color32| u32::from(c.r()) * 3 + u32::from(c.g()) * 6 + u32::from(c.b());
-        for t in builtin().iter().map(resolve) {
-            assert!(luma(t.heading_bg) < luma(t.subheading_bg) && luma(t.subheading_bg) < luma(t.dialog_bg), "{t:?}");
-        }
-    }
-
     #[test]
     fn a_short_file_sets_only_its_colours() {
         let t = parse(r##"{"format":"solidcraft-theme/1","name":"My Theme!","base":"light","colors":{"panel":"#102030","triad":["#ff0000","#00ff00","#0000ff80"]}}"##).unwrap();
@@ -325,6 +338,20 @@ mod tests {
         assert_eq!(p.panel, Color32::from_rgb(0x10, 0x20, 0x30));
         assert_eq!(p.triad[2], Color32::from_rgba_unmultiplied(0, 0, 255, 0x80));
         assert_eq!(p.text, Tokens::light().text);
+    }
+
+    #[test]
+    fn older_exports_keep_active_overrides_without_retired_ui_settings() {
+        let mut file = export("Older theme", Base::Dark, &Tokens::dark());
+        let colors = file.get_mut("colors").and_then(Value::as_object_mut).unwrap();
+        colors.insert("panel".into(), json!("#102030"));
+        for key in RETIRED_COLORS {
+            colors.insert((*key).into(), json!("#abcdef"));
+        }
+        let imported = from_value(&file).unwrap();
+        assert_eq!(resolve(&imported).panel, Color32::from_rgb(0x10, 0x20, 0x30));
+        assert_eq!(imported.colors.len(), keys().len());
+        assert!(RETIRED_COLORS.iter().all(|key| !imported.colors.contains_key(*key)));
     }
 
     #[test]

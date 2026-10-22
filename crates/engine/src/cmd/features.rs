@@ -182,6 +182,16 @@ pub fn auto_operation(s: &Session, p: &Value) -> Option<&'static str> {
     auto_operation_in(s, p, true)
 }
 
+impl Session {
+    /// Whether a cut or intersect that names no bodies takes part in every body of `st`: the
+    /// active component has no body of its own while the model has some (a sketch in the
+    /// assembly's root cutting through its parts, #1234). The command and its preview both ask
+    /// this, so the preview never refuses a cut the command makes (#3085).
+    pub fn cut_takes_every_body(&self, st: &solidcraft_doc::ModelState) -> bool {
+        !st.bodies.is_empty() && !st.bodies.iter().any(|b| self.doc.model_body_component(b) == self.active_component)
+    }
+}
+
 fn auto_operation_in(s: &Session, p: &Value, world_faces: bool) -> Option<&'static str> {
     let symmetric = p.get("to").is_none() && str_(p, "direction").is_some_and(|d| d.eq_ignore_ascii_case("symmetric"));
     // Imported face groups can belong to a child of an empty active component.
@@ -503,10 +513,8 @@ fn add_feature_in(s: &mut Session, p: &Value, kind: FeatureKind, world: bool) ->
         && !primitive
         && (matches!(str_(p, "operation").and_then(Operation::parse), Some(Operation::Cut | Operation::Intersect))
             || matches!(&kind, FeatureKind::Extrude { operation: Operation::Cut | Operation::Intersect, .. }))
-        && {
-            let st = s.model.state();
-            !st.bodies.is_empty() && !st.bodies.iter().any(|b| s.doc.model_body_component(b) == s.active_component)
-        } {
+        && s.cut_takes_every_body(&s.model.state())
+    {
         vec!["*".to_string()]
     } else {
         participants

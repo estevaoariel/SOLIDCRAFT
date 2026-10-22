@@ -70,7 +70,7 @@ pointer movement orbits without a mouse button, and vertical scrolling zooms. Ot
 retain their saved two-finger scroll preference; camera motion is available through
 `view.navigate` and modifier-aware `ui.move` automation.
 
-M11 precursor: File → Export Current View as DXF exports shown placed bodies from the current
+M11 precursor: File → Export Current View as DXF exports shown placed bodies and sketches from the current
 camera as a 2D millimetre drawing, with hidden edges omitted or dashed. Vector occlusion splits
 partly hidden edges and includes curved silhouettes. Repeated part meshes and triangle
 hierarchies are shared; bounded desktop preparation and occlusion use up to eight workers.
@@ -329,7 +329,24 @@ completed drawings publish atomically. The browser still exports synchronously.
 - Saved projections from a removed strip retain their geometry and report the lost
   reference. Explicitly reselect the wall to repair that projection.
 
+## Workspace layouts (#2029)
+
+- General preferences save Floating or Compact using the universal UI containers.
+  Compact joins the workspace selector and ribbon, docks the content-hugging Browser
+  flush beneath them with a square join, and opens tool sheets below the compass.
+  Sheets remain draggable, rounding all corners away from their right dock; footer
+  backgrounds follow the same corners. A separate preference hides ribbon icon labels
+  for a shorter ribbon in either layout.
+  Assistant keeps the outermost edge and History keeps its chosen dock. Switching
+  retains the active tool, camera, selection and design; system windows and menus
+  keep their existing behavior.
+
 ## View navigation
+
+- Navigation has an opt-in Free orbit preference for mouse and 3D-mouse rotation through
+  both poles with roll. It defaults off, preserving existing preset snapping and pole limits.
+  The SolidWorks face menu offers Normal to Selection (`view.normal_to`), shared with Look At
+  and Ctrl+8, including repeat-to-flip, preserving scale and projection.
 
 - Desktop Ctrl/Cmd +/- and 0 change or reset the saved UI scale. The scale slider keeps
   its layout stable during a drag and applies the selected scale on release.

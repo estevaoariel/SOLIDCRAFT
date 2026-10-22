@@ -97,6 +97,27 @@ fn ribbon(h: &mut Harness, requested: &mut BTreeMap<String, bool>) {
     }
 }
 
+fn assistant(h: &mut Harness, requested: &mut BTreeMap<String, bool>) {
+    use solidcraft_ui_egui::agent_chat::{Item, backend::ToolStatus};
+    h.call("ui.agent_chat", json!({"features":true,"open":true,"picker":false,"width":440}));
+    h.app.agent_chat.items = vec![
+        Item::User { text: "Round the plate edges".into(), image: false, pictures: vec![], context: Default::default(), files: vec![] },
+        Item::Tool {
+            id: "audit".into(),
+            title: "solid.fillet".into(),
+            kind: "other".into(),
+            status: Some(ToolStatus::Failed),
+            output: Some("Use a smaller radius".into()),
+        },
+        Item::Approval { id: 1, title: "Export plate.step".into(), tool: "export".into(), answer: None },
+    ];
+    h.frames(3);
+    collect(h, "Assistant composer, tool and approval", requested);
+    h.app.agent_chat.items.clear();
+    h.call("ui.agent_chat", json!({"open":false}));
+    h.frames(2);
+}
+
 fn panels(h: &mut Harness, requested: &mut BTreeMap<String, bool>) {
     for command in solidcraft_engine::command_specs() {
         let panel = solidcraft_ui_egui::dialogs::Dialog::for_command(&h.app, command.id).is_some()
@@ -147,6 +168,7 @@ fn requested_menu_icons_have_artwork_and_match_manifest() {
     h.frames(3);
     let mut requested = BTreeMap::new();
     collect(&mut h, "initial browser and timeline", &mut requested);
+    assistant(&mut h, &mut requested);
 
     ribbon(&mut h, &mut requested);
     click(&mut h, "appbar:file");

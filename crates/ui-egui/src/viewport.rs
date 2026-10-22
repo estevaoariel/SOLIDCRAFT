@@ -2,6 +2,7 @@
 //! view and the navigation bar.
 
 use crate::fonts::RichTextExt as _;
+use crate::ui_kit::{Container, Surface};
 use egui::{Align2, Color32, FontId, Pos2, Rect, Sense, Shape, Stroke, pos2, vec2};
 use serde_json::json;
 use solidcraft_engine::Sel;
@@ -965,9 +966,9 @@ pub fn origin_planes(app: &SolveApp) -> Vec<(&'static str, Vec3, [Vec3; 4])> {
     if !app.origin_visible() {
         return Vec::new();
     }
-    // While the Origin is hidden, Create Sketch brings the planes back: then every plane;
-    // otherwise only those not hidden one by one.
-    let creating = !app.ui.show_origin && app.picking_sketch_plane();
+    // While the Origin is hidden, a dialog picking a plane brings the planes back: then every
+    // plane; otherwise only those not hidden one by one.
+    let creating = !app.ui.show_origin && app.picking_plane();
     origin_quads(origin_size(app.cam.half_height()))
         .into_iter()
         .filter(|(n, _, _)| creating || !app.session.visibility.hidden_origin.iter().any(|h| h == n))
@@ -1964,7 +1965,7 @@ fn highlight_geometry_key(app: &SolveApp) -> u64 {
     app.preview.effective_replaced().hash(&mut h);
     app.preview.rolled_back.hash(&mut h);
     app.origin_visible().hash(&mut h);
-    app.picking_sketch_plane().hash(&mut h);
+    app.picking_plane().hash(&mut h);
     app.session.visibility.hidden_origin.hash(&mut h);
     app.session.visibility.hidden_bodies.hash(&mut h);
     app.session.visibility.hidden_occurrences.hash(&mut h);
@@ -2021,7 +2022,7 @@ pub(crate) fn build_highlight(app: &SolveApp) -> GpuScene {
     };
     let mut planes: Vec<(String, [Vec3; 4], Color32)> = origin_planes(app).into_iter().map(|(n, _, q)| (n.to_string(), q, t.origin_plane)).collect();
     planes.extend(construction_quads(app).into_iter().map(|(n, _, q)| (n, q, t.construction_plane)));
-    let through = app.picking_sketch_plane();
+    let through = app.picking_plane();
     for (name, q, base) in &planes {
         let (selected, hovered) = plane_state(name);
         let fill = if hovered {
@@ -2425,7 +2426,8 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         || (primary_nav.is_some() && primary_down)
         || mode.is_some()
         || app.viewport.axis_drag.is_some()
-        || app.viewport.spin;
+        || app.viewport.spin
+        || app.cam_anim.is_some();
     let hits = hover.filter(|_| inside && app.viewport.boxsel.is_none() && !navigating).map(|p| pick_cached(app, &proj, p)).unwrap_or_default();
     // The Fillet and Chamfer window resolves its own corners: the nearest sketch point to a
     // corner drawn from the origin is the fixed origin, which ends no two curves.
@@ -3095,7 +3097,7 @@ fn paint_toast(ui: &egui::Ui, free: Rect, text: String, error: bool, computing: 
     if !r.is_finite() {
         return None;
     }
-    let frame = egui::Frame::NONE.fill(t.panel).stroke(Stroke::new(1.0, t.border)).corner_radius(t.radius_md).shadow(t.shell_shadow());
+    let frame = Container::new(ui.ctx(), Surface::Toast).frame(ui.ctx(), t.panel, crate::frame::Side::Left);
     ui.painter().add(frame.paint(r.shrink(frame.stroke.width)));
     let dot = pos2(r.left() + 14.0, r.center().y);
     if computing {
@@ -3618,7 +3620,22 @@ pub(crate) fn scene_palette(dark: bool, mode: crate::theme::ColorVision) -> soli
 pub(crate) fn refresh_layout(app: &mut SolveApp, scale: f32) {
     if let Some(rect) = app.viewport.rect {
         let docks = crate::shell::covered_rects(app);
-        let content = crate::shell::content_rect(app, rect);
+        let mut content = crate::shell::content_rect(app, rect);
+        // The full-height Assistant reserves control space, while rendering and picking
+        // keep the original viewport projection. Ordinary feature dialogs do not move controls.
+        if app.ui.layout == crate::shell::LayoutMode::Floating
+            && crate::agent_chat::shown(app)
+            && app.agent_chat.open
+            && !app.preferences.agent_chat_popped
+            && !app.preferences.agent_chat_minimized
+            && let Some(chat) = app.agent_chat.panel_rect.filter(|r| r.is_finite() && r.is_positive())
+        {
+            if app.preferences.agent_chat_side == "left" {
+                content.min.x = (chat.right() + crate::shell::SHELL_GAP).clamp(content.left(), content.right());
+            } else {
+                content.max.x = (chat.left() - crate::shell::SHELL_GAP).clamp(content.left(), content.right());
+            }
+        }
         app.viewport.layout = Some(if app.ui.layout == crate::shell::LayoutMode::Docked {
             crate::viewport_layout::Layout::new(rect, &docks, scale, app.preferences.navigator_style)
         } else {
@@ -3737,8 +3754,13 @@ fn signed_axis_view(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect) {
         && let Some((name, d, _, _)) = tips.get(i)
     {
         crate::scenario::publish_handle(&format!("axis_view_hover:{name}"), hover.unwrap_or(c));
-        ui.interact(Rect::from_center_size(hover.unwrap_or(c), vec2(2.0, 2.0)), ui.id().with("axis_view_tip"), Sense::hover())
-            .on_hover_text(format!("View from {}. Click again to reverse. Drag to orbit; hold Shift to snap.", name.to_uppercase()));
+        ui.interact(Rect::from_center_size(hover.unwrap_or(c), vec2(2.0, 2.0)), ui.id().with("axis_view_tip"), Sense::hover()).on_hover_text(
+            format!(
+                "View from {}. Click again to reverse. Drag to orbit{}.",
+                name.to_uppercase(),
+                if app.preferences.free_orbit { "" } else { "; hold Shift to snap" }
+            ),
+        );
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         if ui.input(|i| i.pointer.primary_clicked()) {
             let frame = app.cam.to_frame(*d);
@@ -3755,7 +3777,7 @@ fn signed_axis_view(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect) {
     let hr = ui.interact(home, ui.id().with("axis_view_home"), Sense::click());
     // The home button sits in its own small round chip.
     painter.circle(home.center(), 12.0, t.overlay.gamma_multiply(if hr.hovered() { 0.9 } else { 0.5 }), Stroke::new(1.0, t.border));
-    icons::paint(&painter, home, "home", t.icon, if hr.hovered() { t.accent_soft } else { t.overlay }, t.accent);
+    icons::paint_icon(&painter, home, "home", f32::from(t.icon.a()) / 255.0);
     // Cursors: a grabbing hand while orbiting, an open hand over the circle, a pointer on the home
     // chip (the axis ends keep their pointing hand).
     if hr.hovered() {
@@ -3793,18 +3815,10 @@ pub(crate) fn nearest_quarter_turn(yaw: f64) -> f64 {
 /// Turn the view to face the selected planar face or plane, else the active sketch; asked again
 /// while it already faces it, from the other side (#1886).
 pub fn look_at_selection(app: &mut SolveApp) {
-    let target = app.session.selection.iter().find_map(|s| match s {
-        Sel::Face { body, index, point } => crate::dialogs::planar_face(&app.session, body, *index).map(|(_, n)| (*point, n)),
-        Sel::Plane { name } => solidcraft_engine::geom::Plane::named(name).map(|p| (p.origin, p.normal())),
-        _ => None,
-    });
-    match target {
-        Some((p, n)) => {
-            let mut to = app.cam.looking_from(crate::dialogs::facing(app, n, true));
-            to.target = p;
-            app.animate_to(to);
-        }
-        None => crate::dialogs::look_at_sketch_again(app),
+    if solidcraft_engine::find_command("view.normal_to").is_some_and(|command| command.info(&app.session).disabled_reason.is_none()) {
+        app.start("view.normal_to");
+    } else {
+        crate::dialogs::look_at_sketch_again(app);
     }
 }
 
@@ -3820,6 +3834,8 @@ fn nav_bar(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect) {
                 crate::i18n::tr("nav.touchpad.orbit")
             } else if app.preferences.nav == crate::prefs::OPENSCAD_NAV {
                 "Orbit (left drag on empty space; Shift+left drag box-selects)"
+            } else if app.preferences.free_orbit {
+                "Orbit (right drag)"
             } else {
                 "Orbit (right drag; hold Shift to snap)"
             },
@@ -3853,7 +3869,8 @@ fn nav_bar(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect) {
         || menu_open;
     let mut painter = ui.painter_at(rect);
     painter.set_opacity(if active || app.preferences.navigator_style == crate::prefs::NavigatorStyle::Axes { 1.0 } else { 0.45 });
-    painter.rect(bar, t.radius_md, t.overlay, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
+    let surface = Container::new(ui.ctx(), Surface::Navigation).frame(ui.ctx(), t.overlay, crate::frame::Side::Left);
+    painter.add(surface.paint(bar.shrink(surface.stroke.width)));
     let columns = ((bar.width() - 10.0) / 30.0).round().clamp(1.0, 10.0) as usize;
     for (i, (icon, tip)) in items.iter().enumerate() {
         let br = Rect::from_min_size(
@@ -3873,7 +3890,7 @@ fn nav_bar(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect) {
         if active || resp.hovered() {
             painter.rect_filled(br, t.radius_sm, if active { t.accent_soft } else { t.hover });
         }
-        icons::paint(&painter, br.shrink(4.0), icon, t.icon, t.icon_fill, t.accent);
+        icons::paint_icon(&painter, br.shrink(4.0), icon, f32::from(t.icon.a()) / 255.0);
         if resp.on_hover_text(*tip).clicked() {
             let toggle = |m: NavMode, cur: Option<NavMode>| if cur == Some(m) { None } else { Some(m) };
             match *icon {
@@ -3908,12 +3925,13 @@ fn view_menu(app: &mut SolveApp, ui: &mut egui::Ui, button: Rect) -> bool {
     let t = crate::theme::Tokens::get();
     // A preset dropdown extends beyond this menu; let it consume its own clicks.
     let child_popup_open = egui::Popup::is_any_open(ui.ctx());
-    let area = crate::frame::area(egui::Id::new("sc_view_menu"))
+    let area = Container::new(ui.ctx(), Surface::Popup)
+        .area(egui::Id::new("sc_view_menu"))
         .order(egui::Order::Foreground)
         .pivot(Align2::RIGHT_BOTTOM)
         .fixed_pos(button.right_top() - vec2(0.0, 6.0));
     let r = area.show(ui.ctx(), |ui| {
-        egui::Frame::popup(ui.style()).show(ui, |ui| {
+        Container::popup_frame(ui.style()).show(ui, |ui| {
             ui.set_width(220.0);
             ui.label(egui::RichText::new(crate::i18n::tr_label("VIEW")).semibold().color(crate::theme::Tokens::get().text).size(t.font_caption));
             ui.label(app.tr("ui.graphics_preset"));
@@ -5264,6 +5282,14 @@ mod tests {
         app.viewport.spin = false;
         hover_frame(&mut app, &ctx, vec![]);
         assert!(app.viewport.hover.is_some());
+        app.cam_anim = Some(solidcraft_engine::render::CameraAnim::new(app.cam, app.cam, 0.0));
+        for _ in 0..3 {
+            hover_frame(&mut app, &ctx, vec![]);
+            assert!(app.viewport.hover.is_none());
+        }
+        app.cam_anim = None;
+        hover_frame(&mut app, &ctx, vec![]);
+        assert!(app.viewport.hover.is_some());
     }
 
     /// After a close-up refines a body (#1320), the model draws it from the refined plan (on the
@@ -6241,8 +6267,8 @@ mod tests {
         assert_eq!(h.app.cam.target, before.target);
         assert_eq!(h.app.cam.distance, before.distance);
         orbit_drag(&mut h.app, rect, 0.0, 0.0, None, false, false);
-        assert!((h.app.cam.yaw - 1.6).abs() < 1e-6);
         h.frames(2);
+        assert!((h.app.cam.yaw - 1.6).abs() < 1e-6);
         assert!(h.app.viewport.orbit_free.is_none());
     }
 
@@ -6858,6 +6884,26 @@ mod grid_plane_tests {
         app.ui.show_origin = true;
         let sc = build_highlight(&app);
         assert!(sc.xray.is_empty() && !sc.guide_trans.is_empty(), "outside Create Sketch the planes are depth-tested");
+    }
+
+    /// #2581: a dialog waiting for a plane (here Mirror's plane) shows the origin planes in the
+    /// view as Create Sketch does, so the plane can be picked there; while it waits for its
+    /// objects it doesn't.
+    #[test]
+    fn a_dialog_picking_a_plane_shows_the_origin_planes() {
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
+        app.run("solid.box", json!({"length":40,"width":40,"height":40})).unwrap();
+        app.ui.show_origin = false;
+        app.start("solid.mirror");
+        let d = app.dialog.as_ref().expect("the Mirror dialog");
+        assert_eq!(d.active, 0, "it starts on its objects");
+        assert!(!app.picking_plane() && origin_planes(&app).is_empty(), "no planes while picking objects");
+        app.dialog.as_mut().unwrap().active = 1;
+        assert!(app.picking_plane());
+        assert_eq!(origin_planes(&app).len(), 3, "every origin plane is offered for the mirror plane");
+        assert!(!build_highlight(&app).xray.is_empty(), "drawn through the model");
+        app.dialog = None;
+        assert!(origin_planes(&app).is_empty());
     }
 
     /// Primary rolls a live preview back for reselect, but not while a manipulator is dragged

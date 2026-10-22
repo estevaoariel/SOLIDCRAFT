@@ -34,8 +34,8 @@ fn browser_card_shrinks_and_scrolls_without_covering_history() {
 
     h.call("ui.set", json!({"layout":"docked"}));
     h.settle();
-    assert!(rect_of("browser:card").is_none());
-    assert_eq!(h.app.viewport.rect.unwrap().left(), 250.0);
+    assert_eq!(rect_of("browser:card").unwrap().left(), 0.0);
+    assert_eq!(h.app.viewport.rect.unwrap().left(), 0.0);
     assert!(drawn_rows().iter().all(|(_, rect, _, _)| rect.height() == 26.0));
     h.call("ui.set", json!({"layout":"floating"}));
     h.app.tree.collapsed.insert("c0".into());
@@ -138,8 +138,8 @@ fn tiny_floating_windows_never_panic() {
     }
 }
 
-/// Both shell layouts share one tree and one saved width. Docked can switch its card
-/// back into a column; Floating keeps its card when the overlay preference is cleared.
+/// Both shell layouts share one content-hugging tree and one saved width.
+/// The translucency preference never creates a second browser renderer.
 #[test]
 fn one_browser_keeps_its_resized_width_across_layouts_and_overlay_preferences() {
     let mut h = Harness::new();
@@ -150,15 +150,11 @@ fn one_browser_keeps_its_resized_width_across_layouts_and_overlay_preferences() 
             h.app.preferences.browser_float = overlay;
             h.app.preferences.browser_width = 310.0;
             h.settle();
-            let card = mode == LayoutMode::Floating || overlay;
-            assert_eq!(rect_of("browser:card").is_some(), card);
+            assert!(rect_of("browser:card").is_some());
             assert_eq!(crate::scenario::handles("browser:header").len(), 1, "only one browser header");
             assert_eq!(drawn_rows().iter().filter(|(name, ..)| name == "Untitled").count(), 1, "only one tree");
-            if card {
-                assert!((rect_of("browser:card").unwrap().width() - 310.0).abs() < 1.0);
-            } else {
-                assert_eq!(h.app.viewport.rect.unwrap().left(), 310.0);
-            }
+            assert!((rect_of("browser:card").unwrap().width() - 310.0).abs() < 1.0);
+            assert_eq!(h.app.viewport.rect.unwrap().left(), 0.0);
             let rail = handle_at("left-browser-rail").unwrap();
             h.call("ui.drag", json!({"x0":rail.x,"y0":rail.y,"x1":rail.x+60.0,"y1":rail.y,"steps":6}));
             h.settle();
@@ -167,7 +163,7 @@ fn one_browser_keeps_its_resized_width_across_layouts_and_overlay_preferences() 
             h.app.ui.layout = LayoutMode::Docked;
             h.app.preferences.browser_float = false;
             h.settle();
-            assert!((h.app.viewport.rect.unwrap().left() - width).abs() < 1.0, "the column uses the card's saved width");
+            assert!((rect_of("browser:card").unwrap().width() - width).abs() < 1.0, "compact keeps the saved width");
         }
     }
 }
@@ -213,12 +209,8 @@ fn resizing_browser_card_and_column_persists_width_including_floating_preference
         h.settle();
         let width = h.app.preferences.browser_width;
         assert!(width > crate::prefs::DEFAULT_BROWSER_WIDTH + 40.0, "{mode:?}, float={float}, width={width}");
-        if mode == LayoutMode::Floating || float {
-            assert!((rect_of("browser:card").unwrap().width() - width).abs() < 1.0);
-            assert_eq!(h.app.viewport.rect.unwrap(), before, "the card leaves the projection intact");
-        } else {
-            assert!((h.app.viewport.rect.unwrap().left() - width).abs() < 1.0);
-        }
+        assert!((rect_of("browser:card").unwrap().width() - width).abs() < 1.0);
+        assert_eq!(h.app.viewport.rect.unwrap(), before, "browser resizing leaves the projection intact");
         let mut restored = SolveApp::new(Default::default(), Default::default());
         restored.load_prefs(&h.app.prefs());
         assert_eq!(restored.preferences.browser_width, width);
@@ -235,7 +227,7 @@ fn browser_width_rejects_hostile_preferences_and_tiny_windows_still_fit() {
     assert_eq!(browser_width(f32::MAX), MAX_BROWSER_WIDTH);
     let available = Rect::from_min_size(Pos2::ZERO, vec2(100.0, 300.0));
     for top_gap in [0.0, crate::shell::SHELL_GAP] {
-        let bounds = floating_bounds(available, None, MAX_BROWSER_WIDTH, top_gap);
+        let bounds = panel_bounds(available, None, MAX_BROWSER_WIDTH, top_gap);
         assert!(available.contains_rect(bounds));
     }
 }
@@ -269,7 +261,7 @@ fn collapsed_rail_shares_header_hover_inset_and_expands_from_its_whole_card() {
             let bounds = Rect::from_min_size(Pos2::ZERO, vec2(600.0, 700.0));
             let draw = |app: &mut SolveApp, events| {
                 crate::test_support::frame(&ctx, egui::RawInput { screen_rect: Some(bounds), events, ..Default::default() }, |ui| {
-                    floating(app, ui, bounds);
+                    browser(app, ui);
                 })
             };
             for _ in 0..3 {
