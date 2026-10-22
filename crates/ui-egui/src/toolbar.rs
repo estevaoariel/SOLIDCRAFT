@@ -1424,7 +1424,14 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                             }
                             for c in cmds {
                                 let info = c.info(&app.session);
-                                let response = crate::ui_kit::command_menu_button(ui, c.id, c.label, c.icon, c.shortcut.unwrap_or(""), info.enabled);
+                                let response = crate::ui_kit::command_menu_button(
+                                    ui,
+                                    c.id,
+                                    c.label,
+                                    c.icon,
+                                    &crate::keymap::display_for(app, c.id).unwrap_or_default(),
+                                    info.enabled,
+                                );
                                 crate::scenario::publish_handle(&format!("toolbar:{}", c.id), response.rect.center());
                                 if response.clicked() {
                                     app.start(c.id);
@@ -1519,8 +1526,7 @@ fn ribbon_tooltip(app: &SolveApp, response: egui::Response, command: &solidcraft
         let name = app.tr_label(command.label);
         let name_width =
             ui.painter().layout_no_wrap(name.to_string(), crate::fonts::semibold(crate::theme::Tokens::get().font_heading), t.text).size().x;
-        let key_width = command
-            .shortcut
+        let key_width = crate::keymap::display_for(app, command.id)
             .map(|key| {
                 ui.painter().layout_no_wrap(key.to_string(), FontId::monospace(crate::theme::Tokens::get().font_body), t.text_dim).size().x + 24.0
             })
@@ -1529,7 +1535,7 @@ fn ribbon_tooltip(app: &SolveApp, response: egui::Response, command: &solidcraft
         ui.horizontal(|ui| {
             let (rect, _) = ui.allocate_exact_size(vec2(name_width, 20.0), Sense::hover());
             ribbon_text(ui, rect.center(), name, t.font_heading, t.text, true);
-            if let Some(key) = command.shortcut {
+            if let Some(key) = crate::keymap::display_for(app, command.id) {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     egui::Frame::NONE
                         .fill(t.panel_header)
@@ -1600,8 +1606,7 @@ fn dropdown_width(app: &SolveApp, ui: &egui::Ui, cmds: &[&'static solidcraft_eng
     cmds.iter()
         .map(|c| {
             let label = ui.painter().layout_no_wrap(app.tr_label(c.label).to_string(), font.clone(), t.text).size().x;
-            let key = c
-                .shortcut
+            let key = crate::keymap::display_for(app, c.id)
                 .map(|k| ui.painter().layout_no_wrap(k.to_string(), FontId::monospace(t.font_button), t.text).size().x + 24.0)
                 .unwrap_or(0.0);
             6.0 + 20.0 + 8.0 + label + key + 30.0
@@ -1638,7 +1643,8 @@ fn dropdown_row(app: &SolveApp, ui: &mut egui::Ui, c: &'static solidcraft_engine
     let mut row = crate::ui_kit::MenuItem::new(c.id, &label, c.icon);
     row.enabled = info.enabled;
     row.highlighted = hot;
-    row.shortcut = c.shortcut.unwrap_or("");
+    let shortcut = crate::keymap::display_for(app, c.id).unwrap_or_default();
+    row.shortcut = &shortcut;
     row.paint(ui, rect, &resp, 26.0);
     if hot {
         crate::scenario::publish_handle(&format!("dropdown_hot:{}", c.id), rect.center());

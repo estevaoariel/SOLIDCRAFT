@@ -285,6 +285,7 @@ fn window_page<const INDEX: usize>(ui: &mut egui::Ui, app: &mut SolveApp) {
         crate::scenario::publish_target("prefs:page:Selection", rect);
     }
     if app.prefs_window.section != INDEX {
+        crate::keymap::stop_capture(app);
         app.keymap.read_only = false;
         app.prefs_window.section = INDEX;
     }
@@ -1531,6 +1532,22 @@ pub(crate) fn reveal_preference(h: &mut crate::scenario::Harness, handle: &str) 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn changing_preferences_page_cancels_shortcut_capture() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.home.open = false;
+        h.call("ui.prefs", json!({"open":"Keyboard Shortcuts"}));
+        h.step(&json!({"click":{"handle":"keymap:filter"}})).unwrap();
+        h.step(&json!({"text":"solid.extrude"})).unwrap();
+        h.step(&json!({"click":{"handle":"keymap:capture:solid.extrude"}})).unwrap();
+        h.step(&json!({"key":"M","pressed":true})).unwrap();
+        h.step(&json!({"click":{"handle":"prefs:page:General"}})).unwrap();
+        assert!(!crate::keymap::capturing(&h.app));
+        assert_eq!(crate::keymap::effective(&h.app, "solid.extrude").as_deref(), Some("E"));
+        h.frames(65);
+        assert_eq!(crate::keymap::effective(&h.app, "solid.extrude").as_deref(), Some("E"));
+    }
+
     #[test]
     fn display_quality_cards_show_increasing_facet_detail() {
         let mut app = super::SolveApp::new(Default::default(), Default::default());
