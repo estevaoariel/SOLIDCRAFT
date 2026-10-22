@@ -1745,6 +1745,7 @@
   "ui.space_mouse_circles_help": "A körök azt mutatják, mit küld az eszköz kalibrálás után. A próbamodell azt mutatja, mit tesz ezzel a nézet a megfordítás, sebesség és tengelykiosztás után.",
   "ui.space_mouse_dead_zone": "Holtsáv",
   "ui.space_mouse_dead_zone_tip": "Mennyit kell mozdítani a kupakot, mielőtt a nézet mozdulna, a teljes elmozdulás arányában. Növelje, ha a nézet sodródik, miközben a kupak nyugalomban van.",
+  "ui.space_mouse_driver_fallback": "Egyelőre a spacenavd-n át olvassa: magát az eszközt nem sikerült megnyitni.",
   "ui.space_mouse_forget": "Kalibrálás elfelejtése",
   "ui.space_mouse_ghost_left_viewport": "Bal nézet",
   "ui.space_mouse_ghost_left_window": "Bal ablak",

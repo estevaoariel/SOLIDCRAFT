@@ -1658,6 +1658,18 @@ fn space_mouse_section(app: &mut SolveApp, ui: &mut egui::Ui) {
                     }
                 });
             }
+            // The setting says what was asked for; this says what is read when that is not it: Direct or
+            // Automatic with the daemon read because the device itself could not be opened.
+            if let Some(present) = app.space_mouse.drivers
+                && present.spacenavd
+                && present.direct
+                && app.preferences.space_mouse_driver != SpaceMouseDriver::Spacenavd
+                && app.space_mouse.device.as_deref() == Some("spacenavd")
+            {
+                ui_kit::row(ui, "", |ui| {
+                    ui_kit::text(ui, app.tr("ui.space_mouse_driver_fallback"), ui_kit::Text::Note("space_mouse_driver_fallback"));
+                });
+            }
             ui_kit::row(ui, app.tr("ui.space_mouse_calibration"), |ui| {
                 let device = app.space_mouse.device.clone();
                 let saved = device.as_ref().is_some_and(|device| app.preferences.space_mouse_calibrations.contains_key(device));
@@ -2699,6 +2711,45 @@ mod tests {
         assert!(card.app.prefs_window.open && prefs.app.prefs_window.open);
         assert!(wizard(&card).is_some(), "the card's button started it");
         assert_eq!(wizard(&card), wizard(&prefs), "and Preferences' starts the same one");
+    }
+
+    /// Direct or Automatic chosen with the device present but unopenable: the daemon is read, and Preferences
+    /// says so next to the setting instead of leaving "Direct (hidraw)" to imply the device. Spacenavd
+    /// chosen, or the device itself read, or no device: no such note.
+    #[test]
+    fn preferences_says_when_the_daemon_is_read_instead_of_the_device_asked_for() {
+        use SpaceMouseDriver::{Automatic, Direct, Spacenavd};
+        let note = crate::i18n::tr("ui.space_mouse_driver_fallback").to_string();
+        assert!(note.contains("spacenavd") && note.contains("could not be opened"));
+        for catalog in crate::i18n::LOCALES {
+            let text = crate::i18n::Locale::for_language(catalog.id).text("ui.space_mouse_driver_fallback");
+            assert!(text.chars().count() > 20 && text != "ui.space_mouse_driver_fallback", "{}", catalog.id);
+        }
+        // (driver, device being read, device present) and whether the note shows.
+        let cases = [
+            (Direct, "spacenavd", true, true),
+            (Automatic, "spacenavd", true, true),
+            (Spacenavd, "spacenavd", true, false),
+            (Direct, "hid 046d:c62b", true, false),
+            (Automatic, "hid 046d:c62b", true, false),
+            (Direct, "spacenavd", false, false),
+        ];
+        for (driver, device, direct, shown) in cases {
+            let mut h = crate::scenario::Harness::new();
+            h.app.home.open = false;
+            h.app.preferences.space_mouse_driver = driver;
+            h.app.space_mouse.device = Some(device.into());
+            h.app.space_mouse.drivers = Some(crate::space_mouse::DriversPresent { spacenavd: true, direct });
+            h.call("ui.resize", serde_json::json!({"width": 1600, "height": 4000}));
+            crate::prefs::open_at(&mut h.app, 1);
+            h.frames(6);
+            scroll_to_and_click(&mut h, "dialog:section:3D mouse");
+            h.frames(30);
+            let up = h.widget(&note).is_some();
+            assert_eq!(up, shown, "{driver:?} reading {device}, device present {direct}");
+            // Whatever it says, no calibration moves between keys.
+            assert!(h.app.preferences.space_mouse_calibrations.is_empty());
+        }
     }
 
     /// The circles' tooltips come from the one function the rows' labels come from, after a

@@ -1759,6 +1759,7 @@
   "ui.space_mouse_driver": "Драйвер 3D-мыши",
   "ui.space_mouse_driver_auto": "Автоматически",
   "ui.space_mouse_driver_direct": "Напрямую (hidraw)",
+  "ui.space_mouse_driver_fallback": "Пока чтение идёт через spacenavd: само устройство открыть не удалось.",
   "ui.space_mouse_driver_only_direct": "Чтение напрямую с устройства; spacenavd не запущен",
   "ui.space_mouse_driver_only_spacenavd": "Чтение через spacenavd, других вариантов нет",
   "ui.space_mouse_forget": "Забыть калибровку",

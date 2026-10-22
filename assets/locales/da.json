@@ -1753,6 +1753,7 @@
   "ui.space_mouse_circles_help": "Cirklerne viser, hvad enheden sender efter kalibrering. Testmodellen viser, hvad visningen gør med det efter omvending, hastighed og akseplacering.",
   "ui.space_mouse_dead_zone": "Dødzone",
   "ui.space_mouse_dead_zone_tip": "Hvor langt knoppen skal bevæges, før visningen reagerer, angivet som en andel af dens fulde bevægelse. Øg værdien, hvis visningen bevæger sig, når du ikke rører knoppen.",
+  "ui.space_mouse_driver_fallback": "Læser indtil videre gennem spacenavd: selve enheden kunne ikke åbnes.",
   "ui.space_mouse_forget": "Nulstil kalibrering",
   "ui.space_mouse_ghost_left_viewport": "Venstre visningsområde",
   "ui.space_mouse_ghost_left_window": "Venstre vindue",

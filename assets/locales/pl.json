@@ -1753,6 +1753,7 @@
   "ui.space_mouse_circles_help": "Koła pokazują, co urządzenie wysyła po kalibracji. Model testowy pokazuje, co widok z tym robi po odwróceniu, prędkości i przypisaniu osi.",
   "ui.space_mouse_dead_zone": "Strefa martwa",
   "ui.space_mouse_dead_zone_tip": "O ile trzeba wychylić nakładkę, zanim widok się poruszy, jako część pełnego wychylenia. Zwiększ, jeśli widok dryfuje przy nieruszanej nakładce.",
+  "ui.space_mouse_driver_fallback": "Na razie odczyt przez spacenavd: samego urządzenia nie udało się otworzyć.",
   "ui.space_mouse_forget": "Zapomnij kalibrację",
   "ui.space_mouse_ghost_left_viewport": "Lewy widok",
   "ui.space_mouse_ghost_left_window": "Lewe okno",

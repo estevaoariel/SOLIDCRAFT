@@ -1767,6 +1767,7 @@
   "ui.space_mouse_driver": "3D 鼠标驱动",
   "ui.space_mouse_driver_auto": "自动",
   "ui.space_mouse_driver_direct": "直接 (hidraw)",
+  "ui.space_mouse_driver_fallback": "目前改通过 spacenavd 读取：无法打开设备本身。",
   "ui.space_mouse_driver_only_direct": "直接读取设备（spacenavd 未运行）",
   "ui.space_mouse_driver_only_spacenavd": "通过 spacenavd 读取（没有其他方式）",
   "ui.space_mouse_forget": "清除校准",

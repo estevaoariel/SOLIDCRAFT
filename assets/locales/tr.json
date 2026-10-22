@@ -1759,6 +1759,7 @@
   "ui.space_mouse_driver": "3B fare sürücüsü",
   "ui.space_mouse_driver_auto": "Otomatik",
   "ui.space_mouse_driver_direct": "Doğrudan (hidraw)",
+  "ui.space_mouse_driver_fallback": "Şimdilik spacenavd üzerinden okunuyor: aygıtın kendisi açılamadı.",
   "ui.space_mouse_driver_only_direct": "Aygıt doğrudan okunuyor; spacenavd çalışmıyor",
   "ui.space_mouse_driver_only_spacenavd": "spacenavd üzerinden okunuyor, tek seçenek bu",
   "ui.space_mouse_forget": "Kalibrasyonu unut",

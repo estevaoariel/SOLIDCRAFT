@@ -1759,6 +1759,7 @@
   "ui.space_mouse_driver": "Controlador del ratón 3D",
   "ui.space_mouse_driver_auto": "Automático",
   "ui.space_mouse_driver_direct": "Directo (hidraw)",
+  "ui.space_mouse_driver_fallback": "Leyendo por ahora a través de spacenavd: no se pudo abrir el dispositivo.",
   "ui.space_mouse_driver_only_direct": "Lectura directa del dispositivo; spacenavd no se está ejecutando",
   "ui.space_mouse_driver_only_spacenavd": "Lectura mediante spacenavd, la única opción disponible",
   "ui.space_mouse_forget": "Olvidar calibración",

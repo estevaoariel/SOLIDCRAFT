@@ -1767,6 +1767,7 @@
   "ui.space_mouse_driver": "3D mouse driver",
   "ui.space_mouse_driver_auto": "Automatic",
   "ui.space_mouse_driver_direct": "Direct (hidraw)",
+  "ui.space_mouse_driver_fallback": "Reading through spacenavd for now: the device itself could not be opened.",
   "ui.space_mouse_driver_only_direct": "Reading the device directly; spacenavd is not running",
   "ui.space_mouse_driver_only_spacenavd": "Reading through spacenavd, the only way available",
   "ui.space_mouse_forget": "Forget calibration",

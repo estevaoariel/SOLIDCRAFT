@@ -1745,6 +1745,7 @@
   "ui.space_mouse_circles_help": "圓圈顯示裝置在校準後送出的內容。測試模型顯示檢視在反向、速度與軸指定之後如何處理它。",
   "ui.space_mouse_dead_zone": "死區",
   "ui.space_mouse_dead_zone_tip": "檢視開始移動前搖桿帽需要移動的距離，以其全行程的比例表示。如果搖桿帽靜止時檢視仍在漂移，請調大。",
+  "ui.space_mouse_driver_fallback": "目前改透過 spacenavd 讀取：無法開啟裝置本身。",
   "ui.space_mouse_forget": "清除校準",
   "ui.space_mouse_ghost_left_viewport": "視埠左側",
   "ui.space_mouse_ghost_left_window": "視窗左側",

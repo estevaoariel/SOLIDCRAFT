@@ -1767,6 +1767,7 @@
   "ui.space_mouse_driver": "3Dマウスのドライバー",
   "ui.space_mouse_driver_auto": "自動",
   "ui.space_mouse_driver_direct": "直接 (hidraw)",
+  "ui.space_mouse_driver_fallback": "いまは spacenavd 経由で読み取っています。デバイス自体を開けませんでした。",
   "ui.space_mouse_driver_only_direct": "デバイスを直接読み取り中（spacenavd は起動していません）",
   "ui.space_mouse_driver_only_spacenavd": "spacenavd 経由で読み取り中（他の方法はありません）",
   "ui.space_mouse_forget": "キャリブレーションを削除",

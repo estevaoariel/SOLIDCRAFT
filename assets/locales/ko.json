@@ -1759,6 +1759,7 @@
   "ui.space_mouse_driver": "3D 마우스 드라이버",
   "ui.space_mouse_driver_auto": "자동",
   "ui.space_mouse_driver_direct": "직접 (hidraw)",
+  "ui.space_mouse_driver_fallback": "지금은 spacenavd를 통해 읽는 중입니다. 장치 자체를 열 수 없었습니다.",
   "ui.space_mouse_driver_only_direct": "장치를 직접 읽는 중 (spacenavd가 실행 중이 아님)",
   "ui.space_mouse_driver_only_spacenavd": "spacenavd로 읽는 중 (다른 방법이 없음)",
   "ui.space_mouse_forget": "보정 삭제",

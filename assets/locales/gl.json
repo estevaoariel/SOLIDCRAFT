@@ -1759,6 +1759,7 @@
   "ui.space_mouse_driver": "Controlador do rato 3D",
   "ui.space_mouse_driver_auto": "Automático",
   "ui.space_mouse_driver_direct": "Directo (hidraw)",
+  "ui.space_mouse_driver_fallback": "Lendo polo de agora a través de spacenavd: non se puido abrir o dispositivo.",
   "ui.space_mouse_driver_only_direct": "Lectura directa do dispositivo; spacenavd non está en execución",
   "ui.space_mouse_driver_only_spacenavd": "Lectura mediante spacenavd, a única opción dispoñible",
   "ui.space_mouse_forget": "Esquecer a calibración",

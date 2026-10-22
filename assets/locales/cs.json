@@ -1759,6 +1759,7 @@
   "ui.space_mouse_driver": "Ovladač 3D myši",
   "ui.space_mouse_driver_auto": "Automaticky",
   "ui.space_mouse_driver_direct": "Přímo (hidraw)",
+  "ui.space_mouse_driver_fallback": "Zatím se čte přes spacenavd: zařízení samotné se nepodařilo otevřít.",
   "ui.space_mouse_driver_only_direct": "Zařízení se čte přímo; spacenavd neběží",
   "ui.space_mouse_driver_only_spacenavd": "Čte se přes spacenavd, jiná možnost není",
   "ui.space_mouse_forget": "Zapomenout kalibraci",

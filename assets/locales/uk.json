@@ -1759,6 +1759,7 @@
   "ui.space_mouse_driver": "Драйвер 3D-миші",
   "ui.space_mouse_driver_auto": "Автоматично",
   "ui.space_mouse_driver_direct": "Напряму (hidraw)",
+  "ui.space_mouse_driver_fallback": "Наразі читання йде через spacenavd: сам пристрій відкрити не вдалося.",
   "ui.space_mouse_driver_only_direct": "Читання напряму з пристрою; spacenavd не запущено",
   "ui.space_mouse_driver_only_spacenavd": "Читання через spacenavd, інших варіантів немає",
   "ui.space_mouse_forget": "Забути калібрування",

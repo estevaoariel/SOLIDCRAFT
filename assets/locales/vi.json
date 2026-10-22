@@ -1753,6 +1753,7 @@
   "ui.space_mouse_circles_help": "Các vòng tròn cho thấy thiết bị gửi gì sau khi hiệu chuẩn. Mô hình thử cho thấy chế độ xem làm gì với nó, sau đảo chiều, tốc độ và gán trục.",
   "ui.space_mouse_dead_zone": "Vùng chết",
   "ui.space_mouse_dead_zone_tip": "Núm điều khiển phải di chuyển bao xa thì góc nhìn mới di chuyển, tính theo tỷ lệ hành trình tối đa. Hãy tăng giá trị này nếu góc nhìn bị trôi khi núm đang đứng yên.",
+  "ui.space_mouse_driver_fallback": "Tạm thời đọc qua spacenavd: không mở được chính thiết bị.",
   "ui.space_mouse_forget": "Xóa hiệu chuẩn",
   "ui.space_mouse_ghost_left_viewport": "Khung nhìn bên trái",
   "ui.space_mouse_ghost_left_window": "Cửa sổ bên trái",

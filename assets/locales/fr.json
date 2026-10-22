@@ -1765,6 +1765,7 @@
   "ui.space_mouse_driver": "Pilote de la souris 3D",
   "ui.space_mouse_driver_auto": "Automatique",
   "ui.space_mouse_driver_direct": "Direct (hidraw)",
+  "ui.space_mouse_driver_fallback": "Lecture via spacenavd pour l'instant : l'appareil lui-même n'a pas pu être ouvert.",
   "ui.space_mouse_driver_only_direct": "Lecture directe du périphérique ; spacenavd n'est pas lancé",
   "ui.space_mouse_driver_only_spacenavd": "Lecture via spacenavd, seule possibilité disponible",
   "ui.space_mouse_forget": "Oublier le calibrage",

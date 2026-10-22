@@ -1745,6 +1745,7 @@
   "ui.space_mouse_circles_help": "Lingkaran menunjukkan apa yang dikirim perangkat setelah kalibrasi. Model uji menunjukkan apa yang dilakukan tampilan dengannya, setelah pembalikan, kecepatan, dan penetapan sumbu.",
   "ui.space_mouse_dead_zone": "Zona mati",
   "ui.space_mouse_dead_zone_tip": "Seberapa jauh cap harus bergerak sebelum tampilan bergerak, sebagai bagian dari total jangkauannya. Naikkan jika tampilan bergeser saat cap diam.",
+  "ui.space_mouse_driver_fallback": "Sementara dibaca lewat spacenavd: perangkatnya sendiri tidak dapat dibuka.",
   "ui.space_mouse_forget": "Lupakan kalibrasi",
   "ui.space_mouse_ghost_left_viewport": "Viewport kiri",
   "ui.space_mouse_ghost_left_window": "Jendela kiri",

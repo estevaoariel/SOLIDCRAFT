@@ -1745,6 +1745,7 @@
   "ui.space_mouse_circles_help": "Cercurile arată ce trimite dispozitivul după calibrare. Modelul de test arată ce face vizualizarea cu acestea, după inversare, viteză și atribuirea axelor.",
   "ui.space_mouse_dead_zone": "Zonă moartă",
   "ui.space_mouse_dead_zone_tip": "Cât trebuie să se miște capacul înainte ca vizualizarea să se miște, ca fracțiune din cursa completă. Măriți-o dacă vizualizarea derivă cât capacul este în repaus.",
+  "ui.space_mouse_driver_fallback": "Deocamdată se citește prin spacenavd: dispozitivul în sine nu a putut fi deschis.",
   "ui.space_mouse_forget": "Uită calibrarea",
   "ui.space_mouse_ghost_left_viewport": "Viewport stânga",
   "ui.space_mouse_ghost_left_window": "Fereastră stânga",

@@ -1745,6 +1745,7 @@
   "ui.space_mouse_circles_help": "Cirklarna visar vad enheten skickar efter kalibrering. Testmodellen visar vad vyn gör med det, efter inversion, hastighet och axeltilldelning.",
   "ui.space_mouse_dead_zone": "Dödzon",
   "ui.space_mouse_dead_zone_tip": "Hur långt knappen måste röra sig innan vyn gör det, som andel av dess fulla rörelse. Höj den om vyn driver medan knappen vilar.",
+  "ui.space_mouse_driver_fallback": "Läser tills vidare via spacenavd: själva enheten kunde inte öppnas.",
   "ui.space_mouse_forget": "Glöm kalibrering",
   "ui.space_mouse_ghost_left_viewport": "Vyn vänster",
   "ui.space_mouse_ghost_left_window": "Fönster vänster",

@@ -1753,6 +1753,7 @@
   "ui.space_mouse_circles_help": "Bulatan menunjukkan apa yang dihantar peranti selepas penentukuran. Model ujian menunjukkan apa yang dilakukan paparan dengannya, selepas songsangan, kelajuan dan peruntukan paksi.",
   "ui.space_mouse_dead_zone": "Zon mati",
   "ui.space_mouse_dead_zone_tip": "Sejauh mana penutup perlu bergerak sebelum pandangan bergerak, sebagai bahagian daripada julat penuhnya. Naikkan jika pandangan hanyut semasa penutup dalam keadaan rehat.",
+  "ui.space_mouse_driver_fallback": "Buat masa ini dibaca melalui spacenavd: peranti itu sendiri tidak dapat dibuka.",
   "ui.space_mouse_forget": "Lupakan penentukuran",
   "ui.space_mouse_ghost_left_viewport": "Viewport kiri",
   "ui.space_mouse_ghost_left_window": "Tetingkap kiri",
