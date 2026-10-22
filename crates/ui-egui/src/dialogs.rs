@@ -3872,10 +3872,13 @@ pub(crate) fn profile_indices(ss: &solidcraft_engine::doc::SolvedSketch, sel: &P
         ProfileSel::OffsetBoundaries { .. } | ProfileSel::WholeBoundaries { .. } => {
             solidcraft_engine::doc::profile_selection_indices(ss, sel).unwrap_or_default()
         }
-        ProfileSel::Curves { loops } => loops
+        ProfileSel::Curves { loops, holes } => loops
             .iter()
-            .filter_map(|l| {
-                solidcraft_engine::doc::profile_selection_indices(ss, &ProfileSel::Curves { loops: vec![l.clone()] }).ok()?.first().copied()
+            .enumerate()
+            .flat_map(|(n, l)| {
+                // A loop picked without holes also takes in islands drawn inside it since (#4558).
+                let holes = holes.as_ref().and_then(|holes| holes.get(n)).map(|loop_holes| vec![loop_holes.clone()]);
+                solidcraft_engine::doc::profile_selection_indices(ss, &ProfileSel::Curves { loops: vec![l.clone()], holes }).unwrap_or_default()
             })
             .collect(),
         ProfileSel::Points { points } => points.iter().filter_map(|q| solidcraft_engine::doc::sketch::profile_at_point(ps, *q)).collect(),

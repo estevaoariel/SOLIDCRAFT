@@ -114,7 +114,17 @@ pub enum ProfileSel {
     /// curves cut them (order and repeats don't matter; see `sketch::profile_by_curves`). Found
     /// again on every evaluation, so stable across parameter changes; no match or several is
     /// an error, never another profile.
-    Curves { loops: Vec<Vec<String>> },
+    ///
+    /// `holes`, when given, has one entry per loop: the hole loops its profile had when it was
+    /// picked. A hole the profile has now that is not among them (an island a later edit put
+    /// inside, such as a face's projected outline once the loop is drawn round it) is filled:
+    /// the profiles inside it are used too (#4558). Without `holes` (picks saved before they
+    /// were recorded), islands stay holes.
+    Curves {
+        loops: Vec<Vec<String>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        holes: Option<Vec<Vec<Vec<String>>>>,
+    },
     /// Complete current boundaries of topology-aware analytic offset associations.
     /// The local association identity survives retirement and resurrection of arc roles.
     OffsetBoundaries { associations: Vec<String> },

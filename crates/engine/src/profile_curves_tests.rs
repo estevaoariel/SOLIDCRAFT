@@ -82,7 +82,7 @@ fn a_profile_picked_by_curves_follows_a_parameter_change() {
 fn a_point_pick_is_stored_by_curves() {
     let mut s = tray();
     run(&mut s, "solid.extrude", json!({"sketch": "Tray", "profiles": [{"point": [25, 10]}], "distance": 10}));
-    let ProfileSel::Curves { loops } = extrude_kind(&s) else { panic!("{:?}", extrude_kind(&s)) };
+    let ProfileSel::Curves { loops, .. } = extrude_kind(&s) else { panic!("{:?}", extrude_kind(&s)) };
     let mut ids = loops[0].clone();
     ids.sort();
     assert_eq!(ids, ["bottom", "div", "left", "top"]);
@@ -97,7 +97,7 @@ fn a_point_pick_is_stored_by_curves() {
 fn explicit_curve_pick_normalizes_repeats_before_save_and_parameter_edit() {
     let mut s = tray();
     run(&mut s, "solid.extrude", json!({"sketch":"Tray","profiles":[{"curves":["top","bottom","div","left","bottom","top"]}],"distance":10}));
-    let ProfileSel::Curves { loops } = extrude_kind(&s) else { panic!("{:?}", extrude_kind(&s)) };
+    let ProfileSel::Curves { loops, .. } = extrude_kind(&s) else { panic!("{:?}", extrude_kind(&s)) };
     assert_eq!(loops, vec![vec!["top", "bottom", "div", "left"]]);
     let mut reopened = Session::new(solidcraft_doc::format::read(&s.doc.to_json()).unwrap());
     run(&mut reopened, "parameters.change", json!({"name":"split","expression":"20 mm"}));
@@ -114,7 +114,7 @@ fn repeated_explicit_curve_ids_do_not_count_split_graph_spans() {
     run(&mut s, "sketch.finish", json!({}));
     assert_eq!(s.model.state().sketches[0].profiles[0].outer_curves.iter().filter(|id| *id == "a").count(), 2);
     run(&mut s, "solid.extrude", json!({"sketch":"S","profiles":[{"curves":["d","a","a","a","c","b"]}],"distance":2}));
-    let ProfileSel::Curves { loops } = extrude_kind(&s) else { panic!("{:?}", extrude_kind(&s)) };
+    let ProfileSel::Curves { loops, .. } = extrude_kind(&s) else { panic!("{:?}", extrude_kind(&s)) };
     assert_eq!(loops, vec![vec!["d", "a", "c", "b"]]);
     let reopened = Session::new(solidcraft_doc::format::read(&s.doc.to_json()).unwrap());
     assert_eq!(last_error(&reopened), None);
@@ -203,4 +203,79 @@ fn curve_picks_save_load_and_edit() {
     assert_ne!(old, text);
     let t = Session::new(solidcraft_doc::format::read(&old).unwrap());
     assert!((volumes(&t)[0] - 6000.0).abs() < 1.0, "{:?}", volumes(&t));
+}
+
+/// #4558: a rectangle drawn on a block's top face, extruded with Join, then enlarged past the
+/// block on every side. The face's outline, projected into the sketch, is then an island inside
+/// the rectangle; the pick had no holes, so the island is filled and the larger block sits on
+/// the smaller one, instead of the pick turning into a ring that only touches the block along
+/// its edges (and the Join failing).
+#[test]
+fn a_rectangle_enlarged_round_the_projected_face_outline_still_extrudes_whole() {
+    let mut s = Session::default();
+    run(&mut s, "sketch.create", json!({"plane": "XY"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0": [-20, -15], "p1": [20, 15]}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"distance": 20}));
+    run(&mut s, "sketch.create", json!({"plane": {"face": [0, 0, 20]}, "name": "Top"}));
+    let corners = run(&mut s, "sketch.rectangle.two_point", json!({"p0": [-10, -5], "p1": [10, 5]}))["corners"].clone();
+    run(&mut s, "sketch.finish", json!({}));
+    // Picked as the Extrude dialog picks it: by a point inside, stored by its curves.
+    run(&mut s, "solid.extrude", json!({"sketch": "Top", "profiles": [{"point": [0, 0]}], "distance": 10, "operation": "join"}));
+    let ProfileSel::Curves { holes, .. } = extrude_kind(&s) else { panic!("{:?}", extrude_kind(&s)) };
+    assert_eq!(holes, Some(vec![vec![]]), "the pick records that it had no holes");
+    run(&mut s, "sketch.edit", json!({"sketch": "Top"}));
+    run(&mut s, "sketch.move_point", json!({"point": corners["top_right"], "to": [30, 25]}));
+    run(&mut s, "sketch.move_point", json!({"point": corners["bottom_left"], "to": [-30, -25]}));
+    run(&mut s, "sketch.finish", json!({}));
+    assert_eq!(last_error(&s), None);
+    let v = volumes(&s);
+    assert_eq!(v.len(), 1, "{v:?}");
+    assert!((v[0] - (40.0 * 30.0 * 20.0 + 60.0 * 50.0 * 10.0)).abs() < 1.0, "{v:?}");
+}
+
+/// A ring picked round the projected face outline on purpose (a collar round the top of the
+/// block, extruded down) stays a ring when the sketch is edited.
+#[test]
+fn a_ring_picked_round_the_projected_face_outline_stays_a_ring() {
+    let mut s = Session::default();
+    run(&mut s, "sketch.create", json!({"plane": "XY"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0": [-20, -15], "p1": [20, 15]}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"distance": 20}));
+    run(&mut s, "sketch.create", json!({"plane": {"face": [0, 0, 20]}, "name": "Top"}));
+    let corners = run(&mut s, "sketch.rectangle.two_point", json!({"p0": [-30, -25], "p1": [30, 25]}))["corners"].clone();
+    run(&mut s, "sketch.finish", json!({}));
+    // The ring between the rectangle and the face outline, extruded 10 mm down onto the block's sides.
+    run(
+        &mut s,
+        "solid.extrude",
+        json!({"sketch": "Top", "profiles": [{"point": [25, 0]}], "distance": 10, "direction": "negative", "operation": "join"}),
+    );
+    let ProfileSel::Curves { holes: Some(holes), .. } = extrude_kind(&s) else { panic!("{:?}", extrude_kind(&s)) };
+    assert_eq!(holes[0].len(), 1, "the ring's pick records its hole");
+    let collar = 60.0 * 50.0 * 10.0 - 40.0 * 30.0 * 10.0;
+    assert!((volumes(&s)[0] - (40.0 * 30.0 * 20.0 + collar)).abs() < 1.0, "{:?}", volumes(&s));
+    run(&mut s, "sketch.edit", json!({"sketch": "Top"}));
+    run(&mut s, "sketch.move_point", json!({"point": corners["top_right"], "to": [32, 27]}));
+    run(&mut s, "sketch.finish", json!({}));
+    assert_eq!(last_error(&s), None);
+    let wider = 62.0 * 52.0 * 10.0 - 40.0 * 30.0 * 10.0;
+    assert!((volumes(&s)[0] - (40.0 * 30.0 * 20.0 + wider)).abs() < 1.0, "{:?}", volumes(&s));
+}
+
+/// A script can say which holes its curve pick had; a hole list for some profiles but not
+/// others, or a hostile one, is refused.
+#[test]
+fn curve_picks_take_recorded_holes_from_scripts() {
+    let mut s = tray();
+    let sel = |profiles: Value| json!({"sketch": "Tray", "profiles": profiles, "distance": 10});
+    run(&mut s, "solid.extrude", sel(json!([{"curves": ["left", "bottom", "div", "top"], "holes": []}])));
+    let ProfileSel::Curves { holes, .. } = extrude_kind(&s) else { panic!("{:?}", extrude_kind(&s)) };
+    assert_eq!(holes, Some(vec![vec![]]));
+    let mixed = json!([{"curves": ["left", "bottom", "div", "top"], "holes": []}, {"curves": ["div", "bottom", "right", "top"]}]);
+    assert!(s.execute("solid.extrude", &sel(mixed)).is_err());
+    let many = json!([{"curves": ["left", "bottom", "div", "top"], "holes": vec![json!(["x"]); 129]}]);
+    assert!(s.execute("solid.extrude", &sel(many)).is_err());
+    assert!(s.execute("solid.extrude", &sel(json!([{"curves": ["left"], "holes": "x"}]))).is_err());
 }

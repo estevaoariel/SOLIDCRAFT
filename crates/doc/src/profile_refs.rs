@@ -214,14 +214,42 @@ fn fallback_loop(ss: &SolvedSketch, curves: &[String]) -> Option<(Vec<usize>, St
     Some((vec![index], note))
 }
 
+/// The profiles inside the holes the profile at `index` has now that are not among `picked`, the
+/// holes it had when it was picked: islands a later edit put inside the picked loop (#4558).
+fn new_islands(ss: &SolvedSketch, index: usize, picked: &[Vec<String>]) -> Vec<usize> {
+    let Some(profile) = ss.profiles.get(index) else { return Vec::new() };
+    let new: Vec<&solidcraft_geom::Loop2> = profile
+        .hole_curves
+        .iter()
+        .zip(&profile.region.holes)
+        .filter(|(curves, _)| !picked.iter().any(|old| same_ids(old, curves)))
+        .map(|(_, hole)| hole)
+        .collect();
+    if new.is_empty() {
+        return Vec::new();
+    }
+    ss.profiles
+        .iter()
+        .enumerate()
+        .filter(|(other, island)| *other != index && new.iter().any(|hole| hole.contains(island.region.interior_point())))
+        .map(|(other, _)| other)
+        .collect()
+}
+
 fn selection_indices(ss: &SolvedSketch, selection: &ProfileSel, mut notes: Option<&mut Vec<String>>) -> Result<Vec<usize>> {
     let indices = match selection {
         ProfileSel::All => (0..ss.profiles.len()).collect(),
         ProfileSel::Indices { indices } => indices.clone(),
-        ProfileSel::Curves { loops } => {
+        ProfileSel::Curves { loops, holes } => {
+            if let Some(holes) = holes
+                && (holes.len() != loops.len()
+                    || holes.iter().any(|loop_holes| loop_holes.len() > 128 || loop_holes.iter().any(|hole| hole.len() > 512)))
+            {
+                return Err(DocError::Invalid(format!("the holes recorded for a profile pick of {} don't fit its loops", ss.name)));
+            }
             let boundaries = reserved_boundaries(ss)?;
             let mut indices = Vec::with_capacity(loops.len());
-            for curves in loops {
+            for (n, curves) in loops.iter().enumerate() {
                 let mut key = curves.clone();
                 key.sort();
                 if let Some(id) = boundaries.get(&key) {
@@ -238,7 +266,16 @@ fn selection_indices(ss: &SolvedSketch, selection: &ProfileSel, mut notes: Optio
                         return Err(crate::curve_pick_error(solidcraft_sketch::CurvePick::Missing, curves, &ss.name));
                     }
                     match solidcraft_sketch::profile_by_curves(&ss.profiles, curves) {
-                        Ok(index) => indices.push(index),
+                        Ok(index) => {
+                            indices.push(index);
+                            if let Some(picked) = holes.as_ref().and_then(|holes| holes.get(n)) {
+                                for island in new_islands(ss, index, picked) {
+                                    if !indices.contains(&island) {
+                                        indices.push(island);
+                                    }
+                                }
+                            }
+                        }
                         Err(error) => {
                             let fallback = match (&error, notes.as_deref_mut()) {
                                 (solidcraft_sketch::CurvePick::Missing, Some(notes)) => fallback_loop(ss, curves).map(|found| (found, notes)),
@@ -325,8 +362,12 @@ pub fn capture_profile_selection(ss: &SolvedSketch, indices: &[usize]) -> Result
     }
     let mut associations = Vec::new();
     let mut loops = Vec::new();
+    // The holes each picked profile has now, so an island a later edit puts inside is filled
+    // rather than turning the pick into a ring (#4558).
+    let mut holes = Vec::new();
     for index in checked {
-        let curves = &ss.profiles.get(index).ok_or_else(|| DocError::Invalid("profile index changed during capture".into()))?.outer_curves;
+        let profile = ss.profiles.get(index).ok_or_else(|| DocError::Invalid("profile index changed during capture".into()))?;
+        let curves = &profile.outer_curves;
         if curves.is_empty() {
             return Ok(ProfileSel::Indices { indices: indices.to_vec() });
         }
@@ -345,18 +386,24 @@ pub fn capture_profile_selection(ss: &SolvedSketch, indices: &[usize]) -> Result
                 .find(|topology| topology.id == id)
                 .ok_or_else(|| DocError::Unknown(format!("offset association {id}")))?;
             loops.push(offset.roles.iter().map(|role| role.output.clone()).collect());
+            holes.push(profile.hole_curves.clone());
             associations.push(id);
         } else {
             if ss.profiles.iter().filter(|profile| same_ids(curves, &profile.outer_curves)).count() != 1 {
                 return Ok(ProfileSel::Indices { indices: indices.to_vec() });
             }
             loops.push(curves.clone());
+            holes.push(profile.hole_curves.clone());
         }
     }
     if associations.len() > MAX_SELECTIONS {
         return Err(DocError::Invalid("too many offset association profiles".into()));
     }
-    if associations.len() == loops.len() { Ok(ProfileSel::OffsetBoundaries { associations }) } else { Ok(ProfileSel::Curves { loops }) }
+    if associations.len() == loops.len() {
+        Ok(ProfileSel::OffsetBoundaries { associations })
+    } else {
+        Ok(ProfileSel::Curves { loops, holes: Some(holes) })
+    }
 }
 
 #[cfg(test)]
@@ -485,11 +532,11 @@ mod tests {
         // checks the exact rounded geometry independently of that tessellation.
         assert!((volume - 2. * rounded_area).abs() < 0.002, "{volume}");
         assert!(
-            crate::select_profiles(solved, &ProfileSel::Curves { loops: vec![created.curves.clone()] }).is_err(),
+            crate::select_profiles(solved, &ProfileSel::Curves { loops: vec![created.curves.clone()], holes: None }).is_err(),
             "partial old active set must not expand after resurrection"
         );
         assert_eq!(
-            profile_selection_indices(solved, &ProfileSel::Curves { loops: vec![original_roles] }).unwrap(),
+            profile_selection_indices(solved, &ProfileSel::Curves { loops: vec![original_roles], holes: None }).unwrap(),
             profile_selection_indices(solved, &selection).unwrap()
         );
         let reopened = crate::Document::from_json(&document.to_json()).unwrap();
@@ -511,7 +558,7 @@ mod tests {
         assert_eq!(capture_profile_selection(&ss, &indices).unwrap(), selection);
         let points = ProfileSel::Points { points: vec![Vec2::new(0., 0.); 600] };
         assert_eq!(profile_selection_indices(&ss, &points).unwrap(), indices);
-        let curves = ProfileSel::Curves { loops: vec![vec!["circle".into()]; 600] };
+        let curves = ProfileSel::Curves { loops: vec![vec!["circle".into()]; 600], holes: None };
         let regions = crate::select_profiles(&ss, &curves).unwrap();
         assert_eq!(regions.len(), 600);
         assert!(regions.iter().all(|region| (region.area() - std::f64::consts::PI * 9.).abs() < 1e-9));
@@ -537,7 +584,7 @@ mod tests {
 
     #[test]
     fn a_split_loop_falls_back_to_its_pieces_only_when_evaluating() {
-        let loops = ProfileSel::Curves { loops: vec![vec!["a".into(), "b".into(), "c".into(), "d".into()]] };
+        let loops = ProfileSel::Curves { loops: vec![vec!["a".into(), "b".into(), "c".into(), "d".into()]], holes: None };
         let split = solved_square(&[("cut", [4., 0., 4., 10.])]);
         assert_eq!(split.profiles.len(), 2);
         assert!(profile_selection_indices(&split, &loops).is_err(), "a command's pick stays exact");
@@ -550,8 +597,66 @@ mod tests {
         // Exact matches have no note; a loop sharing under half its curves matches nothing.
         let whole = solved_square(&[]);
         assert!(profile_fallback_notes(&whole, &loops).is_empty());
-        let few = ProfileSel::Curves { loops: vec![vec!["a".into(), "x".into(), "y".into(), "z".into(), "w".into()]] };
+        let few = ProfileSel::Curves { loops: vec![vec!["a".into(), "x".into(), "y".into(), "z".into(), "w".into()]], holes: None };
         assert!(crate::select_profiles(&whole, &few).is_err());
+    }
+
+    /// The square with a 4 × 4 square island in its middle (lines e, f, g, h), as a sketch on a
+    /// face gets once a drawn rectangle is enlarged around the face's projected outline (#4558).
+    fn square_round_island() -> SolvedSketch {
+        solved_square(&[("e", [3., 3., 7., 3.]), ("f", [7., 3., 7., 7.]), ("g", [7., 7., 3., 7.]), ("h", [3., 7., 3., 3.])])
+    }
+
+    fn ids(names: &[&str]) -> Vec<String> {
+        names.iter().map(|name| name.to_string()).collect()
+    }
+
+    fn area(ss: &SolvedSketch, selection: &ProfileSel) -> f64 {
+        crate::select_profiles(ss, selection).unwrap().iter().map(|region| region.area()).sum()
+    }
+
+    #[test]
+    fn a_loop_picked_without_holes_takes_in_islands_that_appear_later() {
+        let island = square_round_island();
+        assert_eq!(island.profiles.len(), 2, "the ring and the island");
+        let picked = |holes| ProfileSel::Curves { loops: vec![ids(&["a", "b", "c", "d"])], holes };
+        // Picked while the square had no holes: the island is filled, the whole square is used.
+        let whole = picked(Some(vec![vec![]]));
+        assert_eq!(profile_selection_indices(&island, &whole).unwrap().len(), 2);
+        assert!((area(&island, &whole) - 100.).abs() < 1e-9);
+        // Picked as the ring round that island: it stays a ring.
+        let ring = picked(Some(vec![vec![ids(&["h", "g", "f", "e"])]]));
+        assert_eq!(profile_selection_indices(&island, &ring).unwrap().len(), 1);
+        assert!((area(&island, &ring) - 84.).abs() < 1e-9);
+        // Saved before picks recorded their holes: as before, islands stay holes.
+        assert!((area(&island, &picked(None)) - 84.).abs() < 1e-9);
+        // Without the island the pick is the square, whatever it recorded.
+        assert!((area(&solved_square(&[]), &whole) - 100.).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_captured_pick_records_the_holes_it_had() {
+        let plain = solved_square(&[]);
+        assert_eq!(
+            capture_profile_selection(&plain, &[0]).unwrap(),
+            ProfileSel::Curves { loops: vec![plain.profiles[0].outer_curves.clone()], holes: Some(vec![vec![]]) }
+        );
+        let island = square_round_island();
+        let ring = island.profiles.iter().position(|profile| !profile.hole_curves.is_empty()).unwrap();
+        let ProfileSel::Curves { holes: Some(holes), .. } = capture_profile_selection(&island, &[ring]).unwrap() else { panic!("stored by curves") };
+        assert_eq!(holes, vec![island.profiles[ring].hole_curves.clone()]);
+    }
+
+    #[test]
+    fn hostile_recorded_holes_are_refused() {
+        let island = square_round_island();
+        let square = ids(&["a", "b", "c", "d"]);
+        let mismatched = ProfileSel::Curves { loops: vec![square.clone()], holes: Some(vec![vec![], vec![]]) };
+        assert!(crate::select_profiles(&island, &mismatched).is_err(), "one hole list per loop");
+        let many = ProfileSel::Curves { loops: vec![square.clone()], holes: Some(vec![vec![ids(&["x"]); 129]]) };
+        assert!(crate::select_profiles(&island, &many).is_err(), "too many holes");
+        let long = ProfileSel::Curves { loops: vec![square], holes: Some(vec![vec![vec!["x".to_string(); 513]]]) };
+        assert!(crate::select_profiles(&island, &long).is_err(), "too many curves in a hole");
     }
 
     #[test]
@@ -575,7 +680,7 @@ mod tests {
         assert!(solved.sketch.offset_boundary_for_curves(&profile.outer_curves).is_err(), "strict association identity still refuses repeated roles");
         let selection = capture_profile_selection(solved, &[index]).unwrap();
         assert!(matches!(&selection, ProfileSel::WholeBoundaries { profiles } if profiles.len() == 1 && profiles[0].holes.len() == 1));
-        let legacy_spans = ProfileSel::Curves { loops: vec![profile.outer_curves.clone()] };
+        let legacy_spans = ProfileSel::Curves { loops: vec![profile.outer_curves.clone()], holes: None };
         assert_eq!(profile_selection_indices(solved, &legacy_spans).unwrap(), vec![index]);
         let legacy_roundtrip: ProfileSel = serde_json::from_str(&serde_json::to_string(&legacy_spans).unwrap()).unwrap();
         assert_eq!(legacy_roundtrip, legacy_spans, "ordinary legacy span multiplicities remain serialized exactly");

@@ -1763,9 +1763,9 @@ fn freeze_offset_profiles(doc: &mut solidcraft_doc::Document, sketch: u64, bound
                         }
                         loops.push(roles.clone());
                     }
-                    *selection = ProfileSel::Curves { loops };
+                    *selection = ProfileSel::Curves { loops, holes: None };
                 }
-                ProfileSel::Curves { loops } => {
+                ProfileSel::Curves { loops, .. } => {
                     for ids in loops {
                         work = work.saturating_add(ids.len());
                         if work > 1_000_000 {

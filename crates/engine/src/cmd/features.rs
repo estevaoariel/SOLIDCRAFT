@@ -282,7 +282,7 @@ pub(super) fn stable_profiles(s: &Session, kind: &mut FeatureKind) -> Result<()>
                 let Some(indices) = points.iter().map(|point| profile_at_point(&ss.profiles, *point)).collect::<Option<Vec<_>>>() else { continue };
                 indices
             }
-            ProfileSel::Curves { loops } => {
+            ProfileSel::Curves { loops, holes } => {
                 // The command's ordinary curve lists are sets, including repeated
                 // caller IDs. Saved graph-span multisets retain their legacy meaning.
                 // Reserved offset roles never use this ordinary normalization.
@@ -301,7 +301,7 @@ pub(super) fn stable_profiles(s: &Session, kind: &mut FeatureKind) -> Result<()>
                         curves.retain(|curve| seen.insert(curve.clone()));
                     }
                 }
-                let selection = ProfileSel::Curves { loops: normalized };
+                let selection = ProfileSel::Curves { loops: normalized, holes: holes.clone() };
                 solidcraft_doc::profile_selection_indices(ss, &selection)?;
                 *sel = selection;
                 continue;
@@ -337,7 +337,7 @@ pub(super) fn stable_profiles(s: &Session, kind: &mut FeatureKind) -> Result<()>
                             .ok_or_else(|| EngineError::Other(format!("offset association `{id}` changed during profile capture")))
                     })
                     .collect::<Result<Vec<_>>>()?;
-                ProfileSel::Curves { loops }
+                ProfileSel::Curves { loops, holes: None }
             }
             captured => captured,
         };
@@ -388,8 +388,27 @@ pub(crate) fn profiles(p: &Value, cmd: &str) -> Result<ProfileSel> {
                 return Ok(ProfileSel::Points { points: pts });
             }
             // [[ids]], [{curves: [...]}] or recipe-style [{loops: [{outer: true, curves: [...]}]}].
+            // `{curves, holes: [[ids]…]}` also records the holes the profile was picked with.
             let mut loops = Vec::new();
+            let mut holes = Vec::new();
             for x in a {
+                if let Some(h) = x.get("holes") {
+                    let list = h
+                        .as_array()
+                        .filter(|list| list.len() <= 128)
+                        .ok_or_else(|| bad(cmd, "`holes` must be a list of at most 128 curve-id lists"))?;
+                    let loop_holes = list
+                        .iter()
+                        .map(|hole| {
+                            let ids = string_list(&json!({"h": hole}), "h");
+                            if ids.is_empty() || ids.len() > 512 {
+                                return Err(bad(cmd, "each hole must list 1 to 512 curve ids"));
+                            }
+                            Ok(ids)
+                        })
+                        .collect::<Result<Vec<_>>>()?;
+                    holes.push(loop_holes);
+                }
                 let ids: Vec<String> = match x {
                     Value::Array(ids) => ids.iter().filter_map(|i| i.as_str().map(str::to_string)).collect(),
                     Value::Object(o) => {
@@ -409,7 +428,12 @@ pub(crate) fn profiles(p: &Value, cmd: &str) -> Result<ProfileSel> {
                 }
                 loops.push(ids);
             }
-            Ok(ProfileSel::Curves { loops })
+            let holes = match holes.len() {
+                0 => None,
+                n if n == loops.len() => Some(holes),
+                _ => return Err(bad(cmd, "give `holes` for every profile or for none")),
+            };
+            Ok(ProfileSel::Curves { loops, holes })
         }
         _ => Err(bad(cmd, "`profiles` must be \"all\" or a list")),
     }
