@@ -4,8 +4,10 @@ use crate::test_support::sample_app;
 use egui::pos2;
 use serde_json::json;
 use solidcraft_engine::Session;
+use solidcraft_engine::geom::Vec3;
 
 use crate::context_menu::{self, Item, Target};
+use crate::viewport::Hit;
 use crate::{Services, SolveApp};
 
 #[test]
@@ -133,6 +135,29 @@ fn a_selected_face_keeps_the_body_menu_beside_a_sketch_curve() {
     assert!(find(&items, "Press Pull").enabled);
     assert!(find(&items, "Edit Profile Sketch").enabled);
     assert!(!items.iter().any(|i| i.label == "Redefine Sketch Plane"), "the face menu, not the sketch menu");
+}
+
+/// A right-click on a face or edge that is part of a multi-selection keeps the whole selection:
+/// the pick keeps a point of its own, so the face is compared by body and index (#3733).
+#[test]
+fn right_click_on_a_selected_face_keeps_the_multi_selection() {
+    let mut app = sample_app();
+    let b = body(&app);
+    app.run(
+        "select.set",
+        json!({"items": [
+            {"type": "face", "body": b, "index": 0, "point": [1, 2, 3]},
+            {"type": "face", "body": b, "index": 1, "point": [4, 5, 6]},
+        ]}),
+    )
+    .unwrap();
+    app.viewport.hover = Some(Hit::Face { body: b.clone(), index: 0, point: Vec3::new(9.0, 9.0, 9.0) });
+    context_menu::open(&mut app, pos2(400.0, 300.0));
+    assert_eq!(app.session.selection.len(), 2, "the right-click keeps the faces it is about: {:?}", app.session.selection);
+    // A face outside the selection is still picked, so its menu is about the face under the cursor.
+    app.viewport.hover = Some(Hit::Face { body: b, index: 2, point: Vec3::new(9.0, 9.0, 9.0) });
+    context_menu::open(&mut app, pos2(400.0, 300.0));
+    assert_eq!(app.session.selection.len(), 1, "a face outside the selection is picked: {:?}", app.session.selection);
 }
 
 #[test]

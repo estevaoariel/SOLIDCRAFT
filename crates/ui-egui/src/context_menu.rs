@@ -1464,7 +1464,8 @@ pub(crate) fn commit_rename(app: &mut SolveApp, r: &Rename) {
 // ---------------------------------------------------------------------------------------------
 
 /// Open the viewport menu at a screen position. A right-click on something not selected
-/// selects it first, so the menu is about what is under the cursor.
+/// selects it first, so the menu is about what is under the cursor; a face or edge already in a
+/// multi-selection keeps the whole selection (#3733).
 pub fn open(app: &mut SolveApp, at: Pos2) {
     app.menu.over_geometry = app.viewport.hover.is_some();
     // A right-click leaves a plane unselected, but the menu offers a sketch on it.
@@ -1473,10 +1474,11 @@ pub fn open(app: &mut SolveApp, at: Pos2) {
         _ => None,
     });
     crate::select_other::close(app);
+    let selected = |app: &SolveApp, sel: &Sel| app.session.selection.iter().any(|x| crate::selection::same_item(x, sel));
     if app.session.active_sketch.is_none()
         && let Some(h) = app.viewport.hover.clone()
         && let Some((_, sel)) = crate::viewport::candidate(app, &[h])
-        && !app.session.selection.contains(&sel)
+        && !selected(app, &sel)
         && !matches!(sel, Sel::Plane { .. } | Sel::Axis { .. })
     {
         let _ = app.run("select.set", json!({ "items": [sel] }));
@@ -1484,7 +1486,7 @@ pub fn open(app: &mut SolveApp, at: Pos2) {
         && let Some(h) = app.viewport.hover.clone()
         && let Some((_, sel)) = crate::viewport::candidate(app, &[h])
         && (matches!(sel, Sel::SketchCurve { .. } | Sel::SketchPoint { .. }) || crate::sketch_text::entity_for_selection(app, &sel).is_some())
-        && !app.session.selection.contains(&sel)
+        && !selected(app, &sel)
     {
         let _ = app.run("select.set", json!({ "items": [sel] }));
     }
