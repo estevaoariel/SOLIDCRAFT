@@ -104,6 +104,9 @@ pub struct TreeState {
     anchor: Option<String>,
     /// Row keys in drawing order this frame (for Shift ranges).
     order: Vec<String>,
+    /// The previous frame's complete row order: a Shift click resolves its range here, since
+    /// this frame's `order` does not yet hold the rows below the clicked one (#4991).
+    order_prev: Vec<String>,
 }
 
 /// Moving an occurrence: the offsets typed so far (pending until Capture Position).
@@ -478,10 +481,8 @@ fn click_select(app: &mut SolveApp, ui: &egui::Ui, key: String, sel: Option<Sel>
     if mods.shift
         && let Some(a) = app.tree.anchor.clone()
     {
-        let order = app.tree.order.clone();
-        if let (Some(i), Some(j)) = (order.iter().position(|k| *k == a), order.iter().position(|k| *k == key)) {
-            let (lo, hi) = (i.min(j), i.max(j));
-            let items: Vec<Sel> = order[lo..=hi].iter().filter_map(|k| sel_of_key(k)).collect();
+        let items = shift_range(&app.tree.order_prev, &a, &key).or_else(|| shift_range(&app.tree.order, &a, &key));
+        if let Some(items) = items {
             let _ = app.run("select.set", json!({ "items": items, "add": mods.command || mods.ctrl }));
             return;
         }
@@ -500,6 +501,15 @@ fn click_select(app: &mut SolveApp, ui: &egui::Ui, key: String, sel: Option<Sel>
         app.tree.picked_joints.clear();
         let _ = app.run("select.set", json!({ "items": [sel] }));
     }
+}
+
+/// The selectable rows from `anchor` to `key` (either way round) in a row order, or `None`
+/// when the order lacks either of them.
+fn shift_range(order: &[String], anchor: &str, key: &str) -> Option<Vec<Sel>> {
+    let i = order.iter().position(|k| k == anchor)?;
+    let j = order.iter().position(|k| k == key)?;
+    let rows = order.get(i.min(j)..=i.max(j))?;
+    Some(rows.iter().filter_map(|k| sel_of_key(k)).collect())
 }
 
 fn sel_of_key(k: &str) -> Option<Sel> {
@@ -693,7 +703,7 @@ pub(crate) fn resize_column(app: &mut SolveApp, ui: &egui::Ui, rect: Rect, width
 pub fn browser(app: &mut SolveApp, ui: &mut egui::Ui) {
     let available = ui.available_rect_before_wrap();
     let t = Tokens::get();
-    app.tree.order.clear();
+    app.tree.order_prev = std::mem::take(&mut app.tree.order);
     DRAWN.with(|d| d.borrow_mut().clear());
     OCCURRENCES.with(|d| d.borrow_mut().clear());
     let mut acts = Actions::default();
