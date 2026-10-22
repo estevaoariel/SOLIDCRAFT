@@ -114,6 +114,21 @@ pub fn opens_design(extensions: &[&str]) -> bool {
     extensions.is_empty() || extensions.iter().any(|e| solidcraft_engine::io::DESIGN_EXTS.contains(e))
 }
 
+/// A typed Open (macros, SVG, images): not a design, so not the files panel.
+pub fn opens_typed(extensions: &[&str]) -> bool {
+    !extensions.is_empty() && !opens_design(extensions)
+}
+
+/// Dotted, lower-case extensions for a file dialog (`rhai` → `.rhai`).
+pub fn accept_list(extensions: &[&str]) -> Vec<String> {
+    extensions.iter().map(|e| format!(".{}", e.trim_start_matches('.').to_ascii_lowercase())).collect()
+}
+
+/// File-dialog label for typed extensions (`rhai` → `RHAI`).
+pub fn typed_label(extensions: &[&str]) -> String {
+    extensions.iter().map(|e| e.trim_start_matches('.').to_ascii_uppercase()).collect::<Vec<_>>().join(", ")
+}
+
 /// The file type a Save As dialog offers for `name`: (description, MIME type, extension).
 pub fn save_type(name: &str) -> (&'static str, &'static str, &'static str) {
     let json = std::path::Path::new(name).extension().is_some_and(|e| e.eq_ignore_ascii_case("json"));
@@ -268,7 +283,17 @@ mod web {
     /// answer is the engine path of the file, read into the engine's files; a design keeps its
     /// handle, so Save writes back to the file. `None`: closed, or it could not be read.
     pub fn pick_open(files: &Rc<Files>) -> impl std::future::Future<Output = Option<String>> + use<> {
-        let promise = start_picker("showOpenFilePicker", &open_options());
+        pick_open_with(files, open_options())
+    }
+
+    /// Open a file of `extensions` (call in the click). A non-design is an upload; `None`: closed.
+    pub fn pick_typed(files: &Rc<Files>, extensions: Vec<String>) -> impl std::future::Future<Output = Option<String>> + use<> {
+        let refs: Vec<&str> = extensions.iter().map(String::as_str).collect();
+        pick_open_with(files, open_options_for(&refs))
+    }
+
+    fn pick_open_with(files: &Rc<Files>, options: Object) -> impl std::future::Future<Output = Option<String>> + use<> {
+        let promise = start_picker("showOpenFilePicker", &options);
         let files = files.clone();
         async move {
             let r = async {
@@ -291,16 +316,29 @@ mod web {
 
     /// The options of the open dialog: a single file, designs and CAD files listed first.
     pub fn open_options() -> Object {
+        file_picker_options(
+            "Designs and CAD files",
+            &[".solidcraft", ".solvecraft", ".json", ".step", ".stp", ".3mf", ".stl", ".obj", ".glb", ".gltf"],
+        )
+    }
+
+    fn open_options_for(extensions: &[&str]) -> Object {
+        let dotted = super::accept_list(extensions);
+        let dotted: Vec<&str> = dotted.iter().map(String::as_str).collect();
+        file_picker_options(&super::typed_label(extensions), &dotted)
+    }
+
+    fn file_picker_options(description: &str, dotted: &[&str]) -> Object {
         let options = Object::new();
         let _ = Reflect::set(&options, &"multiple".into(), &JsValue::FALSE);
         let extensions = Array::new();
-        for e in [".solidcraft", ".solvecraft", ".json", ".step", ".stp", ".3mf", ".stl", ".obj", ".glb", ".gltf"] {
-            extensions.push(&e.into());
+        for e in dotted {
+            extensions.push(&(*e).into());
         }
         let accept = Object::new();
         let _ = Reflect::set(&accept, &"application/octet-stream".into(), &extensions);
         let entry = Object::new();
-        let _ = Reflect::set(&entry, &"description".into(), &"Designs and CAD files".into());
+        let _ = Reflect::set(&entry, &"description".into(), &description.into());
         let _ = Reflect::set(&entry, &"accept".into(), &accept);
         let _ = Reflect::set(&options, &"types".into(), &Array::of1(&entry));
         options
@@ -318,6 +356,11 @@ mod web {
     /// Does an Open for `extensions` use the browser's open dialog?
     pub fn handles_open(extensions: &[&str]) -> bool {
         supported() && opens_design(extensions)
+    }
+
+    /// A typed Open uses the File System Access dialog when the browser has one.
+    pub fn handles_typed(extensions: &[&str]) -> bool {
+        supported() && super::opens_typed(extensions)
     }
 
     // ---- writing ------------------------------------------------------------------------
@@ -619,6 +662,19 @@ mod tests {
         assert!(opens_design(&["solvecraft"]));
         assert!(!opens_design(&["step", "stp"]));
         assert!(!opens_design(&["json"]));
+        assert!(!opens_design(&["rhai"]));
+    }
+
+    #[test]
+    fn typed_opens_are_not_the_files_panel() {
+        assert!(opens_typed(&["rhai"]));
+        assert!(opens_typed(&["svg"]));
+        assert!(opens_typed(&["png", "jpg", "jpeg"]));
+        assert!(!opens_typed(&[]));
+        assert!(!opens_typed(&["solidcraft"]));
+        assert_eq!(accept_list(&["rhai"]), vec![".rhai"]);
+        assert_eq!(accept_list(&[".RHAI"]), vec![".rhai"]);
+        assert_eq!(typed_label(&["rhai"]), "RHAI");
     }
 
     #[test]

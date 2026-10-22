@@ -324,6 +324,20 @@ mod tests {
     }
 
     #[test]
+    fn macro_open_asks_for_rhai() {
+        let mut h = crate::scenario::Harness::new();
+        let asked: Rc<RefCell<Vec<Vec<String>>>> = Rc::default();
+        let log = asked.clone();
+        h.app.services.pick_open = Some(Box::new(move |extensions| {
+            log.borrow_mut().push(extensions.iter().map(|e| e.to_string()).collect());
+            Box::pin(std::future::ready(None))
+        }));
+        h.app.start("macro.open");
+        tick(&mut h.app, &h.ctx);
+        assert_eq!(asked.borrow().last().cloned(), Some(vec!["rhai".into()]));
+    }
+
+    #[test]
     fn picker_holds_engine_requests_but_answers_window_resize_requests() {
         let mut h = crate::scenario::Harness::new();
         let answer = picker(&mut h.app, false);

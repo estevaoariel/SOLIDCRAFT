@@ -10,7 +10,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use js_sys::{Array, Function, Object, Reflect, Uint8Array};
+use js_sys::{Array, Function, Object, Promise, Reflect, Uint8Array};
 use solidcraft_engine::io::vfs;
 
 use crate::disk;
@@ -446,6 +446,67 @@ pub fn free_name(name: &str) -> String {
 /// The autosaved design's path (in the engine's files) for opening it.
 pub fn recovery_path() -> String {
     format!("{OPFS}{RECOVERY}")
+}
+
+/// Pick one file of `accept` (e.g. `.rhai`) as an upload. Must run in the click. `None`: cancelled.
+pub fn pick_upload(files: &Rc<Files>, accept: String) -> impl std::future::Future<Output = Option<String>> + use<> {
+    let promise = start_input_upload(files, &accept);
+    async move {
+        let Some(promise) = promise else { return None };
+        match JsFuture::from(promise).await {
+            Ok(v) => v.as_string(),
+            Err(_) => None,
+        }
+    }
+}
+
+fn start_input_upload(files: &Rc<Files>, accept: &str) -> Option<Promise> {
+    let doc = web_sys::window()?.document()?;
+    let input: web_sys::HtmlInputElement = doc.create_element("input").ok()?.unchecked_into();
+    input.set_type("file");
+    input.set_accept(accept);
+    let _ = input.set_attribute("style", "display:none");
+    doc.body()?.append_child(&input).ok()?;
+    let el = input.clone();
+    let files = files.clone();
+    Some(Promise::new(&mut |resolve, _reject| {
+        let change_el = el.clone();
+        let change_resolve = resolve.clone();
+        let change_files = files.clone();
+        let on_change = Closure::once_into_js(move || {
+            change_el.remove();
+            let Some(list) = change_el.files() else {
+                let _ = change_resolve.call1(&JsValue::UNDEFINED, &JsValue::NULL);
+                return;
+            };
+            let Some(f) = list.get(0) else {
+                let _ = change_resolve.call1(&JsValue::UNDEFINED, &JsValue::NULL);
+                return;
+            };
+            spawn_local(async move {
+                match blob_bytes(&f).await {
+                    Ok(b) => {
+                        let path = format!("{}{}", UPLOAD, f.name());
+                        vfs::insert(&path, b);
+                        let _ = change_resolve.call1(&JsValue::UNDEFINED, &JsValue::from(path));
+                    }
+                    Err(e) => {
+                        change_files.say(format!("{}: {e}", f.name()), true);
+                        let _ = change_resolve.call1(&JsValue::UNDEFINED, &JsValue::NULL);
+                    }
+                }
+            });
+        });
+        let cancel_el = el.clone();
+        let cancel_resolve = resolve.clone();
+        let on_cancel = Closure::once_into_js(move || {
+            cancel_el.remove();
+            let _ = cancel_resolve.call1(&JsValue::UNDEFINED, &JsValue::NULL);
+        });
+        el.set_onchange(Some(on_change.unchecked_ref()));
+        let _ = el.add_event_listener_with_callback("cancel", on_cancel.unchecked_ref());
+        el.click();
+    }))
 }
 
 /// Pick files on the computer: the File System Access picker where there is one, else an

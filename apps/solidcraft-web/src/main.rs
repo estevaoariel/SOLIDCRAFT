@@ -583,6 +583,14 @@ mod web {
                                 if disk::handles_open(exts) {
                                     return Box::pin(disk::pick_open(&opener));
                                 }
+                                if disk::opens_typed(exts) {
+                                    let owned: Vec<String> = exts.iter().map(|e| (*e).to_string()).collect();
+                                    if disk::handles_typed(exts) {
+                                        return Box::pin(disk::pick_typed(&opener, owned));
+                                    }
+                                    let accept = disk::accept_list(&owned.iter().map(String::as_str).collect::<Vec<_>>()).join(",");
+                                    return Box::pin(files::pick_upload(&opener, accept));
+                                }
                                 panel.panel.set(true);
                                 Box::pin(std::future::ready(None))
                             })),
