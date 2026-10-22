@@ -4375,6 +4375,7 @@ dependencies = [
  "log",
  "minisign-verify",
  "pollster 0.4.0",
+ "proc-macro2",
  "semver",
  "serde",
  "serde_json",
