@@ -4184,6 +4184,7 @@ dependencies = [
  "serde_json",
  "solidcraft-3dx-client",
  "solidcraft-engine",
+ "solidcraft-gpu",
  "solidcraft-space-mouse",
  "solidcraft-ui-egui",
  "ureq",
