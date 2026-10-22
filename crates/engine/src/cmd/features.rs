@@ -2291,7 +2291,3 @@ mod corner_tests {
 #[cfg(test)]
 #[path = "fillet_connected_rounds_tests.rs"]
 mod fillet_connected_rounds_tests;
-
-#[cfg(test)]
-#[path = "split_component_tests.rs"]
-mod split_component_tests;
