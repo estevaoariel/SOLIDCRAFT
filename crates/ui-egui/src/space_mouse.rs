@@ -739,13 +739,18 @@ mod tests {
                 (2, ButtonJob::Key(ButtonKey::Esc)),
                 (3, ButtonJob::Key(ButtonKey::Shift)),
                 (4, ButtonJob::View("top".into())),
+                (5, ButtonJob::Command("edit.undo".into())),
             ]
             .into(),
         );
         let ctx = window(true);
+        // A document change that Undo would take back.
+        app.run("document.metadata.set", serde_json::json!({"values": {"author": "Jane"}})).unwrap();
         app.issue_report.draft = Some(crate::issue_report::draft_for(&app, None, None));
         let (cam, undo, dialog) = (app.cam, app.session.undo.len(), app.dialog.is_some());
-        let raw = press(&mut app, &ctx, 0b1111, vec![]);
+        assert!(undo > 0 && app.session.doc.metadata.author() == Some("Jane"));
+        let raw = press(&mut app, &ctx, 0b11111, vec![]);
+        assert_eq!(app.session.doc.metadata.author(), Some("Jane"), "the mapped Undo did not run");
         assert_eq!(escapes(&raw), 0, "no Esc");
         assert!(!app.prefs_window.open, "no Preferences");
         assert!(!ctx.input(|i| i.modifiers.shift), "no held Shift");
@@ -753,8 +758,9 @@ mod tests {
         // Once the draft is closed the same buttons work again (a fresh press).
         app.issue_report.draft = None;
         press(&mut app, &ctx, 0, vec![]);
-        press(&mut app, &ctx, 0b1111, vec![]);
+        press(&mut app, &ctx, 0b11111, vec![]);
         assert!(app.prefs_window.open);
+        assert_eq!(app.session.doc.metadata.author(), None, "and the mapped Undo runs");
     }
 
     #[test]
