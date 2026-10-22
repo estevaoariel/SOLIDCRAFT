@@ -100,6 +100,7 @@ fn handshake_and_tools_list() {
         "undo",
         "redo",
         "crash_reports",
+        "skill_reference",
         "running",
         "new_design",
         "open",
@@ -124,6 +125,67 @@ fn handshake_and_tools_list() {
     assert!(d["result"]["contents"][0]["text"].as_str().unwrap().contains("timeline"));
     assert_eq!(call(&mut s, 7, "resources/read", json!({"uri": "solidcraft://nope"}))["error"]["code"], -32002);
     assert_eq!(call(&mut s, 8, "nope/nope", json!({}))["error"]["code"], -32601);
+}
+
+#[test]
+fn skill_reference_returns_bundled_text_without_backend_calls() {
+    let mut b = Recorder { calls: Vec::new(), batch: Err("unused".into()) };
+    let docs = [
+        ("solidcraft-modeling", "reference.md", include_str!("../../../skills/solidcraft-modeling/reference.md")),
+        ("solidcraft-mechanisms", "reference.md", include_str!("../../../skills/solidcraft-mechanisms/reference.md")),
+        ("solidcraft-checking", "reference/porting.md", include_str!("../../../skills/solidcraft-checking/reference/porting.md")),
+        ("solidcraft-modeling", "SKILL.md", include_str!("../../../skills/solidcraft-modeling/SKILL.md")),
+        ("solidcraft-mechanisms", "SKILL.md", include_str!("../../../skills/solidcraft-mechanisms/SKILL.md")),
+        ("solidcraft-checking", "SKILL.md", include_str!("../../../skills/solidcraft-checking/SKILL.md")),
+        ("solidcraft-editing", "SKILL.md", include_str!("../../../skills/solidcraft-editing/SKILL.md")),
+    ];
+    for (skill, file, expected) in docs {
+        let args = json!({"skill": skill, "file": file});
+        let r = crate::call_tool(&mut b, "skill_reference", &args);
+        assert_ne!(r["isError"], true, "{r}");
+        assert_eq!(r["content"][0]["text"], expected);
+        if file == "reference.md" {
+            assert_eq!(crate::call_tool(&mut b, "skill_reference", &json!({"skill": skill})), r);
+        }
+    }
+    assert!(b.calls.is_empty(), "{:?}", b.calls);
+}
+
+#[test]
+fn skill_reference_refuses_unknown_names_and_paths_with_available_choices() {
+    let mut s = server();
+    let skills = ["solidcraft-checking", "solidcraft-editing", "solidcraft-mechanisms", "solidcraft-modeling"];
+    for skill in ["unknown", "../solidcraft-modeling", "/tmp/solidcraft-modeling"] {
+        let r = raw_tool(&mut s, "skill_reference", json!({"skill": skill}));
+        assert_eq!(r["result"]["isError"], true, "{r}");
+        let text = r["result"]["content"][0]["text"].as_str().unwrap();
+        for available in skills {
+            assert!(text.contains(available), "{text}");
+        }
+    }
+    for file in ["missing.md", "../reference.md", "/etc/passwd", "reference/../reference.md"] {
+        let r = raw_tool(&mut s, "skill_reference", json!({"skill": "solidcraft-modeling", "file": file}));
+        assert_eq!(r["result"]["isError"], true, "{r}");
+        let text = r["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("Available files: SKILL.md, reference.md"), "{text}");
+    }
+    for (skill, files) in [("solidcraft-checking", "SKILL.md, reference/porting.md"), ("solidcraft-editing", "SKILL.md")] {
+        let r = raw_tool(&mut s, "skill_reference", json!({"skill": skill}));
+        assert_eq!(r["result"]["isError"], true, "{r}");
+        assert!(r["result"]["content"][0]["text"].as_str().unwrap().contains(files), "{r}");
+    }
+}
+
+#[test]
+fn skill_reference_is_advertised_as_read_only() {
+    let mut s = server();
+    let r = call(&mut s, 1, "tools/list", json!({}));
+    let t = r["result"]["tools"].as_array().unwrap().iter().find(|t| t["name"] == "skill_reference").expect("skill_reference tool");
+    assert_eq!(t["annotations"]["readOnlyHint"], true);
+    assert_eq!(t["annotations"]["destructiveHint"], false);
+    assert_eq!(t["annotations"]["openWorldHint"], false);
+    assert_eq!(t["inputSchema"]["required"], json!(["skill"]));
+    assert_eq!(t["inputSchema"]["properties"]["file"]["default"], "reference.md");
 }
 
 /// A URDF goes through `export` with its own options (#719).
@@ -1569,7 +1631,7 @@ fn tool_annotations_tell_the_whole_truth() {
     for name in ["execute", "batch", "save", "export", "open", "screenshot"] {
         assert_eq!(hints(name), (false, true, true), "{name}");
     }
-    for name in ["list_commands", "describe_command", "inspect_design", "measure", "body_topology", "crash_reports", "running"] {
+    for name in ["list_commands", "describe_command", "inspect_design", "measure", "body_topology", "crash_reports", "skill_reference", "running"] {
         assert_eq!(hints(name), (true, false, false), "{name}");
     }
     assert_eq!(hints("new_design"), (false, true, false));

@@ -304,6 +304,21 @@ pub fn tool_definitions() -> Vec<Value> {
             ),
             Effect::Files,
         ),
+        tool(
+            "skill_reference",
+            "Skill reference",
+            "Read a document of SolidCraft's bundled agent skills (solidcraft-modeling, solidcraft-mechanisms, \
+             solidcraft-editing, solidcraft-checking) from the copy built into SolidCraft. `file` defaults to reference.md; \
+             each skill also has SKILL.md. Unknown skills or files are refused with the available ones.",
+            obj(
+                json!({
+                    "skill": string("Skill name, such as solidcraft-modeling"),
+                    "file": {"type": "string", "description": "Document of that skill", "default": "reference.md"},
+                }),
+                &["skill"],
+            ),
+            Effect::ReadOnly,
+        ),
     ]
 }
 
@@ -464,6 +479,7 @@ fn dispatch(b: &mut dyn Backend, name: &str, a: &Map<String, Value>) -> Result<V
             Some(_) => exec(b, "diagnostics.crash_report", pick(a, &["id"])),
             None => exec(b, "diagnostics.crash_reports", pick(a, &["limit"])),
         },
+        "skill_reference" => crate::skill_reference::read(a),
         "running" => b.call("control.running", json!({})),
         "undo" => exec(b, "edit.undo", json!({})),
         "redo" => exec(b, "edit.redo", json!({})),
