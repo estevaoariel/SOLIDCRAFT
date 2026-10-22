@@ -245,6 +245,10 @@ pub struct Session {
     pub active_sketch: Option<u64>,
     pub selection: Vec<Sel>,
     pub path: Option<String>,
+    /// Set when an earlier revision is open read-only (`doc.restore` with `mode: "readonly"`).
+    /// Edits and Save are refused until that revision is restored as the working model, saved
+    /// as a new file, or another design is opened.
+    pub revision_view: Option<u64>,
     /// One-shot display-only notification during doc.open, before authoritative evaluation.
     /// Interactive loaders may show it provisionally; it never becomes model state.
     pub open_preview: Option<Box<dyn Fn(solidcraft_io::DesignPreview) + Send + Sync>>,
@@ -417,6 +421,7 @@ impl Session {
             active_sketch: None,
             selection: Vec::new(),
             path: None,
+            revision_view: None,
             open_preview: None,
             log: Vec::new(),
             revision: 1,
@@ -783,6 +788,13 @@ impl Session {
     /// the model up to date before anything reads it.
     pub fn execute(&mut self, id: &str, params: &Value) -> Result<Value> {
         let spec = find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.to_string()))?;
+        if let Some(rev) = self.revision_view
+            && (spec.undoable || spec.id == "file.save")
+        {
+            return Err(EngineError::Other(format!(
+                "revision {rev} is open read-only; restore it as the working model (`doc.restore` mode \"working\") or use Save As"
+            )));
+        }
         let host_viewport = self.render_viewport.clone();
         let host_jobs = self.render_jobs.host.clone();
         let live = spec.live.filter(|_| params.get("live").and_then(Value::as_bool) == Some(true));
@@ -949,6 +961,7 @@ impl Session {
             active_sketch: self.active_sketch,
             selection: self.selection.clone(),
             path: None,
+            revision_view: self.revision_view,
             open_preview: None,
             saved: self.saved.clone(),
             log: Vec::new(),
