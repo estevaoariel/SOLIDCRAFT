@@ -257,11 +257,22 @@ struct Reading {
     /// it can send two different records that decode alike. The calibration window needs the
     /// difference between that and a last value kept with nothing arriving.
     arrived: bool,
+    /// The buttons' state has been seen once since this source connected. A HID device's first report
+    /// that carries buttons says which are down; one already down then is held (a reader swapped under
+    /// it, or the device was plugged in with it down), not pressed. Sources that send each press and
+    /// release as an event (spacenavd, the macOS driver) start from nothing down.
+    buttons_known: bool,
 }
 
 impl Reading {
-    /// The buttons that are down now; those that just went down are kept as taps until taken.
+    /// The buttons that are down now; those that just went down are kept as taps until taken. The first
+    /// state a HID source reports is only taken as the baseline: a button down in it is held, not a tap.
     fn set_buttons(&mut self, buttons: u32) {
+        if !self.buttons_known {
+            self.buttons_known = true;
+            self.buttons = buttons;
+            return;
+        }
         self.taps |= buttons & !self.buttons;
         self.buttons = buttons;
     }
@@ -274,7 +285,17 @@ impl Reading {
     }
 
     fn new(now: Instant) -> Self {
-        Self { device: None, awaiting: None, axes: Axes::default(), at: [now; 6], held: false, buttons: 0, taps: 0, arrived: false }
+        Self {
+            device: None,
+            awaiting: None,
+            axes: Axes::default(),
+            at: [now; 6],
+            held: false,
+            buttons: 0,
+            taps: 0,
+            arrived: false,
+            buttons_known: true,
+        }
     }
 
     /// The axes at `now`. One with nothing fresh reads as `rest`: the device's own rest when it
@@ -419,7 +440,10 @@ fn connected(ctx: &Context, shared: &Mutex<Reading>, source: Source) {
         let stale = now.checked_sub(STALE_AFTER).unwrap_or(now);
         // A daemon is not yet a device: it counts once a record comes from it.
         let (device, awaiting) = if needs_evidence(source) { (None, Some(source)) } else { (Some(source), None) };
-        *reading = Reading { device, awaiting, at: [stale; 6], ..Reading::new(now) };
+        // A HID device reports the state of its buttons, so the first state seen is a baseline; the daemon
+        // and the driver send presses and releases, which start from nothing down.
+        let buttons_known = !matches!(source, Source::Hid(_));
+        *reading = Reading { device, awaiting, at: [stale; 6], buttons_known, ..Reading::new(now) };
     }
     ctx.request_repaint();
 }
@@ -2010,6 +2034,62 @@ mod tests {
             }
             assert_eq!(stage(&app) == Some(Stage::Step(1)), step_done, "{mode}: {:?}", stage(&app));
         }
+    }
+
+    /// A button held while the reader moves from the daemon to the device: the device's first report still
+    /// shows it down, and that is a baseline, not a press. Mapped to Esc, nothing is sent at the switch;
+    /// let go and pressed again, exactly one Esc; and a quick tap between two looks is still a press.
+    #[test]
+    fn a_button_held_across_a_switch_to_the_device_does_not_fire_until_pressed_again() {
+        use solidcraft_space_mouse::{Field, Layout};
+        let ids = Some((0x046d, 0xc62b));
+        let device = Source::Hid(ids).key();
+        let mut layout = Layout::default();
+        layout.buttons[0] = Some(Field { report_id: 3, bit_offset: 0, bits: 1, logical_min: 0, logical_max: 1, relative: false });
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), solidcraft_ui_egui::Services::default());
+        app.home.open = false;
+        app.space_mouse.device = Some(device.clone());
+        app.preferences
+            .space_mouse_buttons
+            .insert(device.clone(), [(1, solidcraft_ui_egui::space_mouse::ButtonJob::Key(solidcraft_ui_egui::space_mouse::ButtonKey::Esc))].into());
+        let ctx = Context::default();
+        ctx.run_ui(egui::RawInput { focused: true, ..Default::default() }, |_| {}).textures_delta.clear();
+        let shared = Arc::new(Mutex::new(Reading::new(Instant::now())));
+        let mouse = SpaceMouse {
+            shared: Arc::clone(&shared),
+            #[cfg(target_os = "linux")]
+            drivers: Arc::default(),
+            last_frame: Instant::now(),
+            driver_mapping: DriverMapping::object_mode(),
+            mapping_checked_at: Instant::now(),
+            wheel: WheelGuard::default(),
+            started: Instant::now(),
+            calibration: None,
+        };
+        let escapes = |app: &mut SolveApp, mouse: &SpaceMouse| {
+            let mut raw = egui::RawInput { focused: true, ..Default::default() };
+            solidcraft_ui_egui::space_mouse::buttons_hook(app, &ctx, mouse.buttons(), &mut raw);
+            ctx.run_ui(raw.clone(), |_| {}).textures_delta.clear();
+            raw.events.iter().filter(|e| matches!(e, egui::Event::Key { key: egui::Key::Escape, pressed: true, .. })).count()
+        };
+        let report = |down: bool| publish(&ctx, &shared, layout, &[3, u8::from(down)]);
+        // The reader has just connected to the device, with the button still held.
+        connected(&ctx, &shared, Source::Hid(ids));
+        report(true);
+        assert_eq!(escapes(&mut app, &mouse), 0, "the switch sends no Esc");
+        report(true);
+        assert_eq!(escapes(&mut app, &mouse), 0, "and holding is not pressing");
+        report(false);
+        assert_eq!(escapes(&mut app, &mouse), 0, "letting go is not a press");
+        report(true);
+        assert_eq!(escapes(&mut app, &mouse), 1, "a fresh press sends one");
+        report(true);
+        assert_eq!(escapes(&mut app, &mouse), 0);
+        // A tap that is down and up again before the UI looks is still a press.
+        report(false);
+        report(true);
+        report(false);
+        assert_eq!(escapes(&mut app, &mouse), 1, "a quick tap between two looks");
     }
 
     /// A daemon that sends a record every couple of milliseconds, never going quiet, is still left for
