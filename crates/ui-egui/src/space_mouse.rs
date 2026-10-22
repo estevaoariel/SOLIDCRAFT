@@ -76,6 +76,8 @@ pub struct Input {
     pub logged_device: Option<String>,
     /// "Restore 3D Mouse Defaults" was clicked and waits for its answer.
     pub restore_pending: bool,
+    /// The last look at the buttons had no state yet (`Buttons::pending`).
+    pub buttons_pending: bool,
     /// Nothing arrived since the last frame: the reading is the last value kept (spacenavd sends only on
     /// change, a HID device goes quiet), not a report or record just received, whatever its value. The
     /// calibration window needs the difference.
@@ -110,6 +112,10 @@ pub struct Buttons {
     pub device: Option<String>,
     pub down: u32,
     pub taps: u32,
+    /// The reader has not yet seen the state of this device's buttons (a HID device's first report that
+    /// carries them is still to come), so `down` is not known yet. The first look after that is a
+    /// baseline, not a press.
+    pub pending: bool,
 }
 
 /// A key a 3D mouse button can stand in for.
@@ -203,10 +209,13 @@ pub fn buttons_hook(app: &mut SolveApp, ctx: &egui::Context, seen: Buttons, raw:
     // (or a first one) starts the button history afresh at what is down now, so a button already down
     // when the device changes (held through a switch of reader) is not a press on the new device. A
     // press made on it is in `taps`, so it still runs the new device's own mapping.
-    if app.space_mouse.buttons_device != seen.device {
+    // The same for the first look at the buttons' state after a look that had none to give (the reader
+    // had connected but the device had not yet reported them): what is down in it is held, not pressed.
+    if app.space_mouse.buttons_device != seen.device || (app.space_mouse.buttons_pending && !seen.pending) {
         app.space_mouse.buttons_device = seen.device.clone();
         app.space_mouse.buttons = seen.down;
     }
+    app.space_mouse.buttons_pending = seen.pending;
     let buttons = seen.down;
     let pressed = (buttons & !app.space_mouse.buttons) | seen.taps;
     app.space_mouse.buttons = buttons;
@@ -683,7 +692,7 @@ mod tests {
         // As the reader reports them: a button newly down since its own last look is a tap, and a reader
         // that has just connected to this device starts from nothing down.
         let before = if app.space_mouse.buttons_device == device { app.space_mouse.buttons } else { 0 };
-        buttons_hook(app, ctx, Buttons { device, down: buttons, taps: buttons & !before }, &mut raw);
+        buttons_hook(app, ctx, Buttons { device, down: buttons, taps: buttons & !before, pending: false }, &mut raw);
         ctx.run_ui(raw.clone(), |_| {}).textures_delta.clear();
         raw
     }
@@ -793,17 +802,17 @@ mod tests {
         app.space_mouse.device = Some("hid 046d:c62b".into());
         let ctx = window(true);
         // Down and up before the hook looked: nothing is held, the press is in `taps`.
-        let tap = Buttons { device: Some("hid 046d:c62b".into()), down: 0, taps: ESC };
+        let tap = Buttons { device: Some("hid 046d:c62b".into()), down: 0, taps: ESC, pending: false };
         assert_eq!(escapes(&press_seen(&mut app, &ctx, tap)), 1);
         assert_eq!(app.space_mouse.buttons, 0);
-        let nothing = Buttons { device: Some("hid 046d:c62b".into()), down: 0, taps: 0 };
+        let nothing = Buttons { device: Some("hid 046d:c62b".into()), down: 0, taps: 0, pending: false };
         assert_eq!(escapes(&press_seen(&mut app, &ctx, nothing)), 0, "and not again");
     }
 
     #[test]
     fn a_press_on_a_new_device_runs_that_devices_mapping_whatever_the_frame_before_had() {
         let (a, b) = ("hid 046d:c62b", "hid 256f:c63a");
-        let device = |name: Option<&str>, down: u32| Buttons { device: name.map(Into::into), down, taps: 0 };
+        let device = |name: Option<&str>, down: u32| Buttons { device: name.map(Into::into), down, taps: 0, pending: false };
         let setup = || {
             let mut app = app();
             app.preferences.space_mouse_buttons.insert(a.into(), [(1, ButtonJob::Key(ButtonKey::Shift))].into());
@@ -820,13 +829,23 @@ mod tests {
         assert!(!app.space_mouse.held.shift, "A's hold does not carry over");
         assert_eq!(escapes(&press_seen(&mut app, &ctx, device(Some(b), 1))), 0, "and holding is not pressing");
         press_seen(&mut app, &ctx, device(Some(b), 0));
-        let tap = Buttons { device: Some(b.into()), down: 1, taps: 1 };
+        let tap = Buttons { device: Some(b.into()), down: 1, taps: 1, pending: false };
         assert_eq!(escapes(&press_seen(&mut app, &ctx, tap.clone())), 1, "a press on B runs B's job");
         // None -> B: the first press is not swallowed by there having been no device (it is a tap).
         let (mut app, ctx) = setup();
         app.space_mouse.device = None;
         press_seen(&mut app, &ctx, device(None, 0));
         assert_eq!(escapes(&press_seen(&mut app, &ctx, tap)), 1);
+        // The device appears (reader connected, no state yet), a frame is drawn, and only then the first
+        // report shows button 1 still down: held, not pressed.
+        let (mut app, ctx) = setup();
+        app.space_mouse.device = None;
+        press_seen(&mut app, &ctx, device(None, 0));
+        let waiting = Buttons { device: Some(b.into()), down: 0, taps: 0, pending: true };
+        assert_eq!(escapes(&press_seen(&mut app, &ctx, waiting)), 0);
+        assert_eq!(escapes(&press_seen(&mut app, &ctx, device(Some(b), 1))), 0, "the first state is a baseline");
+        press_seen(&mut app, &ctx, device(Some(b), 0));
+        assert_eq!(escapes(&press_seen(&mut app, &ctx, Buttons { device: Some(b.into()), down: 1, taps: 1, pending: false })), 1);
         // And a button already down when the first device appears is not a press.
         let (mut app, ctx) = setup();
         press_seen(&mut app, &ctx, device(None, 0));

@@ -935,7 +935,12 @@ impl SpaceMouse {
     pub fn buttons(&self) -> solidcraft_ui_egui::space_mouse::Buttons {
         let Ok(mut reading) = self.shared.lock() else { return Default::default() };
         let taps = std::mem::take(&mut reading.taps);
-        solidcraft_ui_egui::space_mouse::Buttons { device: reading.device.map(Source::key), down: reading.buttons, taps }
+        solidcraft_ui_egui::space_mouse::Buttons {
+            device: reading.device.map(Source::key),
+            down: reading.buttons,
+            taps,
+            pending: !reading.buttons_known,
+        }
     }
 
     pub fn tick(&mut self, app: &mut SolveApp, ctx: &Context) {
@@ -2075,6 +2080,9 @@ mod tests {
         let report = |down: bool| publish(&ctx, &shared, layout, &[3, u8::from(down)]);
         // The reader has just connected to the device, with the button still held.
         connected(&ctx, &shared, Source::Hid(ids));
+        // A frame is drawn before the device has reported anything (the repaint connecting asks for)...
+        assert_eq!(escapes(&mut app, &mouse), 0);
+        // ...and then the first report shows the button still down.
         report(true);
         assert_eq!(escapes(&mut app, &mouse), 0, "the switch sends no Esc");
         report(true);
