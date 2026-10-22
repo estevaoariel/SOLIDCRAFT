@@ -12,10 +12,12 @@ use crate::{Result, Session};
 
 pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("manufacture.settings.get", "Manufacture Settings", get_settings)
+        .icon("settings")
         .noundo()
         .doc_only()
         .params("name?: setup name. Without name returns {setups, machines, posts, defaults}; with name returns {name, setup}. Does not evaluate the model."),
     CommandSpec::new("manufacture.settings.set", "Save Manufacture Setup", set_settings)
+        .icon("settings")
         .doc_only()
         .params("name: setup name, set: object of fields to replace (stock, wcs, tools, operations, machine, post). Creates from defaults when absent, validates atomically, one undo step; identical edits are no-ops."),
 ];
