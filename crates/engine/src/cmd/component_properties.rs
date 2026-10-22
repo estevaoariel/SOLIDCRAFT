@@ -133,7 +133,8 @@ fn properties(s: &Session, doc: &Document, selected: &[u64], descendants: bool, 
                 "material": doc.materials.get(&body.name).map(String::as_str).unwrap_or("Default"),
                 "density_g_cm3": density, "mass_g": body_mass, "volume_mm3": measured.volume,
                 "area_mm2": measured.area, "center_of_mass": measured.centroid,
-                "bbox": {"min": measured.bbox.min, "max": measured.bbox.max}}));
+                "bbox": {"min": measured.bbox.min, "max": measured.bbox.max},
+                "stock": super::super::inspect::stock_json(&placed)}));
         }
     }
     if !(volume.is_finite() && area.is_finite() && mass.is_finite() && moment.is_finite()) {

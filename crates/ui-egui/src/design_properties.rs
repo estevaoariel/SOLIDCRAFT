@@ -142,6 +142,17 @@ pub fn show_object(app: &mut SolveApp, ctx: &egui::Context) {
     rows.push(("Mass", format!("{:.3} g", number(total, "mass_g"))));
     rows.push(("Volume", crate::prefs::show_mm(app, number(total, "volume_mm3"), 3)));
     rows.push(("Area", crate::prefs::show_mm(app, number(total, "area_mm2"), 2)));
+    // Stock size (#137): length × width × thickness along the part, first for a single body; the
+    // world-aligned bounding box below stays as it was.
+    if let [b] = bodies.as_slice()
+        && let Some(st) = b.get("stock").filter(|st| st.is_object())
+    {
+        let unit = crate::prefs::unit_scale(&app.session.doc.units).1;
+        let d: Vec<String> = ["length", "width", "thickness"].iter().map(|k| crate::prefs::show_mm_bare(app, number(st, k))).collect();
+        let size = format!("{} {unit}", d.join(" × "));
+        let size = if st["exact"].as_bool() == Some(true) { size } else { crate::i18n::format("properties.stock_approximate", &[("size", &size)]) };
+        rows.insert(0, ("Stock size", size));
+    }
     let geometry = if total.get("center_of_mass").is_some() { Some(total) } else { bodies.first().filter(|_| bodies.len() == 1) };
     if let Some(b) = geometry {
         let unit = crate::prefs::unit_scale(&app.session.doc.units).1;

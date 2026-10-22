@@ -28,6 +28,7 @@ mod plane;
 mod profile;
 pub mod section;
 pub mod spline_space;
+pub mod stock;
 pub mod tess;
 pub mod tspline;
 mod unit_vec3;

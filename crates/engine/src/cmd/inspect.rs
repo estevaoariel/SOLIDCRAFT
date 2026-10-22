@@ -53,6 +53,19 @@ pub static COMMANDS: &[CommandSpec] = &[
         .params("command: a command id. Returns {id, label, params, input, output} (and param_warnings in the warn parameter-check mode): the command's parameter documentation and, once the command has a typed contract, the JSON Schemas (2020-12) of its parameters and of a successful result (null otherwise). Read-only."),
 ];
 
+/// A body's stock size (#137) as JSON: length ≥ width ≥ thickness in mm along its own axes,
+/// rounded to a micrometre (axes to 1e-9) so equal parts print equal; null when it can't be
+/// measured.
+pub fn stock_json(body: &solidcraft_kernel::Body) -> Value {
+    let Ok(st) = solidcraft_kernel::stock(body) else { return Value::Null };
+    let mm = |x: f64| (x * 1e6).round() / 1e6;
+    let unit = |v: solidcraft_geom::Vec3| [v.x, v.y, v.z].map(|x| (x * 1e9).round() / 1e9);
+    let axes = st.axes.map(unit);
+    let center = [st.center.x, st.center.y, st.center.z].map(mm);
+    json!({"length": mm(st.length), "width": mm(st.width), "thickness": mm(st.thickness),
+        "exact": st.exact, "method": st.method, "axes": axes, "center": center})
+}
+
 pub fn measure_json(b: &solidcraft_doc::ModelBody) -> Value {
     match solidcraft_kernel::measure(&b.body) {
         Ok(m) => json!({
@@ -66,6 +79,7 @@ pub fn measure_json(b: &solidcraft_doc::ModelBody) -> Value {
             "vertices": m.merged.vertices,
             "face_types": m.merged.face_types,
             "kernel": {"faces": m.faces, "edges": m.edges, "vertices": m.vertices, "shells": m.shells},
+            "stock": stock_json(&b.body),
         }),
         Err(e) => json!({"name": b.name, "error": e.to_string()}),
     }
