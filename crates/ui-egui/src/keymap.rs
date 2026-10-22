@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 
 use serde_json::{Value, json};
-use solidcraft_engine::command_specs;
+use solidcraft_engine::{CommandSpec, command_specs};
 
 use crate::SolveApp;
 use crate::ui_kit;
@@ -99,6 +99,11 @@ pub fn effective(app: &SolveApp, id: &str) -> Option<String> {
         Some(k) => Some(k.clone()),
         None => solidcraft_engine::find_command(id).and_then(|c| c.shortcut).map(str::to_string),
     }
+}
+
+/// Use the spec already available when walking the command list.
+fn effective_for_spec<'a>(app: &'a SolveApp, command: &CommandSpec) -> Option<&'a str> {
+    app.keymap.custom.get(command.id).map(String::as_str).or(command.shortcut).filter(|key| !key.is_empty())
 }
 
 /// Commands bound to `key` now.
@@ -242,14 +247,18 @@ pub fn page(app: &mut SolveApp, ui: &mut egui::Ui) {
         }
         ui_kit::text(ui, app.tr_label("Select Other: hold the left button still on the model (or right-click › Select Other…) to list everything under the cursor; click again on the same spot to select the next thing there. Double-click the middle button to go Home (Preferences › Navigation)."), ui_kit::Text::Note("navigation"));
         let q = app.keymap.filter.to_lowercase();
-        let commands = command_specs();
+        let commands: Vec<_> = command_specs()
+            .into_iter()
+            .filter_map(|c| {
+                let key = effective_for_spec(app, c).unwrap_or_default();
+                let label = app.tr_label(c.label);
+                (q.is_empty() || [c.label, c.id, key, label].iter().any(|s| s.to_lowercase().contains(&q))).then_some((c, key, label))
+            })
+            .collect();
         let t = crate::theme::Tokens::get();
         let key_width = commands
             .iter()
-            .map(|c| {
-                let key = effective(app, c.id).unwrap_or_default();
-                ui_kit::ContentWidth::button(ui, &key)
-            })
+            .map(|(_, key, _)| ui_kit::ContentWidth::button(ui, key))
             .fold(ui_kit::ContentWidth::button(ui, app.tr_label("press a key…")), f32::max)
             .max(ui_kit::ContentWidth::label(ui, app.tr_label("Keyboard Shortcuts")) + t.space_8);
         let action_width = if app.keymap.read_only {
@@ -265,13 +274,8 @@ pub fn page(app: &mut SolveApp, ui: &mut egui::Ui) {
                 ui_kit::Column::new("", 0.0).icon_only().min_content_width(action_width),
             ];
             ui_kit::table(ui, "keymap", &columns, crate::i18n::tr("keymap.empty"), |ui, table| {
-                for c in commands {
-                    let key = effective(app, c.id).unwrap_or_default();
-                    let translated_label = app.tr_label(c.label);
-                    if !q.is_empty() && ![c.label, c.id, key.as_str(), translated_label].iter().any(|s| s.to_lowercase().contains(&q)) {
-                        continue;
-                    }
-                    table.row(ui, c.id, app.keymap.capturing.as_deref() == Some(c.id), |row| {
+                for (c, key, translated_label) in commands {
+                    table.row_visible(ui, c.id, app.keymap.capturing.as_deref() == Some(c.id), false, |row| {
                         row.cell(|ui| {
                             ui_kit::text(ui, translated_label, ui_kit::Text::Cell);
                         });
@@ -285,7 +289,7 @@ pub fn page(app: &mut SolveApp, ui: &mut egui::Ui) {
                         } else if key.is_empty() {
                             "—".to_string()
                         } else {
-                            key.clone()
+                            key.to_string()
                         };
                         row.cell(|ui| {
                             if app.keymap.read_only {
@@ -384,6 +388,26 @@ mod tests {
 
     fn app() -> SolveApp {
         SolveApp::new(solidcraft_engine::Session::default(), Default::default())
+    }
+
+    #[test]
+    fn shortcut_page_only_builds_visible_rows_and_reveals_filtered_rows() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.home.open = false;
+        h.call("ui.resize", json!({"width": 1200, "height": 600}));
+        h.call("ui.prefs", json!({"open": "Keyboard Shortcuts"}));
+        h.frames(3);
+        let commands = command_specs();
+        let first = commands.first().unwrap().id;
+        let last = commands.last().unwrap().id;
+        let handle = |id| format!("keymap:capture:{id}");
+        assert!(crate::scenario::handle_at(&handle(first)).is_some());
+        assert!(crate::scenario::handle_at(&handle(last)).is_none(), "off-screen cells should not be built");
+
+        h.app.keymap.filter = last.to_string();
+        h.frames(3);
+        assert!(crate::scenario::handle_at(&handle(last)).is_some(), "filtering brings the last command into view");
+        assert!(crate::scenario::handle_at(&handle(first)).is_none());
     }
 
     #[test]
