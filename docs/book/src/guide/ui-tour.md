@@ -34,6 +34,12 @@
   in the default and Inventor presets. In every preset, Ctrl+left drag (Cmd on macOS) that starts
   on empty space orbits; a Ctrl+click still adds to the selection. Shift+right-drag snaps to the nearest standard or
   diagonal view; Shift does not request snapping when the preset already requires it to orbit.
+
+  Enable **Preferences → Navigation → Free orbit** to rotate the mouse and 3D mouse continuously
+  through both poles, preserving roll without axis snapping. It defaults to off for every mouse
+  preset. With SolidWorks navigation, right-click a planar face and choose **Normal to Selection**
+  to use Look At (also Ctrl+8); repeat to flip the side, preserving scale and projection.
+
   **Mouse gestures** (Preferences › Navigation, off by default) work with the SolidWorks mouse preset
   only (the wheel orbits, Ctrl + wheel pans) and take over the right button, which then no longer
   orbits: hold it and move the pointer 4 pt to open a ring of tools (280 pt inside, 350 pt outside), even
@@ -137,10 +143,9 @@ Imported themes are kept with your preferences, so they work in the browser app 
 vision modes still apply on top of any theme.
 
 Navigation › **Smooth wheel zoom** is on by default. Turn it off to apply each wheel or
-trackpad event immediately, with no smoothing tail. Re-enabling smoothing during
+trackpad event immediately, with no smoothing tail. It is independent of **Animate view
+changes**, which controls axis views, Look At, Home and Fit. Re-enabling smoothing during
 a wheel gesture takes effect after that gesture ends, avoiding leftover zoom being replayed.
-Every other view change (axis view, view cube, Look At, Home, Fit, named views, arrow keys)
-and every orbit, pan and zoom drag applies at once, with no animation.
 
 Navigation › **Alias** uses Alias's camera keys: Shift+Alt+left drag orbits, Shift+Alt+middle
 drag pans and Shift+Alt+right drag zooms (drag down to move away, up to move closer). Without
