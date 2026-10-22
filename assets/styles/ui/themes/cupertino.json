@@ -169,6 +169,7 @@
     "sketch_centerline": "#b77c47",
     "sketch_construction": "#cb8b37",
     "sketch_fixed": "#262628",
+    "sketch_halo": "#ffffff",
     "sketch_ink": "#23723f",
     "sketch_locked": "#318348",
     "sketch_lost": "#c94f68",
