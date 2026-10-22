@@ -531,6 +531,40 @@ fn timeline_move_many_is_atomic_and_one_undo_step() {
     assert_eq!(*s.doc, before_parent, "creating a parent for selected folders is one undo step");
 }
 
+/// `active` moves features across the history marker together with the reorder: one undo step
+/// restores both the order and the marker. Before, moving a feature more than one step behind the
+//  history marker would need two undo steps: one to retore the order and one to move the marker
+#[test]
+fn timeline_moves_across_the_marker_are_one_undo_step() {
+    let mut s = Session::default();
+    for (name, x) in [("A", 0), ("B", 20), ("C", 40), ("D", 60)] {
+        run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "corner": [x, 0, 0], "operation": "new_body", "name": name}));
+    }
+    run(&mut s, "timeline.roll_to", json!({"position": 2}));
+    let names = |s: &Session| s.doc.features.iter().map(|feature| feature.name.clone()).collect::<Vec<_>>();
+    let before = (*s.doc).clone();
+
+    // A B | C D: B moves between C and D, rolled back; C stays rolled back.
+    run(&mut s, "timeline.move_many", json!({"features": ["B"], "position": 3, "active": false}));
+    assert_eq!((names(&s), s.doc.marker), (vec!["A".into(), "C".into(), "B".into(), "D".into()], Some(1)));
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(*s.doc, before, "one undo restores both order and marker");
+
+    // B stays in place and only crosses the marker; and back again with `timeline.reorder`.
+    run(&mut s, "timeline.move_many", json!({"features": ["B"], "position": 2, "active": false}));
+    assert_eq!((names(&s), s.doc.marker), (vec!["A".into(), "B".into(), "C".into(), "D".into()], Some(1)));
+    run(&mut s, "timeline.reorder", json!({"feature": "B", "position": 1, "active": true}));
+    assert_eq!(s.doc.marker, Some(2));
+    run(&mut s, "timeline.reorder", json!({"feature": "C", "position": 2, "active": true}));
+    run(&mut s, "timeline.reorder", json!({"feature": "D", "position": 3, "active": true}));
+    assert_eq!(s.doc.marker, None, "every feature active again");
+
+    let undo = s.undo.len();
+    let error = s.execute("timeline.reorder", &json!({"feature": "A", "position": 0, "active": false})).unwrap_err().to_string();
+    assert!(error.contains("behind the history marker"), "{error}");
+    assert_eq!(s.undo.len(), undo, "a refused move adds no undo step");
+}
+
 #[test]
 fn failed_timeline_move_many_keeps_folder_membership_and_order() {
     let mut s = Session::default();

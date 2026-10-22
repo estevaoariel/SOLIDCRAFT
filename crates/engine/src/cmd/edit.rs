@@ -39,13 +39,13 @@ pub static COMMANDS: &[CommandSpec] = &[
         .doc_only()
         .params("features?: [id|name], groups?: [ids], group?: id (omit or null to move to the timeline root)"),
     CommandSpec::new("timeline.move_many", "Move Timeline Items", move_many).icon("reorder").params(
-        "features?: [id|name], groups?: [folder ids], group?: folder id, position: insertion slot; atomically changes folder membership and moves all selected contents as one block",
+        "features?: [id|name], groups?: [folder ids], group?: folder id, position: insertion slot, active?: bool (true = the moved contents end up before the history marker, false = behind it; other features keep their state); atomically changes folder membership and moves all selected contents as one block",
     ),
     CommandSpec::new("timeline.rollback", "Move Timeline Marker", rollback).icon("rollback").params("position: number of features to keep active, or \"end\" (omit = end)"),
     CommandSpec::new("timeline.roll_to", "Roll History Marker", rollback).icon("rollback")
         .params("position: number of features to keep active, or \"end\" (omit = end) | feature: id|name (the marker goes right after it)"),
     CommandSpec::new("timeline.reorder", "Reorder Feature", reorder).icon("reorder")
-        .params("feature: id|name, position: its new index; refused when a feature that worked would fail"),
+        .params("feature: id|name, position: its new index, active?: bool (true = it ends up before the history marker, false = behind it; other features keep their state); refused when a feature that worked would fail"),
     CommandSpec::new("timeline.reorder_many", "Reorder Features", reorder_many).icon("reorder").params(
         "features: [id|name], position: insertion slot in the current history; selected features keep their relative order; refused when a feature that worked would fail",
     ),
@@ -499,7 +499,9 @@ fn move_many(s: &mut Session, p: &Value) -> Result<Value> {
     }
     sort_group_features(&mut next);
     let slot = num(p, "position").map(|x| x.max(0.0) as usize).ok_or_else(|| bad(cmd, "`position` must be a number"))?;
-    let (next, ordered) = reorder_features(s, next, &moving, slot, cmd)?;
+    let active = active_param(p, cmd)?;
+    let (mut next, ordered) = reorder_features(s, next, &moving, slot, cmd)?;
+    place_marker(s, &mut next, &moving, active, cmd)?;
     if next != *s.doc {
         *s.doc_mut() = next;
     }
@@ -1065,7 +1067,8 @@ fn reorder(s: &mut Session, p: &Value) -> Result<Value> {
     let n = s.doc.features.len();
     let to = num(p, "position").map(|x| x.max(0.0) as usize).ok_or_else(|| bad(cmd, "`position` must be a number"))?.min(n.saturating_sub(1));
     let from = s.doc.feature_index(id).ok_or_else(|| bad(cmd, "feature"))?;
-    if from == to {
+    let active = active_param(p, cmd)?;
+    if from == to && active.is_none() {
         return Ok(json!({"feature": id, "position": to}));
     }
     let mut next = (*s.doc).clone();
@@ -1082,8 +1085,37 @@ fn reorder(s: &mut Session, p: &Value) -> Result<Value> {
         let list: Vec<String> = broken.iter().map(|(n, e)| format!("{n} ({e})")).collect();
         return Err(bad(cmd, format!("moving {name} there breaks {}", list.join("; "))));
     }
-    *s.doc_mut() = next;
+    place_marker(s, &mut next, &[id], active, cmd)?;
+    if next != *s.doc {
+        *s.doc_mut() = next;
+    }
     Ok(json!({"feature": id, "position": to}))
+}
+
+/// The optional `active` of a move: whether the moved features end up before the history marker.
+fn active_param(p: &Value, cmd: &str) -> Result<Option<bool>> {
+    match p.get("active") {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Bool(active)) => Ok(Some(*active)),
+        Some(_) => Err(bad(cmd, "`active` must be true or false")),
+    }
+}
+
+/// With `active` given, put the history marker of the reordered `next` so the `moving` features
+/// are active (before it) or rolled back (behind it) while every other feature keeps its state, in
+/// the same step as the move. Refused when `position` puts them on the other side of it.
+fn place_marker(s: &Session, next: &mut solidcraft_doc::Document, moving: &[u64], active: Option<bool>, cmd: &str) -> Result<()> {
+    let Some(active) = active else { return Ok(()) };
+    let n = s.doc.features.len();
+    let was_active: std::collections::BTreeSet<u64> = s.doc.features.iter().take(s.doc.marker.unwrap_or(n)).map(|feature| feature.id).collect();
+    let stays_active = |id: u64| if moving.contains(&id) { active } else { was_active.contains(&id) };
+    let count = next.features.iter().filter(|feature| stays_active(feature.id)).count();
+    if !next.features.iter().take(count).all(|feature| stays_active(feature.id)) {
+        let side = if active { "before" } else { "behind" };
+        return Err(bad(cmd, format!("`position` is not {side} the history marker, as `active: {active}` asks")));
+    }
+    next.marker = (count < next.features.len()).then_some(count);
+    Ok(())
 }
 
 fn reorder_many(s: &mut Session, p: &Value) -> Result<Value> {
