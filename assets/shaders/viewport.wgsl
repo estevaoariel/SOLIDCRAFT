@@ -458,54 +458,121 @@ struct LOut {
     @location(1) wp: vec3<f32>,
 };
 
-@vertex
-fn vs_line(@builtin(vertex_index) vi: u32, @location(0) a: vec3<f32>, @location(1) b: vec3<f32>, @location(2) c: vec4<f32>, @location(3) w: f32) -> LOut {
-    var pa = a;
-    var pb = b;
-    var ca = u.vp * vec4<f32>(a, 1.0);
-    var cb = u.vp * vec4<f32>(b, 1.0);
+/// A line's ends, cut at the near plane, and where they land on the screen: the screen-space
+/// direction and length of the segment (`dir`, `len`).
+struct LineV {
+    ca: vec4<f32>,
+    cb: vec4<f32>,
+    pa: vec3<f32>,
+    pb: vec3<f32>,
+    dir: vec2<f32>,
+    len: f32,
+};
+
+fn line_vertices(a: vec3<f32>, b: vec3<f32>) -> LineV {
+    var v: LineV;
+    v.pa = a;
+    v.pb = b;
+    v.ca = u.vp * vec4<f32>(a, 1.0);
+    v.cb = u.vp * vec4<f32>(b, 1.0);
     // An end behind the near plane (clip z < 0) has no screen point: its divide flips the
     // line or drops it whole (ground grid lines running past the eye at a low angle). Cut
     // the segment at the plane instead; clip space is linear in the world point.
-    let za = near_z(ca);
-    let zb = near_z(cb);
+    let za = near_z(v.ca);
+    let zb = near_z(v.cb);
     if (za < 0.0 && zb > 0.0) {
         let k = za / (za - zb);
-        ca = mix(ca, cb, k);
-        pa = mix(a, b, k);
+        v.ca = mix(v.ca, v.cb, k);
+        v.pa = mix(a, b, k);
     } else if (zb < 0.0 && za > 0.0) {
         let k = zb / (zb - za);
-        cb = mix(cb, ca, k);
-        pb = mix(b, a, k);
+        v.cb = mix(v.cb, v.ca, k);
+        v.pb = mix(b, a, k);
     }
     let half = u.screen.xy * 0.5;
-    let sa = ca.xy / max(ca.w, 1e-6) * half;
-    let sb = cb.xy / max(cb.w, 1e-6) * half;
+    let sa = v.ca.xy / max(v.ca.w, 1e-6) * half;
+    let sb = v.cb.xy / max(v.cb.w, 1e-6) * half;
     var dir = sb - sa;
     let len = length(dir);
     if (len < 1e-6) { dir = vec2<f32>(1.0, 0.0); } else { dir = dir / len; }
-    let nrm = vec2<f32>(-dir.y, dir.x);
+    v.dir = dir;
+    v.len = len;
+    return v;
+}
+
+@vertex
+fn vs_line(@builtin(vertex_index) vi: u32, @location(0) a: vec3<f32>, @location(1) b: vec3<f32>, @location(2) c: vec4<f32>, @location(3) w: f32) -> LOut {
+    let v = line_vertices(a, b);
+    let half = u.screen.xy * 0.5;
+    let nrm = vec2<f32>(-v.dir.y, v.dir.x);
     // Two triangles: corners (t, side).
     var ts = array<f32, 6>(0.0, 1.0, 1.0, 0.0, 1.0, 0.0);
     var ss = array<f32, 6>(-1.0, -1.0, 1.0, -1.0, 1.0, 1.0);
     let t = ts[vi];
     let s = ss[vi];
-    let base = select(ca, cb, t > 0.5);
+    let base = select(v.ca, v.cb, t > 0.5);
     // A line thinner than a pixel is drawn a pixel wide, faded by the width it lacks: a narrower
     // quad covers no pixel centre when it falls between two rows, so without multisampling thin
     // lines (the grid's) came and went as the view zoomed (#2823).
     let wd = max(w, 1.0);
-    let off = nrm * s * wd * 0.5 + dir * (t * 2.0 - 1.0) * wd * 0.5;
+    let off = nrm * s * wd * 0.5 + v.dir * (t * 2.0 - 1.0) * wd * 0.5;
     var o: LOut;
     o.pos = vec4<f32>(base.xy + off / half * base.w, base.z, base.w);
     o.c = vec4<f32>(c.rgb, c.a * (w / wd));
-    o.wp = select(pa, pb, t > 0.5);
+    o.wp = select(v.pa, v.pb, t > 0.5);
     return o;
 }
 
 @fragment
 fn fs_line(i: LOut) -> @location(0) vec4<f32> {
     if (clipped(i.wp)) { discard; }
+    return out_color(i.c);
+}
+
+/// A dashed line: like a line, but the fragments in the gaps between the dashes are thrown away.
+struct DOut {
+    @builtin(position) pos: vec4<f32>,
+    @location(0) c: vec4<f32>,
+    @location(1) wp: vec3<f32>,
+    /// How far along the line the fragment is, in screen pixels. Interpolated linearly (not
+    /// perspective-correctly): the distance is measured in the screen, and it grows with the
+    /// screen's own mix of the corners, not with the world one.
+    @location(2) @interpolate(linear) d: f32,
+};
+
+/// The dash: a dash and a gap of the same length, in screen pixels, so a dashed line looks the
+/// same at every zoom.
+const DASH: f32 = 6.0;
+
+@vertex
+fn vs_dash_line(@builtin(vertex_index) vi: u32, @location(0) a: vec3<f32>, @location(1) b: vec3<f32>, @location(2) c: vec4<f32>, @location(3) w: f32) -> DOut {
+    let v = line_vertices(a, b);
+    let half = u.screen.xy * 0.5;
+    let nrm = vec2<f32>(-v.dir.y, v.dir.x);
+    var ts = array<f32, 6>(0.0, 1.0, 1.0, 0.0, 1.0, 0.0);
+    var ss = array<f32, 6>(-1.0, -1.0, 1.0, -1.0, 1.0, 1.0);
+    let t = ts[vi];
+    let s = ss[vi];
+    let base = select(v.ca, v.cb, t > 0.5);
+    // A line thinner than a pixel is drawn a pixel wide, faded by the width it lacks, as the
+    // other lines are.
+    let wd = max(w, 1.0);
+    let off = nrm * s * wd * 0.5 + v.dir * (t * 2.0 - 1.0) * wd * 0.5;
+    var o: DOut;
+    o.pos = vec4<f32>(base.xy + off / half * base.w, base.z, base.w);
+    o.c = vec4<f32>(c.rgb, c.a * (w / wd));
+    o.wp = select(v.pa, v.pb, t > 0.5);
+    // How far along the line this corner is: the line's own length on the screen, plus the half
+    // width the quad reaches past each end.
+    o.d = t * v.len + (t * 2.0 - 1.0) * wd * 0.5;
+    return o;
+}
+
+@fragment
+fn fs_dash_line(i: DOut) -> @location(0) vec4<f32> {
+    if (clipped(i.wp)) { discard; }
+    // The gap of the dash: the fragments between the dashes are thrown away.
+    if (fract(i.d / (2.0 * DASH)) > 0.5) { discard; }
     return out_color(i.c);
 }
 

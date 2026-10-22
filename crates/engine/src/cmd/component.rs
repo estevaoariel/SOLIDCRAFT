@@ -482,6 +482,8 @@ fn move_occurrence(s: &mut Session, p: &Value) -> Result<Value> {
         }
     } else {
         s.pending_moves.insert(id, next);
+        // The moves shown are not the view's pose any more: the view on show no longer holds.
+        s.exploded_view = None;
         s.revision += 1;
     }
     Ok(json!({"occurrence": id, "transform": next, "pending": !bool_(p, "capture").unwrap_or(true)}))
@@ -501,6 +503,12 @@ fn ground(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn capture(s: &mut Session, _p: &Value) -> Result<Value> {
+    let cmd = "component.capture_position";
+    // A view on show holds its pose in the moves shown: capturing them would write the exploded
+    // placement into the design, and an exploded view is shown only. Show none first.
+    if s.exploded_view.is_some() && !s.pending_moves.is_empty() {
+        return Err(bad(cmd, "an exploded view is on show: show none before capturing the position"));
+    }
     let moves = std::mem::take(&mut s.pending_moves);
     let n = moves.len();
     for (id, m) in moves {
@@ -514,6 +522,8 @@ fn capture(s: &mut Session, _p: &Value) -> Result<Value> {
 
 fn revert(s: &mut Session, p: &Value) -> Result<Value> {
     let before = s.pending_moves.len();
+    // The occurrences the view on show moves: a move of one of them takes its pose away.
+    let shown = crate::view::view_moved_occurrences(s);
     if let Some(value) = p.get("occurrences") {
         let ids = value
             .as_array()
@@ -524,10 +534,14 @@ fn revert(s: &mut Session, p: &Value) -> Result<Value> {
             return Err(bad("component.revert_position", "no occurrence"));
         }
         for id in ids {
+            if shown.contains(&id) {
+                s.exploded_view = None;
+            }
             s.pending_moves.remove(&id);
         }
     } else {
         s.pending_moves.clear();
+        s.exploded_view = None;
     }
     let n = before - s.pending_moves.len();
     s.revision += 1;

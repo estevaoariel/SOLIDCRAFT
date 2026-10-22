@@ -231,6 +231,11 @@ pub(in crate::cmd) fn capture_positions(s: &mut Session, plane: &PlaneRef) -> Re
     } else {
         involved.extend(s.active_occurrence_path.clone().unwrap_or_else(|| s.doc.first_path(s.active_component)));
     }
+    // The pose of a view on show is shown only: it is never written to the design, so a sketch
+    // on a part of the explosion waits until the view is put away.
+    if crate::view::view_moved_occurrences(s).iter().any(|id| involved.contains(id)) {
+        return Err(bad("sketch attachment", "an exploded view is on show: show none before sketching on a moved part"));
+    }
     let changes: Vec<_> = involved.into_iter().filter_map(|id| s.pending_moves.get(&id).copied().map(|matrix| (id, matrix))).collect();
     for (id, matrix) in &changes {
         let occurrence = s

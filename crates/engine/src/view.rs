@@ -28,6 +28,8 @@ pub mod colors {
     /// Linked geometry whose reference was lost.
     pub const SKETCH_LOST: Rgb = Rgb(200, 60, 90);
     pub const PROFILE: Rgb = Rgb(255, 196, 120);
+    /// The trail lines of an exploded view: reference geometry, in the construction colour.
+    pub const TRAIL: Rgb = Rgb(156, 86, 0);
     pub const GRID: Rgb = Rgb(196, 202, 212);
     pub const GRID_MAJOR: Rgb = Rgb(170, 178, 190);
     pub const AXIS_X: Rgb = Rgb(220, 60, 60);
@@ -64,6 +66,8 @@ pub struct Palette {
     pub sketch_lost: Rgb,
     pub sketch_construction: Rgb,
     pub sketch_centerline: Rgb,
+    /// The trail lines of an exploded view.
+    pub trail: Rgb,
     /// The origin axes: X, Y, Z.
     pub axes: [Rgb; 3],
     /// What the section cap is tinted toward.
@@ -89,6 +93,7 @@ impl Palette {
         sketch_lost: colors::SKETCH_LOST,
         sketch_construction: colors::SKETCH_CONSTRUCTION,
         sketch_centerline: colors::SKETCH_CENTERLINE,
+        trail: colors::TRAIL,
         axes: [colors::AXIS_X, colors::AXIS_Y, colors::AXIS_Z],
         cap: colors::SECTION_CAP,
         analysis: AnalysisColors::DEFAULT,
@@ -351,6 +356,42 @@ pub fn sketch_point_visible(sk: &Sketch, i: usize) -> bool {
     sk.points.get(i).is_some_and(|p| SketchPointVisibility::new(sk).takes(p))
 }
 
+/// The occurrences the exploded view on show moves: its pose belongs to them, and a move of any
+/// other kind (a shown move, a capture, a revert) replaces it.
+pub fn view_moved_occurrences(s: &Session) -> std::collections::BTreeSet<u64> {
+    let Some(id) = s.exploded_view else { return Default::default() };
+    let Some(view) = s.doc.assembly.exploded.iter().find(|v| v.id == id) else { return Default::default() };
+    view.steps.iter().flat_map(|st| st.moves.iter().map(|(o, _)| *o)).collect()
+}
+
+/// The trail lines of the exploded view on show: every moved occurrence's assembled place and
+/// its exploded place, in world space (the origin of its placement, not of a body). Nothing
+/// about them is saved: they are worked out from the design and the moves shown every time the
+/// scene is built. A view that is not on show, or one that draws no trail lines, has none.
+pub fn explode_trails(s: &Session) -> Vec<(Vec3, Vec3)> {
+    let Some(id) = s.exploded_view else { return Vec::new() };
+    let Some(view) = s.doc.assembly.exploded.iter().find(|v| v.id == id) else { return Vec::new() };
+    if !view.trail_lines {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    // The occurrences the view moves: only those get a line, and only while they are moved away
+    // from where they are assembled.
+    for moved in view_moved_occurrences(s) {
+        if !s.pending_moves.contains_key(&moved) {
+            continue;
+        }
+        let Some(o) = s.doc.occurrences.iter().find(|o| o.id == moved) else { continue };
+        // The occurrence's path: its ancestors and then itself, as the renderer places it.
+        let path: Vec<u64> = s.doc.first_path(o.parent).into_iter().chain([o.id]).collect();
+        let (Some(assembled), Some(exploded)) = (s.occurrence_world_matrix(&path, false), s.occurrence_world_matrix(&path, true)) else {
+            continue;
+        };
+        out.push((solidcraft_doc::apply_point(&assembled, Vec3::ZERO), solidcraft_doc::apply_point(&exploded, Vec3::ZERO)));
+    }
+    out
+}
+
 /// The scene for a headless render, cut by the session's section.
 pub fn scene(s: &Session, cam: &Camera) -> Scene {
     scene_with_section(s, cam, s.section)
@@ -537,6 +578,10 @@ fn build_scene(
         for (pts, col, cons) in sketch_lines_in(&ss.sketch, &ss.plane, active, &ss.report.curve_determined, &mut sampler, p) {
             sc.lines.push(SceneLine { points: pts, color: col, width: if cons { 1.0 } else { 1.6 }, on_top: active });
         }
+    }
+    // The trail lines of the exploded view on show: reference geometry, drawn dashed.
+    for (a, b) in explode_trails(s) {
+        sc.dashed.push(SceneLine { points: vec![a, b], color: p.trail, width: 1.4, on_top: false });
     }
     sc
 }

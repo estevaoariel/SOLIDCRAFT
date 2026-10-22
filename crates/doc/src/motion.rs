@@ -51,13 +51,76 @@ pub struct MotionStudy {
     pub keys: Vec<StudyKey>,
 }
 
-/// An exploded view: occurrences moved apart (shown only; the design keeps its placements).
+/// How an exploded view blends one step into the next.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EaseKind {
+    Linear,
+    /// Slow at the start, quick at the end (the default).
+    #[default]
+    EaseInOut,
+    EaseIn,
+    EaseOut,
+}
+
+impl EaseKind {
+    /// How much of a step's move is done at `t` (0…1): `t` for linear, `t²` for ease in,
+    /// `1-(1-t)²` for ease out and the smoothstep `t²(3-2t)` for ease in and out.
+    /// A `t` that is not finite is treated as 0.
+    pub fn apply(self, t: f64) -> f64 {
+        let t = if t.is_finite() { t.clamp(0.0, 1.0) } else { 0.0 };
+        match self {
+            EaseKind::Linear => t,
+            EaseKind::EaseIn => t * t,
+            EaseKind::EaseOut => 1.0 - (1.0 - t) * (1.0 - t),
+            EaseKind::EaseInOut => t * t * (3.0 - 2.0 * t),
+        }
+    }
+}
+
+/// One step of an exploded view: the occurrences it moves and how long it takes.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ExplodeStep {
+    pub id: u64,
+    pub name: String,
+    /// (occurrence, translation) this step adds to the occurrence's offset. The translation is in
+    /// the occurrence's parent frame, like the transform it is added to.
+    pub moves: Vec<(u64, Vec3)>,
+    /// How long the step takes when the view plays (milliseconds). 0 means the default
+    /// ([`DEFAULT_STEP_MS`]).
+    #[serde(default)]
+    pub duration_ms: u32,
+}
+
+/// The default length of a step when it does not say (milliseconds).
+pub const DEFAULT_STEP_MS: u32 = 500;
+
+/// The id of a step in a view: the view's id and the step's place in it. The ids are stable
+/// (a design keeps them when it is saved again) and unique within the view, where a step is
+/// named by its index or by its id.
+pub fn step_id(view: u64, index: u64) -> u64 {
+    view.saturating_mul(1000).saturating_add(index)
+}
+
+/// An exploded view: occurrences moved apart in steps (shown only; the design keeps its
+/// placements).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ExplodedView {
     pub id: u64,
     pub name: String,
-    /// (occurrence, world translation)
-    pub moves: Vec<(u64, Vec3)>,
+    /// The steps, in order. Each step's moves add to the ones before it.
+    #[serde(default)]
+    pub steps: Vec<ExplodeStep>,
+    /// Draw a dashed line from every moved occurrence back to the place it is assembled in.
+    #[serde(default = "trail_lines_on")]
+    pub trail_lines: bool,
+    /// How the steps blend into one another.
+    #[serde(default)]
+    pub easing: EaseKind,
+}
+
+fn trail_lines_on() -> bool {
+    true
 }
 
 #[cfg(test)]
@@ -72,5 +135,32 @@ mod tests {
         assert_eq!(k.value_at(15.0), Some(0.0));
         assert_eq!(k.value_at(99.0), Some(-1.0));
         assert_eq!(StudyKey { joint: 1, index: 0, points: vec![] }.value_at(1.0), None);
+    }
+
+    /// The easing blends a step's progress: nothing is done at 0, all of it at 1, and what is
+    /// between is the curve. A progress outside 0…1 is held at the ends, and one that is not
+    /// a number at all starts the step.
+    #[test]
+    fn easing_blends_a_step() {
+        for kind in [EaseKind::Linear, EaseKind::EaseIn, EaseKind::EaseOut, EaseKind::EaseInOut] {
+            assert_eq!(kind.apply(0.0), 0.0, "{kind:?}");
+            assert_eq!(kind.apply(1.0), 1.0, "{kind:?}");
+            let middle = kind.apply(0.5);
+            assert!((0.0..=1.0).contains(&middle), "{kind:?}: {middle}");
+        }
+        assert_eq!(EaseKind::Linear.apply(0.5), 0.5);
+        assert_eq!(EaseKind::EaseIn.apply(0.5), 0.25);
+        assert_eq!(EaseKind::EaseOut.apply(0.5), 0.75);
+        assert_eq!(EaseKind::EaseInOut.apply(0.5), 0.5);
+        // Ease in is slower than linear, ease out faster, over the whole step.
+        assert!(EaseKind::EaseIn.apply(0.25) < EaseKind::Linear.apply(0.25));
+        assert!(EaseKind::EaseOut.apply(0.25) > EaseKind::Linear.apply(0.25));
+        // A progress outside 0…1 is held at the ends.
+        assert_eq!(EaseKind::EaseIn.apply(-1.0), 0.0);
+        assert_eq!(EaseKind::EaseOut.apply(2.0), 1.0);
+        // A progress that is not a number starts the step.
+        assert_eq!(EaseKind::Linear.apply(f64::NAN), 0.0);
+        assert_eq!(EaseKind::EaseIn.apply(f64::INFINITY), 0.0);
+        assert_eq!(EaseKind::EaseOut.apply(f64::NEG_INFINITY), 0.0);
     }
 }

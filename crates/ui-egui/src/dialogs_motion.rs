@@ -8,12 +8,15 @@ use std::collections::BTreeMap;
 
 use egui::{Pos2, RichText, Sense, Stroke, pos2, vec2};
 use serde_json::{Value, json};
+use solidcraft_engine::Sel;
 use solidcraft_engine::Session;
 use solidcraft_engine::doc::Mat;
 use solidcraft_engine::doc::joints::JointKind;
+use solidcraft_engine::geom::Vec3;
 
 use crate::SolveApp;
 use crate::dialogs::{Dialog, Kind, combo, form_row};
+use crate::explode_gizmo::ExplodePick;
 use crate::selection::{BODIES, SelInput};
 use crate::theme::Tokens;
 
@@ -63,11 +66,35 @@ pub enum Mo {
         analysis: Box<plot::Analysis>,
     },
     Explode {
+        /// The view's name.
         name: String,
+        /// The view being edited (its id); none for a new one.
+        view: Option<u64>,
+        /// The steps of the view, in order.
+        steps: Vec<ExplodeStep>,
+        /// The step being edited (the list's selection).
+        selected: usize,
+        /// The easing (an index into [`EASINGS`]).
+        easing: usize,
+        /// Draw a line from every moved occurrence back to where it is assembled.
+        trail_lines: bool,
+        /// The automatic explosion's scale (a new view only).
         scale: f64,
-        shown: Option<(u64, u64)>,
+        /// The scale the automatic moves were last filled for (none until they are).
+        auto: Option<f64>,
+        /// The scrubber: milliseconds into the sequence.
+        time: f64,
+        playing: bool,
+        /// Playback starts over at the end (else it stops there).
+        looping: bool,
+        /// Playback speed (index into `SPEEDS`).
+        speed: usize,
+        /// The pose shown (its key): it is worked out again when that changes.
+        shown: Option<u64>,
         saved: Option<BTreeMap<u64, Mat>>,
         error: Option<String>,
+        /// The last drag of the gizmo, so the same drag is not taken twice.
+        dragged: Option<(usize, u64, [f64; 3])>,
     },
     Configurations {
         new_row: String,
@@ -89,8 +116,70 @@ impl Mo {
 
     /// A table that needs the wide dialog.
     pub fn wide(&self) -> bool {
-        matches!(self, Mo::Configurations { .. } | Mo::MotionStudy { .. })
+        matches!(self, Mo::Configurations { .. } | Mo::MotionStudy { .. } | Mo::Explode { .. })
     }
+}
+
+// ---- Exploded views ----
+
+/// The easings an exploded view offers, as the engine names them.
+pub const EASINGS: [&str; 4] = ["linear", "ease_in", "ease_out", "ease_in_out"];
+/// The easings as they are shown.
+const EASING_LABELS: [&str; 4] = ["Linear", "Ease In", "Ease Out", "Ease In Out"];
+/// The easing a new view starts with (the engine's default).
+const DEFAULT_EASING: usize = 3;
+/// How many steps a view may have.
+const MAX_STEPS: usize = 64;
+/// The longest a step may take (milliseconds).
+const MAX_STEP_MS: u32 = 600_000;
+/// The length of a step that does not say (milliseconds) — the engine's.
+const DEFAULT_STEP_MS: u32 = 500;
+
+/// One move of an exploded view's step: the occurrence it moves and where to.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ExplodeMove {
+    /// The occurrence moved.
+    pub occurrence: u64,
+    /// The translation (millimetres).
+    pub translate: [f64; 3],
+}
+
+/// One step of an exploded view, as the dialog edits it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ExplodeStep {
+    /// The step's id in the design (0 when the step is not in the design yet).
+    pub id: u64,
+    /// The step's name.
+    pub name: String,
+    /// The moves the step makes.
+    pub moves: Vec<ExplodeMove>,
+    /// How long the step takes (milliseconds).
+    pub duration_ms: u32,
+}
+
+/// A step as a new view starts with: one empty step.
+fn new_step() -> ExplodeStep {
+    ExplodeStep { id: 0, name: "Explode".into(), moves: Vec::new(), duration_ms: DEFAULT_STEP_MS }
+}
+
+/// A step's moves as the engine takes them.
+fn moves_json(moves: &[ExplodeMove]) -> Vec<Value> {
+    moves.iter().map(|m| json!({"occurrence": m.occurrence, "translate": m.translate})).collect()
+}
+
+/// How long the whole sequence takes (milliseconds).
+fn total_ms(steps: &[ExplodeStep]) -> f64 {
+    steps.iter().map(|s| if s.duration_ms == 0 { f64::from(DEFAULT_STEP_MS) } else { f64::from(s.duration_ms) }).sum()
+}
+
+/// Move the step at `i` up or down the list; it says where the step went.
+fn shift_step(steps: &mut [ExplodeStep], i: usize, up: bool) -> Option<usize> {
+    let to = if up { i.checked_sub(1)? } else { i + 1 };
+    if to >= steps.len() {
+        return None;
+    }
+    steps.swap(i, to);
+    Some(to)
 }
 
 /// The dialog for a motion command.
@@ -106,7 +195,7 @@ pub fn start(app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
             .iter()
             .filter_map(|x| x.get("name").and_then(Value::as_str).map(str::to_string))
             .collect();
-        (1..).map(|k| format!("{prefix}{k}")).find(|c| !taken.contains(c)).unwrap_or_default()
+        free_name(&taken, prefix)
     };
     let (mo, inputs) = match id {
         "contact.create" => (Mo::ContactSet { name: n("Contact Set", "contact.list"), check: None }, vec![SelInput::new("Components", BODIES, true)]),
@@ -132,11 +221,36 @@ pub fn start(app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
                 SelInput::new("Against", BODIES, true),
             ],
         ),
-        "explode.create" => (Mo::Explode { name: n("Exploded View", "explode.list"), scale: 1.0, shown: None, saved: None, error: None }, vec![]),
+        "explode.create" => (
+            Mo::Explode {
+                name: n("Exploded View", "explode.list"),
+                view: None,
+                steps: vec![new_step()],
+                selected: 0,
+                easing: DEFAULT_EASING,
+                trail_lines: true,
+                scale: 1.0,
+                auto: None,
+                time: f64::from(DEFAULT_STEP_MS),
+                playing: false,
+                looping: true,
+                speed: 2,
+                shown: None,
+                saved: None,
+                error: None,
+                dragged: None,
+            },
+            vec![],
+        ),
         "config.table" | "config.configure" => (Mo::Configurations { new_row: String::new(), error: None, rule_editor: Default::default() }, vec![]),
         _ => return None,
     };
     Some((Kind::Motion(mo), inputs))
+}
+
+/// A name no entry of `taken` has: the prefix with the first free number.
+fn free_name(taken: &[String], prefix: &str) -> String {
+    (1..).map(|k| format!("{prefix}{k}")).find(|c| !taken.contains(c)).unwrap_or_default()
 }
 
 // ---- pure mappings (tested) ----
@@ -367,7 +481,13 @@ pub fn closed(app: &mut SolveApp, d: &mut Dialog, applied: bool) {
     match k {
         Mo::MotionStudy { saved, .. } => restore(app, saved),
         // OK shows the new view itself (explode.show).
-        Mo::Explode { saved, .. } if !applied => restore(app, saved),
+        Mo::Explode { saved, .. } => {
+            if !applied {
+                restore(app, saved);
+            }
+            // The gizmo goes with the dialog.
+            app.explode_pick = None;
+        }
         _ => {}
     }
 }
@@ -426,12 +546,136 @@ pub fn scratch_study(sc: &mut Session, params: &Value) -> Result<Value, String> 
     Ok(sc.execute("motion.study", params).map_err(|e| e.to_string())?["study"].clone())
 }
 
-/// The explosion at `scale`, computed on a scratch copy.
-fn explode_pose(app: &SolveApp, scale: f64) -> Result<BTreeMap<u64, Mat>, String> {
+// ---- the exploded view's steps ----
+
+/// The exploded views in the design, as `explode.list` gives them.
+fn explode_views(app: &mut SolveApp) -> Vec<Value> {
+    app.session.execute("explode.list", &json!({})).ok().and_then(|v| v.get("views").and_then(Value::as_array).cloned()).unwrap_or_default()
+}
+
+/// A view as the dialog edits it: its name, its steps, its easing and its trail lines.
+fn read_view(v: &Value) -> (String, Vec<ExplodeStep>, usize, bool) {
+    let name = v.get("name").and_then(Value::as_str).unwrap_or("").to_string();
+    let steps = v.get("steps").and_then(Value::as_array).map(|list| list.iter().map(read_step).collect()).unwrap_or_default();
+    let easing = v.get("easing").and_then(Value::as_str).and_then(|e| EASINGS.iter().position(|x| *x == e)).unwrap_or(DEFAULT_EASING);
+    let trail_lines = v.get("trail_lines").and_then(Value::as_bool).unwrap_or(true);
+    (name, steps, easing, trail_lines)
+}
+
+/// A step as the dialog edits it. A move that is not a finite translation is left out.
+fn read_step(v: &Value) -> ExplodeStep {
+    let moves = v
+        .get("moves")
+        .and_then(Value::as_array)
+        .map(|list| {
+            list.iter()
+                .filter_map(|m| {
+                    let occurrence = m.get(0)?.as_u64()?;
+                    let t = m.get(1)?.as_array()?;
+                    let x = t.first().and_then(Value::as_f64).unwrap_or(0.0);
+                    let y = t.get(1).and_then(Value::as_f64).unwrap_or(0.0);
+                    let z = t.get(2).and_then(Value::as_f64).unwrap_or(0.0);
+                    (x.is_finite() && y.is_finite() && z.is_finite()).then_some(ExplodeMove { occurrence, translate: [x, y, z] })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    ExplodeStep {
+        id: v.get("id").and_then(Value::as_u64).unwrap_or(0),
+        name: v.get("name").and_then(Value::as_str).unwrap_or("").to_string(),
+        moves,
+        duration_ms: v.get("duration_ms").and_then(Value::as_u64).unwrap_or(0).clamp(1, u64::from(MAX_STEP_MS)) as u32,
+    }
+}
+
+/// The automatic explosion at `scale`: every occurrence pushed away from the assembly's centre
+/// by its share of the scale. The engine works it out; the dialog asks it on a scratch copy.
+fn automatic_moves(app: &SolveApp, scale: f64) -> Result<Vec<ExplodeMove>, String> {
     let mut sc = app.session.scratch();
-    sc.execute("explode.create", &json!({"name": "__preview", "scale": scale})).map_err(|e| e.to_string())?;
-    sc.execute("explode.show", &json!({ "view": "__preview" })).map_err(|e| e.to_string())?;
+    let made = sc.execute("explode.create", &json!({"name": "__auto", "scale": scale})).map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for m in made["moves"].as_array().cloned().unwrap_or_default() {
+        let Some(occurrence) = m.get("occurrence").and_then(Value::as_u64) else { continue };
+        let t = m.get("translate").and_then(Value::as_array);
+        let at = |i: usize| t.and_then(|a| a.get(i)).and_then(Value::as_f64).unwrap_or(0.0);
+        let (x, y, z) = (at(0), at(1), at(2));
+        if !(x.is_finite() && y.is_finite() && z.is_finite()) {
+            continue;
+        }
+        out.push(ExplodeMove { occurrence, translate: [x, y, z] });
+    }
+    Ok(out)
+}
+
+/// The pose the dialog shows: the view built on a scratch copy of the design and shown at
+/// `time` (milliseconds into the sequence). The design is not changed.
+fn explode_preview(app: &SolveApp, steps: &[ExplodeStep], easing: &str, trail_lines: bool, time: f64) -> Result<BTreeMap<u64, Mat>, String> {
+    let mut sc = app.session.scratch();
+    let first = steps.first();
+    let made = sc
+        .execute(
+            "explode.create",
+            &json!({
+                "name": "__preview",
+                "moves": first.map(|s| moves_json(&s.moves)).unwrap_or_default(),
+                "trail_lines": trail_lines,
+                "easing": easing,
+            }),
+        )
+        .map_err(|e| e.to_string())?;
+    let id = made["view"].as_u64().ok_or("the exploded view has no id")?;
+    for (i, step) in steps.iter().enumerate() {
+        if i == 0 {
+            sc.execute(
+                "explode.step_edit",
+                &json!({"view": id, "step": 0, "name": step.name, "moves": moves_json(&step.moves), "duration_ms": step.duration_ms}),
+            )
+            .map_err(|e| e.to_string())?;
+        } else {
+            sc.execute(
+                "explode.step_add",
+                &json!({"view": id, "name": step.name, "moves": moves_json(&step.moves), "duration_ms": step.duration_ms}),
+            )
+            .map_err(|e| e.to_string())?;
+        }
+    }
+    sc.execute("explode.show", &json!({"view": id, "time": time})).map_err(|e| e.to_string())?;
     Ok(sc.pending_moves.clone())
+}
+
+/// The gizmo's drag becomes the current step's move for that occurrence. The same drag is not
+/// taken twice (the viewport keeps it for a frame after it ends).
+fn take_drag(app: &SolveApp, steps: &mut [ExplodeStep], selected: usize, taken: &mut Option<(usize, u64, [f64; 3])>) {
+    let Some(drag) = app.explode_drag else { return };
+    let translate = [drag.move_vec.x, drag.move_vec.y, drag.move_vec.z];
+    let now = (selected, drag.occurrence, translate);
+    if *taken == Some(now) {
+        return;
+    }
+    *taken = Some(now);
+    let Some(step) = steps.get_mut(selected) else { return };
+    match step.moves.iter_mut().find(|m| m.occurrence == drag.occurrence) {
+        Some(m) => m.translate = translate,
+        None => step.moves.push(ExplodeMove { occurrence: drag.occurrence, translate }),
+    }
+}
+
+/// What the exploded view's gizmo is drawn from: the occurrence the user has picked, where it
+/// is now and the move the current step has for it.
+fn explode_pick(app: &SolveApp, steps: &[ExplodeStep], selected: usize) -> Option<ExplodePick> {
+    let path = app.session.selection.iter().find_map(|s| match s {
+        Sel::Occurrence { path } => Some(path.clone()),
+        _ => None,
+    })?;
+    let occurrence = path.last().copied()?;
+    let world = app.session.occurrence_placement(&path).ok()?.world;
+    let center = Vec3::new(world[3][0], world[3][1], world[3][2]);
+    let move_vec = steps
+        .get(selected)
+        .and_then(|s| s.moves.iter().find(|m| m.occurrence == occurrence))
+        .map(|m| Vec3::new(m.translate[0], m.translate[1], m.translate[2]))
+        .unwrap_or(Vec3::ZERO);
+    Some(ExplodePick { occurrence, center, move_vec })
 }
 
 // ---- rows ----
@@ -506,32 +750,249 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Mo, inputs: &mut [Sel
             }
         }
         Mo::MotionStudy { .. } => enter = motion_study_rows(app, ui, k, inputs, t),
-        Mo::Explode { name, scale, shown, saved, error } => {
-            text_row(ui, "Name", name, "");
-            form_row(ui, "Explode", |ui| {
-                crate::ui_kit::slider(ui, scale, 0.0..=2.0, Default::default());
-            });
-            let key = ((*scale * 1000.0).round() as u64, 0);
-            if *shown != Some(key) {
-                match explode_pose(app, *scale) {
-                    Ok(m) => {
-                        display(app, saved, m);
-                        *error = None;
-                    }
-                    Err(e) => *error = Some(e),
-                }
-                *shown = Some(key);
-            }
-            if let Some(e) = error {
-                ui.vertical(|ui| {
-                    ui.label(RichText::new(e.as_str()).color(t.error));
-                });
-            }
-        }
+        Mo::Explode { .. } => explode_rows(app, ui, k, t),
         Mo::Configurations { new_row, error, rule_editor } => configurations_rows(app, ui, new_row, error, rule_editor),
     }
     let _ = inputs;
     enter
+}
+
+/// The Exploded View rows: the view, its name, the easing and the trail lines, the steps and
+/// the playback.
+fn explode_rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Mo, t: Tokens) {
+    let Mo::Explode { name, view, steps, selected, easing, trail_lines, scale, auto, time, playing, looping, speed, shown, saved, error, dragged } =
+        k
+    else {
+        return;
+    };
+    // The views in the design: New, then the views by name. Picking one loads it to edit it.
+    let views = explode_views(app);
+    if !views.is_empty() {
+        let names: Vec<String> = views.iter().map(|v| v.get("name").and_then(Value::as_str).unwrap_or("").to_string()).collect();
+        let labels: Vec<&str> = std::iter::once(crate::i18n::tr_label("New view")).chain(names.iter().map(String::as_str)).collect();
+        let was = view.and_then(|id| views.iter().position(|v| v.get("id").and_then(Value::as_u64) == Some(id))).map_or(0, |i| i + 1);
+        let mut pick = was;
+        form_row(ui, "View", |ui| {
+            combo(ui, "explode_view", &labels, &mut pick);
+        });
+        if pick != was {
+            match pick.checked_sub(1).and_then(|i| views.get(i)) {
+                Some(v) => {
+                    let (n, s, e, tr) = read_view(v);
+                    let t = total_ms(&s);
+                    (*name, *view, *steps, *easing, *trail_lines) = (n, v.get("id").and_then(Value::as_u64), s, e, tr);
+                    *time = t;
+                }
+                None => {
+                    let taken: Vec<String> = views.iter().filter_map(|v| v.get("name").and_then(Value::as_str).map(str::to_string)).collect();
+                    (*name, *view, *steps, *easing, *trail_lines) =
+                        (free_name(&taken, "Exploded View"), None, vec![new_step()], DEFAULT_EASING, true);
+                    *auto = None;
+                    *time = f64::from(DEFAULT_STEP_MS);
+                }
+            }
+            *selected = 0;
+            *shown = None;
+        }
+    }
+    text_row(ui, "Name", name, "");
+    form_row(ui, "Easing", |ui| {
+        combo(ui, "explode_easing", &EASING_LABELS, easing);
+    });
+    form_row(ui, "Trail lines", |ui| {
+        crate::dialogs::check(ui, trail_lines);
+    });
+    // The automatic explosion fills the first step; a view whose steps were edited by hand keeps
+    // them, so the scale is only offered for a new view.
+    if view.is_none() {
+        form_row(ui, "Explode", |ui| {
+            crate::ui_kit::slider(
+                ui,
+                scale,
+                0.0..=2.0,
+                crate::ui_kit::Slider { show_value: true, format: |v| format!("{v:.2}"), ..Default::default() },
+            );
+        });
+        if *auto != Some(*scale) {
+            *auto = Some(*scale);
+            match automatic_moves(app, *scale) {
+                Ok(m) => {
+                    if let Some(step) = steps.first_mut() {
+                        step.moves = m;
+                    }
+                    *error = None;
+                }
+                Err(e) => *error = Some(e),
+            }
+        }
+    }
+    // Playback: to start, step back, play/pause, step on, to end; loop and speed.
+    let total = total_ms(steps);
+    form_row(ui, "Playback", |ui| {
+        ui.horizontal(|ui| {
+            if transport(ui, Transport::Start, crate::i18n::tr_label("To the start")).clicked() {
+                *time = 0.0;
+                *playing = false;
+            }
+            if transport(ui, Transport::Back, crate::i18n::tr_label("Step back")).clicked() {
+                *time = (*time - 100.0).max(0.0);
+                *playing = false;
+            }
+            let (what, tip) =
+                if *playing { (Transport::Stop, crate::i18n::tr_label("Pause")) } else { (Transport::Play, crate::i18n::tr_label("Play")) };
+            if transport(ui, what, tip).clicked() {
+                // Play from the start again when at the end.
+                if !*playing && *time >= total {
+                    *time = 0.0;
+                }
+                *playing = !*playing;
+            }
+            if transport(ui, Transport::Forward, crate::i18n::tr_label("Step on")).clicked() {
+                *time = (*time + 100.0).min(total);
+                *playing = false;
+            }
+            if transport(ui, Transport::End, crate::i18n::tr_label("To the end")).clicked() {
+                *time = total;
+                *playing = false;
+            }
+            ui.add_space(t.space_6);
+            crate::ui_kit::checkbox(ui, "Loop", looping);
+            let names: Vec<String> = SPEEDS.iter().map(|x| format!("{x}×")).collect();
+            let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+            ui.allocate_ui(vec2(t.form_label_width, t.control_height), |ui| combo(ui, "explode_speed", &refs, speed));
+        });
+    });
+    // The scrubber over the whole sequence: 0 is assembled, the end fully exploded.
+    form_row(ui, "Sequence", |ui| {
+        if crate::ui_kit::slider(ui, time, 0.0..=total.max(1.0), crate::ui_kit::Slider { show_value: false, ..Default::default() }).dragged() {
+            *playing = false;
+        }
+    });
+    crate::ui_kit::caption(ui, "Sequence", &format!("{:.0} / {total:.0} ms", time));
+    // The steps, in order, with their moves.
+    let occs = occurrences(app);
+    let occ_names: Vec<String> = occs.iter().map(|(_, n)| n.clone()).collect();
+    let occ_refs: Vec<&str> = occ_names.iter().map(String::as_str).collect();
+    let units = app.session.doc.units.clone();
+    let decimals = app.preferences.length_decimals;
+    let mut remove_step: Option<usize> = None;
+    let mut move_step: Option<(usize, bool)> = None;
+    let mut remove_move: Option<(usize, usize)> = None;
+    let mut add_move: Option<usize> = None;
+    let num_steps = steps.len();
+    egui::ScrollArea::vertical().id_salt("explode_steps").max_height(240.0).show(ui, |ui| {
+        for (i, step) in steps.iter_mut().enumerate() {
+            ui.horizontal(|ui| {
+                let step_no = format!("{}", i + 1);
+                if crate::ui_kit::compact_button(ui, &step_no, "Edit this step", true, *selected == i).clicked() {
+                    *selected = i;
+                }
+                ui.allocate_ui(vec2(110.0, t.control_height), |ui| crate::ui_kit::text_field(ui, &mut step.name, ""));
+                crate::ui_kit::number_field(ui, &mut step.duration_ms, 0..=MAX_STEP_MS, 10.0, " ms");
+                if crate::ui_kit::compact_button(ui, crate::ui_kit::MOVE_UP, "Move earlier", i > 0, false).clicked() {
+                    move_step = Some((i, true));
+                }
+                if crate::ui_kit::compact_button(ui, crate::ui_kit::MOVE_DOWN, "Move later", i + 1 < num_steps, false).clicked() {
+                    move_step = Some((i, false));
+                }
+                if crate::ui_kit::compact_button(ui, "×", "Delete the step", num_steps > 1, false).clicked() {
+                    remove_step = Some(i);
+                }
+            });
+            for (j, mv) in step.moves.iter_mut().enumerate() {
+                ui.horizontal(|ui| {
+                    let mut pos = occs.iter().position(|(id, _)| *id == mv.occurrence).unwrap_or(0);
+                    ui.allocate_ui(vec2(120.0, t.control_height), |ui| combo(ui, &format!("explode_move_{i}_{j}"), &occ_refs, &mut pos));
+                    if let Some((id, _)) = occs.get(pos) {
+                        mv.occurrence = *id;
+                    }
+                    for k in 0..3 {
+                        crate::ui_kit::length_field(ui, &mut mv.translate[k], &units, decimals);
+                    }
+                    if crate::ui_kit::compact_button(ui, "×", "Remove the move", true, false).clicked() {
+                        remove_move = Some((i, j));
+                    }
+                });
+            }
+            ui.horizontal(|ui| {
+                if crate::ui_kit::button(ui, crate::i18n::tr_label("Add move"), crate::ui_kit::Button::Small).clicked() {
+                    add_move = Some(i);
+                }
+            });
+            ui.separator();
+        }
+    });
+    ui.horizontal(|ui| {
+        if crate::ui_kit::button(ui, crate::i18n::tr_label("Add step"), crate::ui_kit::Button::Normal)
+            .on_hover_text(crate::i18n::tr_label("Add a step at the end of the sequence"))
+            .clicked()
+            && steps.len() < MAX_STEPS
+        {
+            steps.push(ExplodeStep { id: 0, name: format!("Step {}", steps.len() + 1), moves: Vec::new(), duration_ms: DEFAULT_STEP_MS });
+            *selected = steps.len() - 1;
+        }
+    });
+    if let Some(i) = remove_step {
+        steps.remove(i);
+        *selected = (*selected).min(steps.len().saturating_sub(1));
+    }
+    if let Some((i, up)) = move_step
+        && let Some(to) = shift_step(steps, i, up)
+    {
+        *selected = to;
+    }
+    if let Some((i, j)) = remove_move
+        && let Some(step) = steps.get_mut(i)
+    {
+        step.moves.remove(j);
+    }
+    if let Some(i) = add_move {
+        let occurrence = occs.first().map(|(id, _)| *id).unwrap_or(0);
+        if let Some(step) = steps.get_mut(i) {
+            step.moves.push(ExplodeMove { occurrence, translate: [0.0; 3] });
+        }
+    }
+    // The gizmo's drag becomes the current step's move.
+    take_drag(app, steps, *selected, dragged);
+    // The pose the dialog shows: the view built on a scratch copy and shown at the scrubber.
+    let key = {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        format!("{steps:?}|{time}|{easing}|{trail_lines}").hash(&mut h);
+        h.finish()
+    };
+    if *shown != Some(key) {
+        match explode_preview(app, steps, EASINGS.get(*easing).copied().unwrap_or("ease_in_out"), *trail_lines, *time) {
+            Ok(m) => {
+                display(app, saved, m);
+                *error = None;
+            }
+            Err(e) => *error = Some(e),
+        }
+        *shown = Some(key);
+    }
+    // The gizmo is drawn from the pose the dialog shows.
+    app.explode_pick = explode_pick(app, steps, *selected);
+    if *playing {
+        let dt = f64::from(ui.input(|i| i.stable_dt).min(0.1));
+        let rate = 1000.0 * SPEEDS.get(*speed).copied().unwrap_or(1.0);
+        let (next, keeps) = advance(*time, dt * rate, total.min(f64::from(u32::MAX)) as u32, *looping);
+        *time = next;
+        *playing = keeps;
+        ui.ctx().request_repaint();
+    }
+    if let Some(e) = error {
+        form_row(ui, "", |ui| {
+            ui.label(RichText::new(e.as_str()).color(t.error));
+        });
+    }
+}
+
+/// The design's occurrences, by name: what a step's move can pick.
+fn occurrences(app: &SolveApp) -> Vec<(u64, String)> {
+    let mut out: Vec<(u64, String)> = app.session.doc.occurrences.iter().map(|o| (o.id, o.name.clone())).filter(|(_, n)| !n.is_empty()).collect();
+    out.sort_by(|a, b| a.1.cmp(&b.1).then(a.0.cmp(&b.0)));
+    out
 }
 
 /// The Motion Study rows; true when Enter was pressed in a value.
@@ -784,12 +1245,71 @@ pub fn commands(app: &SolveApp, k: &Mo, inputs: &[SelInput]) -> Result<Vec<(Stri
         Mo::MotionStudy { name, study, steps, tracks, .. } => {
             vec![("motion.study".into(), study_params(&app.session, name, study.as_deref(), steps, tracks)?)]
         }
-        Mo::Explode { name, scale, .. } => {
-            vec![("explode.create".into(), json!({"name": name, "scale": scale})), ("explode.show".into(), json!({ "view": name }))]
+        Mo::Explode { name, view, steps, easing, trail_lines, .. } => {
+            let easing_name = EASINGS.get(*easing).copied().unwrap_or("ease_in_out");
+            let mut cmds: Vec<(String, Value)> = Vec::new();
+            match view {
+                Some(id) => {
+                    cmds.push(("explode.edit".into(), json!({"view": id, "name": name, "trail_lines": trail_lines, "easing": easing_name})));
+                    // The steps the design has and the dialog does not are dropped (from the end,
+                    // so the indexes of the ones that stay do not move).
+                    let design = app.session.doc.assembly.exploded.iter().find(|v| v.id == *id).map(|v| v.steps.len()).unwrap_or(0);
+                    for i in (steps.len()..design).rev() {
+                        cmds.push(("explode.step_delete".into(), json!({"view": id, "step": i})));
+                    }
+                    for (i, step) in steps.iter().enumerate() {
+                        let p = json!({"view": id, "step": i, "name": step.name, "moves": moves_json(&step.moves), "duration_ms": step.duration_ms});
+                        if i < design {
+                            cmds.push(("explode.step_edit".into(), p));
+                        } else {
+                            let mut p = p;
+                            if let Some(o) = p.as_object_mut() {
+                                o.remove("step");
+                            }
+                            cmds.push(("explode.step_add".into(), p));
+                        }
+                    }
+                    cmds.push(("explode.show".into(), json!({"view": id})));
+                }
+                None => {
+                    // The commands that follow name the view, so the name must be its own.
+                    if app.session.doc.assembly.exploded.iter().any(|v| v.name == *name || v.id.to_string() == *name) {
+                        return Err(format!("a view named `{name}` already exists"));
+                    }
+                    let first = steps.first();
+                    cmds.push((
+                        "explode.create".into(),
+                        json!({
+                            "name": name,
+                            "moves": first.map(|s| moves_json(&s.moves)).unwrap_or_default(),
+                            "trail_lines": trail_lines,
+                            "easing": easing_name,
+                        }),
+                    ));
+                    for (i, step) in steps.iter().enumerate() {
+                        let p = json!({"view": name, "name": step.name, "moves": moves_json(&step.moves), "duration_ms": step.duration_ms});
+                        if i == 0 {
+                            let mut p = p;
+                            if let Some(o) = p.as_object_mut() {
+                                o.insert("step".into(), json!(0));
+                            }
+                            cmds.push(("explode.step_edit".into(), p));
+                        } else {
+                            cmds.push(("explode.step_add".into(), p));
+                        }
+                    }
+                    cmds.push(("explode.show".into(), json!({"view": name})));
+                }
+            }
+            cmds
         }
         Mo::Configurations { .. } => Vec::new(),
     })
 }
+
+#[cfg(test)]
+#[path = "dialogs_motion_tests.rs"]
+mod explode_tests;
 
 #[cfg(test)]
 mod tests {
@@ -833,7 +1353,24 @@ mod tests {
                     analysis: Box::default(),
                 }
             } else {
-                Mo::Explode { name: "E".into(), scale: 1.0, shown: None, saved, error: None }
+                Mo::Explode {
+                    name: "E".into(),
+                    view: None,
+                    steps: vec![new_step()],
+                    selected: 0,
+                    easing: DEFAULT_EASING,
+                    trail_lines: true,
+                    scale: 1.0,
+                    auto: None,
+                    time: f64::from(DEFAULT_STEP_MS),
+                    playing: false,
+                    looping: true,
+                    speed: 2,
+                    shown: None,
+                    saved,
+                    error: None,
+                    dragged: None,
+                }
             };
             let mut d = Dialog::new(Kind::Motion(mo), vec![]);
             closed(&mut app, &mut d, applied);

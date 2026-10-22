@@ -54,6 +54,24 @@ impl Session {
         }
         std::borrow::Cow::Owned(doc)
     }
+    /// The world matrix of an occurrence path: the ancestors' transforms and the occurrence's
+    /// own, multiplied in path order — the placement the renderer draws bodies with. With
+    /// `shown` the moves on show (an exploded view) stand in for the document's own transforms.
+    /// `None` when the path names no placement.
+    pub fn occurrence_world_matrix(&self, path: &[u64], shown: bool) -> Option<Mat> {
+        if path.is_empty() || path.len() > 64 {
+            return None;
+        }
+        let mut component = 0;
+        let mut world = IDENTITY;
+        for id in path {
+            let o = self.doc.occurrences.iter().find(|o| o.id == *id && o.parent == component)?;
+            let transform = if shown { self.pending_moves.get(id).unwrap_or(&o.transform) } else { &o.transform };
+            world = mat_mul(&world, transform);
+            component = o.component;
+        }
+        Some(world)
+    }
     /// Resolve only the supplied path, never an exponentially expanded assembly.
     pub fn occurrence_placement(&self, path: &[u64]) -> Result<OccurrencePlacement> {
         if path.is_empty() || path.len() > 64 {

@@ -658,11 +658,351 @@ fn exploded_views_show_without_changing_the_design() {
     assert_eq!(run(&mut s, "explode.list", json!({}))["views"].as_array().map(Vec::len), Some(2));
 }
 
+/// Two boxes in two components, so an exploded view has something to move.
+fn boxes() -> Session {
+    let mut s = Session::default();
+    for (name, x) in [("A", 0), ("B", 20)] {
+        run(&mut s, "component.activate", json!({"component": "root"}));
+        run(&mut s, "component.create", json!({"name": name}));
+        run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "corner": [x, 0, 0]}));
+    }
+    run(&mut s, "component.activate", json!({"component": "root"}));
+    s
+}
+
+/// How far an occurrence is moved now: the offset the view on show gave it.
+fn offset(s: &Session, occurrence: u64) -> Vec3 {
+    let Some(m) = s.pending_moves.get(&occurrence) else { return Vec3::ZERO };
+    let placed = s.doc.occurrences.iter().find(|o| o.id == occurrence).map(|o| o.transform).unwrap_or(solidcraft_doc::IDENTITY);
+    Vec3::new(m[3][0] - placed[3][0], m[3][1] - placed[3][1], m[3][2] - placed[3][2])
+}
+
+/// The steps of a view add up: each step moves an occurrence further from where it was.
+#[test]
+fn the_steps_of_a_view_add_up() {
+    let mut s = boxes();
+    let (a, b) = (occ(&s, "A"), occ(&s, "B"));
+    run(&mut s, "explode.create", json!({"name": "Apart", "moves": [{"occurrence": "B", "translate": [10, 0, 0]}]}));
+    run(&mut s, "explode.step_add", json!({"view": "Apart", "moves": [{"occurrence": "B", "translate": [0, 20, 0]}]}));
+    // The first step on its own.
+    run(&mut s, "explode.show", json!({"view": "Apart", "step": 0}));
+    assert!((offset(&s, b) - Vec3::new(10.0, 0.0, 0.0)).len() < 1e-9, "{:?}", offset(&s, b));
+    // Both steps: the second adds to the first.
+    run(&mut s, "explode.show", json!({"view": "Apart"}));
+    assert!((offset(&s, b) - Vec3::new(10.0, 20.0, 0.0)).len() < 1e-9, "{:?}", offset(&s, b));
+    // An occurrence no step moves is not moved at all.
+    assert_eq!(offset(&s, a), Vec3::ZERO);
+}
+
+/// The easing blends a step: its start is the end of the step before, its end the end of this
+/// step, and what is between is the curve.
+#[test]
+fn the_easing_blends_a_step() {
+    let mut s = boxes();
+    let b = occ(&s, "B");
+    run(&mut s, "explode.create", json!({"name": "Apart", "moves": [{"occurrence": "B", "translate": [100, 0, 0]}]}));
+    run(&mut s, "explode.step_add", json!({"view": "Apart", "moves": [{"occurrence": "B", "translate": [0, 100, 0]}]}));
+    run(&mut s, "explode.edit", json!({"view": "Apart", "easing": "linear"}));
+    // The middle of the step is half of it.
+    run(&mut s, "explode.show", json!({"view": "Apart", "step": 1, "progress": 0.5}));
+    let o = offset(&s, b);
+    assert!((o.x - 100.0).abs() < 1e-6 && (o.y - 50.0).abs() < 1e-6, "{o:?}");
+    // Its start is the end of the step before.
+    run(&mut s, "explode.show", json!({"view": "Apart", "step": 1, "progress": 0.0}));
+    let o = offset(&s, b);
+    assert!((o.x - 100.0).abs() < 1e-6 && o.y.abs() < 1e-6, "{o:?}");
+    // Its end is the end of the step.
+    run(&mut s, "explode.show", json!({"view": "Apart", "step": 1, "progress": 1.0}));
+    let o = offset(&s, b);
+    assert!((o.x - 100.0).abs() < 1e-6 && (o.y - 100.0).abs() < 1e-6, "{o:?}");
+    // Ease in is slower than linear: less is done at the middle of the step.
+    run(&mut s, "explode.edit", json!({"view": "Apart", "easing": "ease_in"}));
+    run(&mut s, "explode.show", json!({"view": "Apart", "step": 1, "progress": 0.5}));
+    assert!(offset(&s, b).y < 50.0, "ease in is slower: {:?}", offset(&s, b));
+    // Ease out is quicker.
+    run(&mut s, "explode.edit", json!({"view": "Apart", "easing": "ease_out"}));
+    run(&mut s, "explode.show", json!({"view": "Apart", "step": 1, "progress": 0.5}));
+    assert!(offset(&s, b).y > 50.0, "ease out is quicker: {:?}", offset(&s, b));
+}
+
+/// A time into the sequence says the same as the step and the progress, and wins over them.
+#[test]
+fn a_time_into_the_sequence_says_the_same_as_a_step() {
+    let mut s = boxes();
+    let b = occ(&s, "B");
+    run(&mut s, "explode.create", json!({"name": "Apart", "moves": [{"occurrence": "B", "translate": [100, 0, 0]}]}));
+    run(&mut s, "explode.step_add", json!({"view": "Apart", "moves": [{"occurrence": "B", "translate": [0, 100, 0]}], "duration_ms": 1000}));
+    run(&mut s, "explode.edit", json!({"view": "Apart", "easing": "linear"}));
+    // The second step starts at 500 ms: the first step's default length.
+    let r = run(&mut s, "explode.show", json!({"view": "Apart", "time": 1000}));
+    assert_eq!(r["step"], 1, "{r}");
+    assert!((r["progress"].as_f64().unwrap_or(f64::NAN) - 0.5).abs() < 1e-9, "{r}");
+    assert_eq!(r["time_ms"], 1000, "{r}");
+    let by_time = offset(&s, b);
+    run(&mut s, "explode.show", json!({"view": "Apart", "step": 1, "progress": 0.5}));
+    let by_step = offset(&s, b);
+    assert!((by_time - by_step).len() < 1e-9, "{by_time:?} {by_step:?}");
+    // A time wins over the step and the progress.
+    let r = run(&mut s, "explode.show", json!({"view": "Apart", "step": 0, "progress": 1.0, "time": 0}));
+    assert_eq!((r["step"].clone(), r["time_ms"].clone()), (json!(0), json!(0)), "{r}");
+    // A time past the end of the sequence is the end of it.
+    let r = run(&mut s, "explode.show", json!({"view": "Apart", "time": 100000}));
+    assert_eq!(r["step"], 1, "{r}");
+    assert_eq!(r["progress"], 1.0, "{r}");
+}
+
+/// A view made with moves shows the whole explosion, as the flat list of moves did.
+#[test]
+fn a_view_made_with_moves_shows_the_whole_explosion() {
+    let mut s = boxes();
+    let b = occ(&s, "B");
+    run(&mut s, "explode.create", json!({"name": "Hand", "moves": [{"occurrence": "B", "translate": [0, 0, 50]}]}));
+    let r = run(&mut s, "explode.show", json!({"view": "Hand"}));
+    assert_eq!((r["step"].clone(), r["progress"].clone()), (json!(0), json!(1.0)), "{r}");
+    let o = offset(&s, b);
+    assert!((o.z - 50.0).abs() < 1e-6, "{o:?}");
+    // The body really is 50 mm up.
+    let names: Vec<String> = s.world_state().bodies.iter().map(|b| b.name.clone()).collect();
+    let top = run(&mut s, "inspect.measure", json!({"bodies": [names[1]]}))["bodies"][0]["bbox"]["max"][2].as_f64().unwrap_or(f64::NAN);
+    assert!((top - 60.0).abs() < 1e-6, "{top}");
+}
+
+/// The trail lines join the assembled place of a moved occurrence to the place it is shown in.
+#[test]
+fn the_trail_lines_join_the_assembled_place_to_the_exploded_one() {
+    let mut s = boxes();
+    let b = occ(&s, "B");
+    run(&mut s, "explode.create", json!({"name": "Apart", "moves": [{"occurrence": "B", "translate": [0, 0, 50]}]}));
+    run(&mut s, "explode.show", json!({"view": "Apart"}));
+    let trails = crate::view::explode_trails(&s);
+    assert_eq!(trails.len(), 1, "{trails:?}");
+    // The occurrence's own place, and the move it made: the segment is the move.
+    let placed = s.doc.occurrences.iter().find(|o| o.id == b).map(|o| o.transform).unwrap_or(solidcraft_doc::IDENTITY);
+    let origin = Vec3::new(placed[3][0], placed[3][1], placed[3][2]);
+    let (from, to) = trails[0];
+    assert!((from - origin).len() < 1e-6, "{from:?} {origin:?}");
+    assert!((to - (origin + Vec3::new(0.0, 0.0, 50.0))).len() < 1e-6, "{to:?}");
+    // The headless scene draws them, dashed.
+    let cam = crate::view::home_camera(&s);
+    assert_eq!(crate::view::scene(&s, &cam).dashed.len(), 1);
+    // A view that draws no trail lines has none, and a view that is not on show has none.
+    run(&mut s, "explode.edit", json!({"view": "Apart", "trail_lines": false}));
+    assert!(crate::view::explode_trails(&s).is_empty());
+    run(&mut s, "explode.show", json!({"view": null}));
+    assert!(crate::view::explode_trails(&s).is_empty());
+}
+
+/// Two moves for one occurrence in one step both apply, as they did when the view held one flat
+/// list of moves.
+#[test]
+fn two_moves_for_one_occurrence_add_up() {
+    let mut s = boxes();
+    let b = occ(&s, "B");
+    run(
+        &mut s,
+        "explode.create",
+        json!({"name": "Apart", "moves": [{"occurrence": "B", "translate": [10, 0, 0]}, {"occurrence": "B", "translate": [0, 20, 0]}]}),
+    );
+    run(&mut s, "explode.show", json!({"view": "Apart"}));
+    let o = offset(&s, b);
+    assert!((o - Vec3::new(10.0, 20.0, 0.0)).len() < 1e-9, "{o:?}");
+    // And a step's own moves add up to the steps before it.
+    run(
+        &mut s,
+        "explode.step_add",
+        json!({"view": "Apart", "moves": [{"occurrence": "B", "translate": [0, 0, 5]}, {"occurrence": "B", "translate": [0, 0, 7]}]}),
+    );
+    run(&mut s, "explode.show", json!({"view": "Apart"}));
+    let o = offset(&s, b);
+    assert!((o - Vec3::new(10.0, 20.0, 12.0)).len() < 1e-9, "{o:?}");
+}
+
+/// A design that carries a move that is not a number is refused, not shown as a broken picture.
+#[test]
+fn a_design_with_a_broken_move_is_refused() {
+    let mut s = boxes();
+    run(&mut s, "explode.create", json!({"name": "Apart", "moves": [{"occurrence": "B", "translate": [1, 0, 0]}]}));
+    // A design file can carry a move that is not a number, or one too big to be a placement.
+    if let Some(view) = s.doc_mut().assembly.exploded.first_mut()
+        && let Some(step) = view.steps.first_mut()
+    {
+        step.moves[0].1 = Vec3::new(f64::NAN, 0.0, 0.0);
+    }
+    let e = s.execute("explode.show", &json!({"view": "Apart"})).unwrap_err().to_string();
+    assert!(e.contains("Apart") && e.contains("step 0"), "{e}");
+    assert!(s.pending_moves.is_empty(), "nothing broken is shown");
+    if let Some(view) = s.doc_mut().assembly.exploded.first_mut()
+        && let Some(step) = view.steps.first_mut()
+    {
+        step.moves[0].1 = Vec3::new(1e8, 0.0, 0.0);
+    }
+    assert!(s.execute("explode.show", &json!({"view": "Apart"})).is_err());
+    assert!(s.pending_moves.is_empty());
+}
+
+/// The view on show is forgotten when its pose goes: a shown move, a revert, a capture or the
+/// view's own deletion.
+#[test]
+fn the_view_on_show_is_forgotten_when_its_pose_goes() {
+    let mut s = boxes();
+    let b = occ(&s, "B");
+    let res = run(&mut s, "explode.create", json!({"name": "Apart", "moves": [{"occurrence": "B", "translate": [0, 0, 50]}]}));
+    let view_id = res["view"].as_u64().unwrap();
+    // A move of its own: the moves shown are not the view's pose any more.
+    run(&mut s, "explode.show", json!({"view": "Apart"}));
+    run(&mut s, "occurrence.move", json!({"occurrence": b, "translate": [1, 0, 0], "capture": false}));
+    assert_eq!(s.exploded_view, None);
+    // A capture would write the exploded placement into the design: it is refused.
+    run(&mut s, "explode.show", json!({"view": "Apart"}));
+    assert!(s.execute("component.capture_position", &json!({})).is_err(), "the exploded pose was captured");
+    assert_eq!(s.exploded_view, Some(view_id), "the view is still on show");
+    assert!(!s.pending_moves.is_empty());
+    // A revert takes the moves shown away: the view is not on show any more.
+    run(&mut s, "component.revert_position", json!({}));
+    assert_eq!(s.exploded_view, None);
+    assert!(s.pending_moves.is_empty());
+    // And the view's own deletion takes its pose with it.
+    run(&mut s, "explode.show", json!({"view": "Apart"}));
+    run(&mut s, "explode.delete", json!({"view": "Apart"}));
+    assert_eq!(s.exploded_view, None);
+    assert!(s.pending_moves.is_empty());
+    assert!(crate::view::explode_trails(&s).is_empty());
+}
+
+/// Showing a view changes nothing in the design, and showing none puts the occurrences back
+/// exactly where they were.
+#[test]
+fn showing_a_view_changes_no_design() {
+    let mut s = boxes();
+    run(&mut s, "explode.create", json!({"name": "Apart", "moves": [{"occurrence": "B", "translate": [0, 0, 50]}]}));
+    let design = s.doc.clone();
+    let occurrences = s.doc.occurrences.clone();
+    let names: Vec<String> = s.world_state().bodies.iter().map(|b| b.name.clone()).collect();
+    let bb = |s: &mut Session, b: &str| run(s, "inspect.measure", json!({"bodies": [b]}))["bodies"][0]["bbox"]["min"][2].as_f64().unwrap_or(f64::NAN);
+    let rest = bb(&mut s, &names[1]);
+    run(&mut s, "explode.show", json!({"view": "Apart", "step": 0, "progress": 0.5}));
+    assert!((bb(&mut s, &names[1]) - (rest + 25.0)).abs() < 1e-6, "half of the move");
+    assert_eq!(*s.doc, *design, "shown only");
+    assert_eq!(s.doc.occurrences, occurrences);
+    // Showing none puts the occurrences back where they were.
+    run(&mut s, "explode.show", json!({"view": null}));
+    assert!(s.pending_moves.is_empty());
+    assert_eq!(s.exploded_view, None);
+    assert!((bb(&mut s, &names[1]) - rest).abs() < 1e-6, "back where it was");
+    assert_eq!(*s.doc, *design);
+    // And so does the word for it.
+    run(&mut s, "explode.show", json!({"view": "Apart"}));
+    run(&mut s, "explode.show", json!({"view": "none"}));
+    assert!(s.pending_moves.is_empty());
+    assert_eq!(s.exploded_view, None);
+    assert!((bb(&mut s, &names[1]) - rest).abs() < 1e-6, "back where it was");
+}
+
+/// The steps of a view can be edited, reordered and deleted.
+#[test]
+fn the_steps_of_a_view_can_be_edited() {
+    let mut s = boxes();
+    run(&mut s, "explode.create", json!({"name": "Apart", "moves": [{"occurrence": "B", "translate": [10, 0, 0]}]}));
+    run(&mut s, "explode.step_add", json!({"view": "Apart", "name": "Up", "moves": [{"occurrence": "B", "translate": [0, 0, 20]}]}));
+    let views = run(&mut s, "explode.list", json!({}))["views"].as_array().cloned().unwrap_or_default();
+    let steps = views[0]["steps"].as_array().cloned().unwrap_or_default();
+    assert_eq!(steps.len(), 2, "{views:?}");
+    assert_eq!(steps[1]["name"], "Up");
+    assert_eq!(steps[1]["duration_ms"], 500);
+    // A step's moves replace its own.
+    let r = run(
+        &mut s,
+        "explode.step_edit",
+        json!({"view": "Apart", "step": 1, "moves": [{"occurrence": "A", "translate": [0, 5, 0]}], "duration_ms": 250}),
+    );
+    assert_eq!(r["duration_ms"], 250);
+    let steps = run(&mut s, "explode.list", json!({}))["views"][0]["steps"].as_array().cloned().unwrap_or_default();
+    assert_eq!(steps[1]["moves"], json!([[occ(&s, "A"), [0.0, 5.0, 0.0]]]), "{steps:?}");
+    // A step can be named by its id too.
+    let id = steps[1]["id"].as_u64().unwrap();
+    let r = run(&mut s, "explode.step_edit", json!({"view": "Apart", "step": id, "name": "Side"}));
+    assert_eq!(r["step"], 1, "{r}");
+    assert_eq!(r["name"], "Side");
+    // Reordered: the step that was second comes first.
+    run(&mut s, "explode.step_reorder", json!({"view": "Apart", "from": 1, "to": 0}));
+    let steps = run(&mut s, "explode.list", json!({}))["views"][0]["steps"].as_array().cloned().unwrap_or_default();
+    assert_eq!(steps[0]["name"], "Side", "{steps:?}");
+    // And deleted.
+    run(&mut s, "explode.step_delete", json!({"view": "Apart", "step": 0}));
+    let steps = run(&mut s, "explode.list", json!({}))["views"][0]["steps"].as_array().cloned().unwrap_or_default();
+    assert_eq!(steps.len(), 1, "{steps:?}");
+    assert_eq!(steps[0]["name"], "Explode", "{steps:?}");
+}
+
+/// Hostile parameters are refused, never a panic, and the design stays as it was.
+#[test]
+fn hostile_explode_parameters_are_refused() {
+    let mut s = boxes();
+    run(&mut s, "explode.create", json!({"name": "Apart", "moves": [{"occurrence": "B", "translate": [10, 0, 0]}]}));
+    let design = s.doc.clone();
+    let refused = |s: &mut Session, id: &str, p: Value| {
+        let r = s.execute(id, &p);
+        assert!(r.is_err(), "{id} {p} was accepted");
+    };
+    for p in [
+        // A move for an occurrence that is not there.
+        json!({"view": "Apart", "moves": [{"occurrence": "Nope", "translate": [1, 0, 0]}]}),
+        // A translation that is not a number.
+        json!({"view": "Apart", "moves": [{"occurrence": "B", "translate": [null, 0, 0]}]}),
+        json!({"view": "Apart", "moves": [{"occurrence": "B", "translate": [1e300, 0, 0]}]}),
+        json!({"view": "Apart", "moves": [{"occurrence": "B", "translate": [1, 0]}]}),
+        json!({"view": "Apart", "moves": [{"occurrence": "B"}]}),
+        json!({"view": "Apart", "moves": [{"occurrence": "root", "translate": [1, 0, 0]}]}),
+        json!({"view": "Apart", "moves": "one"}),
+        // A length that is not a number.
+        json!({"view": "Apart", "duration_ms": "long"}),
+        json!({"view": "Apart", "duration_ms": 1e9}),
+        json!({"view": "Apart", "duration_ms": -1}),
+    ] {
+        refused(&mut s, "explode.step_add", p.clone());
+        refused(&mut s, "explode.step_edit", p);
+    }
+    for p in [
+        // A step that is not there.
+        json!({"view": "Apart", "step": 7}),
+        json!({"view": "Apart", "step": -1}),
+        json!({"view": "Apart", "step": "one"}),
+        json!({"view": "Apart", "step": 9999999999999999999u64}),
+    ] {
+        refused(&mut s, "explode.step_edit", p.clone());
+        refused(&mut s, "explode.step_delete", p);
+    }
+    for p in [
+        // An easing that is not a name.
+        json!({"view": "Apart", "easing": "bouncy"}),
+        json!({"view": "Apart", "easing": 3}),
+        // Trail lines that are not a yes or a no.
+        json!({"view": "Apart", "trail_lines": "yes"}),
+    ] {
+        refused(&mut s, "explode.edit", p);
+    }
+    for p in [
+        // A progress outside 0…1, and a time that is not a number.
+        json!({"view": "Apart", "progress": 2}),
+        json!({"view": "Apart", "progress": -1}),
+        json!({"view": "Apart", "progress": "half"}),
+        json!({"view": "Apart", "time": "now"}),
+        json!({"view": "Apart", "step": 7}),
+        // A view that is not there.
+        json!({"view": "Nope"}),
+    ] {
+        refused(&mut s, "explode.show", p);
+    }
+    // A step that cannot be moved where it is told to go.
+    refused(&mut s, "explode.step_reorder", json!({"view": "Apart", "from": 3, "to": 0}));
+    refused(&mut s, "explode.step_reorder", json!({"view": "Apart", "from": 0, "to": "first"}));
+    assert_eq!(*s.doc, *design, "nothing was changed");
+}
+
 /// Pictures drawn by the CPU rasterizer (the engine has no GPU): real views of the scene.
 fn cpu(scene: &crate::render::Scene, cam: &crate::render::Camera, w: u32, h: u32) -> Result<crate::capture::Picture, String> {
     Ok(crate::capture::Picture { rgba: crate::render::render(scene, cam, w as usize, h as usize).rgba, renderer: "cpu" })
 }
-
 /// A folder of its own for one test's files.
 fn out_dir(test: &str) -> std::path::PathBuf {
     let dir = solidcraft_io::vfs::temp_dir().join(format!("solidcraft-anim-{test}-{}", std::process::id()));

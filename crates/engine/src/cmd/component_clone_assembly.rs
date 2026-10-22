@@ -93,9 +93,12 @@ fn budget(assembly: &Assembly) -> Result<()> {
     }
     for view in &assembly.exploded {
         text(&view.name)?;
-        add_references(&mut references, view.moves.len())?;
-        if !view.moves.iter().all(|(_, p)| p.is_finite()) {
-            return Err(invalid("exploded view contains non-finite moves"));
+        for step in &view.steps {
+            text(&step.name)?;
+            add_references(&mut references, step.moves.len())?;
+            if !step.moves.iter().all(|(_, p)| p.is_finite()) {
+                return Err(invalid("exploded view contains non-finite moves"));
+            }
         }
     }
     if !assembly.links.iter().all(|l| l.ratio.is_finite() && l.offset.is_finite() && l.lift.iter().all(|v| v.is_finite())) {
@@ -383,15 +386,20 @@ pub(super) fn clone_assembly(
     }
     let mut view_names = a.exploded.iter().map(|x| x.name.clone()).collect();
     for old in &source.assembly.exploded {
-        if !old.moves.iter().any(|(o, _)| occurrences.contains_key(o)) {
+        let mut moves = old.steps.iter().flat_map(|step| step.moves.iter().map(|(o, _)| *o));
+        if !moves.clone().any(|o| occurrences.contains_key(&o)) {
             continue;
         }
-        if old.moves.iter().all(|(o, _)| occurrences.contains_key(o)) {
+        if moves.all(|o| occurrences.contains_key(&o)) {
             let mut item = old.clone();
             item.id = next_id(&mut item_id)?;
             item.name = unique_name(&old.name, &mut view_names)?;
-            for (o, _) in &mut item.moves {
-                *o = *occurrences.get(o).ok_or_else(|| invalid("missing copied exploded occurrence"))?;
+            // The copy's steps are numbered from the copy's own view id.
+            for (index, step) in item.steps.iter_mut().enumerate() {
+                step.id = solidcraft_doc::motion::step_id(item.id, index as u64);
+                for (o, _) in &mut step.moves {
+                    *o = *occurrences.get(o).ok_or_else(|| invalid("missing copied exploded occurrence"))?;
+                }
             }
             a.exploded.push(item);
         } else {

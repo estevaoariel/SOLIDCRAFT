@@ -52,6 +52,7 @@ mod dimension_create_ui_tests;
 pub mod documents;
 pub mod drag_snap;
 pub mod edit_clipboard;
+pub mod explode_gizmo;
 #[cfg(test)]
 mod font_literals_tests;
 pub mod fonts;
@@ -392,6 +393,12 @@ pub struct SolveApp {
     pub gesture: mouse_gesture::State,
     /// Browser tree state (reveal, groups being edited, occurrence moves).
     pub tree: browser::TreeState,
+    /// The exploded view's gizmo: what the viewport draws it from (the dialog's pick) and the
+    /// drag the user made with it. The dialog picks the occurrence and the viewport drags it.
+    pub explode_pick: Option<explode_gizmo::ExplodePick>,
+    /// The translation the user has pulled an exploded occurrence to; the dialog takes it into
+    /// the current step.
+    pub explode_drag: Option<explode_gizmo::ExplodeDrag>,
     /// A saved design copied for insertion into another open document.
     pub linked_design_clipboard: Option<String>,
     /// The S box (command search at the cursor): recent and pinned commands.
@@ -549,6 +556,8 @@ impl SolveApp {
             menu: context_menu::MenuState::default(),
             gesture: mouse_gesture::State::default(),
             tree: browser::TreeState::default(),
+            explode_pick: None,
+            explode_drag: None,
             linked_design_clipboard: None,
             sbox: shortcut_box::ShortcutBox::default(),
             keymap: keymap::Keymap::default(),

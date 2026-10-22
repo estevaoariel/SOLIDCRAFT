@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::panic)]
 use super::*;
 use solidcraft_doc::joints::{Coupling, Joint, JointKind, MotionLink, NamedOrigin, Size, Snap, XRef};
-use solidcraft_doc::motion::{ContactSet, ExplodedView, MotionStudy, StudyKey};
+use solidcraft_doc::motion::{ContactSet, DEFAULT_STEP_MS, EaseKind, ExplodeStep, ExplodedView, MotionStudy, StudyKey};
 use solidcraft_doc::{IDENTITY, Occurrence};
 use solidcraft_geom::Vec3;
 
@@ -28,6 +28,17 @@ fn joint(id: u64, a: u64, b: u64) -> Joint {
 
 fn occurrence(id: u64) -> Occurrence {
     Occurrence { id, component: id, parent: 0, name: format!("Occurrence{id}"), transform: IDENTITY, grounded: false }
+}
+
+/// An exploded view with one step holding the given moves.
+fn explode(id: u64, name: &str, moves: Vec<(u64, Vec3)>) -> ExplodedView {
+    ExplodedView {
+        id,
+        name: name.into(),
+        steps: vec![ExplodeStep { id: id * 1000, name: "Explode".into(), moves, duration_ms: DEFAULT_STEP_MS }],
+        trail_lines: true,
+        easing: EaseKind::default(),
+    }
 }
 
 fn documents() -> (Document, Document) {
@@ -65,8 +76,8 @@ fn documents() -> (Document, Document) {
         MotionStudy { id: 4, name: "Cross study".into(), steps: 10, keys: vec![key(1), key(3)] },
     ];
     source.assembly.exploded = vec![
-        ExplodedView { id: 5, name: "Internal explode".into(), moves: vec![(1, Vec3::X * 10.0), (2, Vec3::Y * 20.0)] },
-        ExplodedView { id: 6, name: "Cross explode".into(), moves: vec![(1, Vec3::X), (9, Vec3::Y)] },
+        explode(5, "Internal explode", vec![(1, Vec3::X * 10.0), (2, Vec3::Y * 20.0)]),
+        explode(6, "Cross explode", vec![(1, Vec3::X), (9, Vec3::Y)]),
     ];
     let mut destination = source.clone();
     destination.occurrences.extend([101, 102].map(occurrence));
@@ -99,7 +110,9 @@ fn internal_relationships_receive_independent_ids_and_remapped_typed_references(
     assert_eq!(a.studies[2].keys.iter().map(|k| k.joint).collect::<Vec<_>>(), vec![1000, 1001]);
     assert_eq!(a.exploded[2].id, 1004);
     assert_eq!(destination.next_id, 1005);
-    assert_eq!(a.exploded[2].moves, vec![(101, Vec3::X * 10.0), (102, Vec3::Y * 20.0)]);
+    assert_eq!(a.exploded[2].steps.len(), 1);
+    assert_eq!(a.exploded[2].steps[0].id, 1004 * 1000);
+    assert_eq!(a.exploded[2].steps[0].moves, vec![(101, Vec3::X * 10.0), (102, Vec3::Y * 20.0)]);
     assert_eq!(report.len(), 6);
     for kind in ["joint origin", "joint `Joint3`", "motion link", "contact set", "motion study", "exploded view"] {
         assert!(report.iter().any(|m| m.contains(kind)), "{kind}: {report:?}");
