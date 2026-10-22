@@ -398,7 +398,10 @@ view.ambient_occlusion
 view.apply
 view.delete
 view.graphics_preset
+view.history_layout
+view.layout
 view.list
 view.navigate
+view.normal_to
 view.rename
 view.save
