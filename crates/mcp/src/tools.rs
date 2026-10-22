@@ -135,12 +135,13 @@ pub fn tool_definitions() -> Vec<Value> {
             "run_script",
             "Run a script in a scratch session",
             "Run a command script in a throwaway session, so the design open in the app is not touched and its undo history \
-             stays as it was. Starts from an empty design, or from `design` (a .solidcraft design, or a STEP/IGES/3MF/STL file). \
-             This is how to test a build from scratch, walk a parameter through its allowed values, or try a change before \
-             making it: a script is the same command list `batch` takes, and `file.export`/`file.save_as` inside it write real \
-             files. Stops at the first failing step. Then reports the end state: timeline warnings and errors, sketches not at \
-             dof 0 (they can solve to a different shape after a parameter change, with no error), and every body's volume, area, \
-             bounding box and centre of mass. A `document.inspect` step in the script adds its own report for that step. \
+             stays as it was. It starts from an empty design, or from `design` (a .solidcraft design, or a STEP/IGES/3MF/STL file). \
+             Nothing it does appears in the user's viewport: **to build the part the user asked for, use `batch`, which runs in the \
+             open design so they can watch it take shape, undo it and keep it.** Use this one to look, test or walk a parameter \
+             without disturbing what they have open: a script is the same command list `batch` takes, and `file.export`/`file.save_as` \
+             inside it write real files. Stops at the first failing step. Then reports the end state: timeline warnings and errors, \
+             sketches not at dof 0 (they can solve to a different shape after a parameter change, with no error), and every body's \
+             volume, area, bounding box and centre of mass. A `document.inspect` step in the script adds its own report for that step. \
              `clean: true` in the report means none of that needs looking at.",
             obj(
                 json!({
