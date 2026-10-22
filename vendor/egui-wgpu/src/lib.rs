@@ -78,7 +78,9 @@ pub const STALLED_ACQUIRE: std::time::Duration = std::time::Duration::from_milli
 
 static STALLED_FRAMES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
-/// SolidCraft: how many frames in a row stalled acquiring their texture ([`STALLED_ACQUIRE`]).
+/// SolidCraft: how many of the main window's frames in a row stalled acquiring their texture
+/// ([`STALLED_ACQUIRE`]). Other viewports (the agent chat's window) don't count: a frame on time
+/// there would start a stalled main window's count over.
 pub fn stalled_frames() -> u32 {
     STALLED_FRAMES.load(std::sync::atomic::Ordering::Relaxed)
 }
@@ -94,10 +96,33 @@ fn count_stall(stalled: u32, elapsed: std::time::Duration) -> u32 {
     }
 }
 
+/// The main window's acquire took `elapsed`: its surface is configured again, if it wasn't.
 #[cfg_attr(not(feature = "winit"), allow(dead_code))]
 pub(crate) fn note_acquire(elapsed: std::time::Duration) {
     let stalled = count_stall(stalled_frames(), elapsed);
     STALLED_FRAMES.store(stalled, std::sync::atomic::Ordering::Relaxed);
+    if let Ok(mut since) = REFUSED_SINCE.lock() {
+        *since = None;
+    }
+}
+
+static REFUSED_SINCE: std::sync::Mutex<Option<web_time::Instant>> = std::sync::Mutex::new(None);
+
+/// SolidCraft: how long the main window has gone without acquiring a texture because its surface
+/// refuses its configuration (or waits for a refused one's retry, #1935); `None` while it
+/// acquires. Those frames are skipped before the acquire, so they never count as stalled: a
+/// surface refused for good after a GPU reset leaves a blank window with nothing else to show
+/// for it (#3321).
+pub fn refused_for() -> Option<std::time::Duration> {
+    REFUSED_SINCE.lock().ok().and_then(|since| *since).map(|since| since.elapsed())
+}
+
+/// The main window skipped a frame at `now` on a refused configure.
+#[cfg_attr(not(feature = "winit"), allow(dead_code))]
+pub(crate) fn note_refused(now: web_time::Instant) {
+    if let Ok(mut since) = REFUSED_SINCE.lock() {
+        since.get_or_insert(now);
+    }
 }
 
 /// An error produced by egui-wgpu.

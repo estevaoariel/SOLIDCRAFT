@@ -657,6 +657,9 @@ impl Painter {
             && let Err(err) = self.recreate_surface(viewport_id, window)
         {
             log::error!("Failed to recreate surface for {viewport_id:?}: {err}");
+            if viewport_id == ViewportId::ROOT {
+                crate::note_refused(now);
+            }
             return vsync_sec;
         }
 
@@ -700,6 +703,10 @@ impl Painter {
                 now,
             )
         {
+            // SolidCraft: the main window's time without a texture (#3321, `refused_for`).
+            if viewport_id == ViewportId::ROOT {
+                crate::note_refused(now);
+            }
             return vsync_sec;
         }
 
@@ -714,8 +721,11 @@ impl Painter {
             let output_frame = surface_state.surface.get_current_texture();
             let elapsed = start.elapsed();
             vsync_sec += elapsed.as_secs_f32();
-            // SolidCraft: frames that wait out the acquire are a hung GPU (#3321).
-            crate::note_acquire(elapsed);
+            // SolidCraft: the main window's frames that wait out the acquire are a hung GPU
+            // (#3321).
+            if viewport_id == ViewportId::ROOT {
+                crate::note_acquire(elapsed);
+            }
             output_frame
         };
 

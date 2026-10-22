@@ -80,8 +80,8 @@ struct App {
     renderer: Option<(eframe::wgpu::Backend, bool)>,
     /// A GPU that hangs after the window is up (`App::watch_for_a_hang`).
     hang: startup::HangWatch,
-    /// The GPU hung: how the next launch starts, once this one has closed.
-    restart: Option<startup::Restart>,
+    /// The GPU hung: the next launch starts once this one has closed, on the backend saved then.
+    restart: bool,
     #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
     space_mouse: space_mouse::SpaceMouse,
 }
@@ -154,13 +154,14 @@ impl eframe::App for App {
         solidcraft_ui_egui::save_job::tick(&mut self.solve, true);
         solidcraft_ui_egui::recovery_ui::close(&mut self.solve);
         solidcraft_engine::crash::end_session();
-        if let Some((restart, (backend, _))) = self.restart.zip(self.renderer) {
-            restart_after_hang(restart, backend);
+        if let Some((backend, _)) = self.renderer.filter(|_| self.restart) {
+            restart_after_hang(backend);
         }
         // An update asked to restart into the new version or to run its installer.
         if let Some((program, args)) = solidcraft_ui_egui::update::take_launch(&mut self.solve) {
             let mut command = std::process::Command::new(&program);
-            command.args(&args);
+            // This launch's notices aren't the new version's.
+            command.args(&args).env_remove(startup::HUNG_ENV).env_remove(startup::NO_WINDOW_ENV);
             #[cfg(windows)]
             {
                 use std::os::windows::process::CommandExt;
@@ -177,10 +178,11 @@ impl eframe::App for App {
 }
 
 impl App {
-    /// The GPU hung (frames wait out their acquire while the user is there, #3321): close, keeping
-    /// unsaved changes for recovery as a forced quit does (the window, white, can't ask about
-    /// them), and start again on another renderer once closed ([`restart_after_hang`]). Windows
-    /// only: elsewhere a hidden window's frames can wait as long (Wayland, macOS).
+    /// The GPU hung (frames wait out their acquire, or the surface refuses its configuration, while
+    /// the user is there, #3321): close, keeping unsaved changes for recovery as a forced quit
+    /// does (the window, white, can't ask about them), and start again on another renderer once
+    /// closed ([`restart_after_hang`]). Windows only: elsewhere a hidden window's frames can wait
+    /// as long (Wayland, macOS).
     fn watch_for_a_hang(&mut self, ctx: &egui::Context) {
         if !cfg!(target_os = "windows") {
             return;
@@ -195,33 +197,37 @@ impl App {
             (i.time, input)
         });
         let stalled = eframe::egui_wgpu::stalled_frames();
-        if !self.hang.hung(now, input, stalled) {
+        let refused = eframe::egui_wgpu::refused_for().map(|d| d.as_secs_f64());
+        if !self.hang.hung(now, input, stalled, refused) {
             return;
         }
-        let Some(restart) = self.renderer.and_then(|(backend, cpu)| startup::after_hang(backend, cpu)) else {
-            log::error!("graphics: {stalled} frames in a row waited out their acquire, on the software renderer");
+        let why = match refused {
+            Some(s) if s > 0.0 => format!("the surface refused its configuration for {s:.0} s"),
+            _ => format!("{stalled} frames in a row waited out their acquire"),
+        };
+        let Some(backend) = self.renderer.and_then(|(backend, cpu)| startup::after_hang(backend, cpu)) else {
+            log::error!("graphics: {why}, on the software renderer");
             return;
         };
-        log::error!("graphics: {stalled} frames in a row waited out their acquire; the GPU hung, restarting: {restart:?}");
-        eprintln!("SolidCraft graphics: the GPU stopped responding; restarting ({restart:?})");
-        if let startup::Restart::Backend(backend) = restart {
-            remember_backend(backend);
-        }
-        self.restart = Some(restart);
+        log::error!("graphics: {why}; the GPU hung, restarting on {backend}");
+        eprintln!("SolidCraft graphics: the GPU stopped responding; restarting on {backend}");
+        remember_backend(backend);
+        self.restart = true;
         self.solve.quit_requested = true;
     }
 }
 
-/// Start SolidCraft again after the GPU hung on `hung`, with the same arguments: in safe mode, or
-/// on the backend [`remember_backend`] saved. `WGPU_BACKEND` is not passed on: it would win over
-/// that backend and start the one that hung again.
-fn restart_after_hang(restart: startup::Restart, hung: eframe::wgpu::Backend) {
+/// Start SolidCraft again after the GPU hung on `hung`, with the same arguments, on the backend
+/// [`remember_backend`] saved. `WGPU_BACKEND` is not passed on: it would win over that backend
+/// and start the one that hung again.
+fn restart_after_hang(hung: eframe::wgpu::Backend) {
     let Ok(exe) = std::env::current_exe() else { return };
     let mut command = std::process::Command::new(exe);
-    command.args(std::env::args_os().skip(1)).env(startup::HUNG_ENV, format!("{hung:?}")).env_remove(startup::WGPU_BACKEND_ENV);
-    if restart == startup::Restart::SafeMode {
-        command.arg("--safe-mode");
-    }
+    command
+        .args(std::env::args_os().skip(1))
+        .env(startup::HUNG_ENV, format!("{hung:?}"))
+        .env_remove(startup::WGPU_BACKEND_ENV)
+        .env_remove(startup::NO_WINDOW_ENV);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -233,14 +239,29 @@ fn restart_after_hang(restart: startup::Restart, hung: eframe::wgpu::Backend) {
     }
 }
 
-/// Keep `backend` as `graphics.json`'s `backend` (its other settings stay).
+/// Keep `backend` as `graphics.json`'s `backend` (its other settings stay). Written to a new file
+/// that then replaces the old one: this runs as the GPU hangs, when the machine may reset next,
+/// and a half-written file would lose the anti-aliasing setting too.
 fn remember_backend(backend: &str) {
     let Some(path) = graphics_path() else { return };
     let mut graphics = graphics().filter(serde_json::Value::is_object).unwrap_or_else(|| serde_json::json!({}));
     graphics["backend"] = serde_json::json!(backend);
-    if let Err(e) = std::fs::write(&path, graphics.to_string()) {
+    if let Err(e) = write_replacing(&path, graphics.to_string().as_bytes()) {
         log::error!("graphics: keeping the {backend} backend in {}: {e}", path.display());
     }
+}
+
+/// Write `bytes` to `path` all at once: to a file next to it, flushed to disk, then renamed over it.
+fn write_replacing(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(".new");
+    let new = path.with_file_name(name);
+    let mut file = std::fs::File::create(&new)?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    drop(file);
+    std::fs::rename(&new, path)
 }
 
 fn services(cc: &eframe::CreationContext<'_>) -> Services {
@@ -555,7 +576,8 @@ fn graphics() -> Option<serde_json::Value> {
     graphics_path().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
 }
 
-/// The graphics backend preference (`graphics.json`'s `backend`: `auto`, `dx12`, `vulkan`, `gl`).
+/// The graphics backend preference (`graphics.json`'s `backend`: `auto`, `dx12`, `vulkan`, `gl`,
+/// or `cpu`, the software renderer).
 fn backend_preference() -> Option<String> {
     graphics().and_then(|v| v.get("backend").and_then(serde_json::Value::as_str).map(str::to_string))
 }
@@ -655,7 +677,11 @@ fn main() -> eframe::Result {
         safe_mode = true;
         notes.push(format!("The last {failed_starts} launches stopped before the window opened, so this one is in safe mode."));
     }
-    let cpu_renderer = safe_mode || startup::cpu_renderer_env(std::env::var(startup::RENDERER_ENV).ok().as_deref());
+    // The software renderer: safe mode, SOLIDCRAFT_RENDERER, or kept after the GPU hung on every
+    // API (`startup::after_hang`).
+    let cpu_renderer = safe_mode
+        || startup::cpu_renderer_env(std::env::var(startup::RENDERER_ENV).ok().as_deref())
+        || startup::cpu_renderer_env(backend_preference().as_deref());
     // The launch before this one closed because its GPU hung (`App::watch_for_a_hang`).
     if let Some(hung) = std::env::var(startup::HUNG_ENV).ok().filter(|v| !v.trim().is_empty()) {
         notes.push(startup::hang_note(&hung, safe_mode, backend_preference().as_deref()));
@@ -835,7 +861,7 @@ fn main() -> eframe::Result {
                 take_focus_unwanted: control_port.is_some(),
                 renderer,
                 hang: startup::HangWatch::default(),
-                restart: None,
+                restart: false,
                 #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
                 space_mouse,
             }))
@@ -900,10 +926,10 @@ fn no_window(error: eframe::Error, tried_cpu: bool, settings: Option<&std::path:
             eprintln!("SolidCraft: trying again with Vulkan");
             remember_backend("vulkan");
             // `WGPU_BACKEND` would win over the backend just saved.
-            command.env(startup::NO_WINDOW_ENV, "Dx12").env_remove(startup::WGPU_BACKEND_ENV);
+            command.env(startup::NO_WINDOW_ENV, "Dx12").env_remove(startup::WGPU_BACKEND_ENV).env_remove(startup::HUNG_ENV);
         } else {
             eprintln!("SolidCraft: trying again with the software renderer ({}=cpu)", startup::RENDERER_ENV);
-            command.env(startup::RENDERER_ENV, "cpu");
+            command.env(startup::RENDERER_ENV, "cpu").env_remove(startup::HUNG_ENV).env_remove(startup::NO_WINDOW_ENV);
         }
         match command.status() {
             Ok(status) if status.success() => return Ok(()),

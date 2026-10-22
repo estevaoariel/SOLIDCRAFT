@@ -198,6 +198,11 @@ impl HardwareAdapter {
 /// Frames in a row that stalled ([`eframe::egui_wgpu::stalled_frames`]: each waited out wgpu's
 /// one-second acquire) after which the GPU is taken as hung.
 pub const STALLED_FRAMES_FOR_RESTART: u32 = 5;
+/// Seconds the window's surface may refuse its configuration ([`eframe::egui_wgpu::refused_for`])
+/// while the user is there before the GPU is taken as hung: after a reset, a surface that stays
+/// unsupported leaves a blank window. Refusals that clear up (a resize, a display waking up)
+/// take a moment, not this long.
+pub const REFUSED_S_FOR_RESTART: f64 = 10.0;
 /// Stalled frames count only this many seconds after the user's input: a hung GPU leaves a white
 /// window the user clicks at, while a switched-off display can hold frames back with nobody there.
 pub const STALL_INPUT_WINDOW_S: f64 = 10.0;
@@ -209,43 +214,63 @@ pub const HUNG_ENV: &str = "SOLIDCRAFT_GPU_HUNG";
 #[derive(Debug, Default)]
 pub struct HangWatch {
     last_input: Option<f64>,
+    /// When the user came back: the first input after none for [`STALL_INPUT_WINDOW_S`].
+    arrived: f64,
+    /// The stalled streak when the user came back. Those frames stalled with nobody there (a
+    /// display switched off holds them back too), and the input that wakes the display comes
+    /// before the next frame shows whether the GPU is fine, so only stalls after it count.
+    stalled_before: u32,
     hung: bool,
 }
 
 impl HangWatch {
-    /// Per frame, at `now` seconds: whether the user gave input this frame, and the frames in a
-    /// row that stalled. True once, the frame the GPU is taken as hung.
-    pub fn hung(&mut self, now: f64, input: bool, stalled: u32) -> bool {
+    /// Per frame, at `now` seconds: whether the user gave input this frame, the frames in a row
+    /// that stalled, and the seconds the surface has refused its configuration. True once, the
+    /// frame the GPU is taken as hung.
+    pub fn hung(&mut self, now: f64, input: bool, stalled: u32, refused_s: Option<f64>) -> bool {
+        if stalled < self.stalled_before {
+            // The streak broke: every stall since came after the user was back.
+            self.stalled_before = 0;
+        }
         if input {
+            if !self.user_there(now) {
+                self.arrived = now;
+                self.stalled_before = stalled;
+            }
             self.last_input = Some(now);
         }
-        if self.hung || stalled < STALLED_FRAMES_FOR_RESTART {
+        if self.hung || !self.user_there(now) {
             return false;
         }
-        self.hung = self.last_input.is_some_and(|t| (0.0..=STALL_INPUT_WINDOW_S).contains(&(now - t)));
+        // A surface refused since before the user came back counts from then.
+        let refused = refused_s.map_or(0.0, |r| r.min(now - self.arrived));
+        self.hung = stalled.saturating_sub(self.stalled_before) >= STALLED_FRAMES_FOR_RESTART || refused >= REFUSED_S_FOR_RESTART;
         self.hung
     }
-}
 
-/// How a launch whose GPU hung starts again.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Restart {
-    /// On this backend (`graphics.json`'s `backend`), kept for later launches too.
-    Backend(&'static str),
-    SafeMode,
-}
-
-/// The restart after the GPU hung on `backend` (`cpu`: the software renderer, which has nothing
-/// to fall back to). D3D12 goes to Vulkan, which runs the GPUs whose D3D12 driver hung (#1789);
-/// it isn't probed here, as loading Vulkan's drivers into this process is what crashed once
-/// (`WINDOWS_ORDER`): the new launch finds out, and falls back to software if it has no GPU.
-pub fn after_hang(backend: eframe::wgpu::Backend, cpu: bool) -> Option<Restart> {
-    match backend {
-        _ if cpu => None,
-        eframe::wgpu::Backend::Dx12 => Some(Restart::Backend("vulkan")),
-        _ => Some(Restart::SafeMode),
+    fn user_there(&self, now: f64) -> bool {
+        self.last_input.is_some_and(|t| (0.0..=STALL_INPUT_WINDOW_S).contains(&(now - t)))
     }
 }
+
+/// The backend a launch whose GPU hung on `backend` starts again on, kept in `graphics.json` for
+/// later launches too (`cpu`: the software renderer, which has nothing to fall back to). Each
+/// hang moves on to the next of [`WINDOWS_ORDER`], then to the software renderer, so a GPU hangs
+/// at most once on each: a safe-mode restart would leave the backend that hung saved for the
+/// next normal start. D3D12 goes to Vulkan, which runs the GPUs whose D3D12 driver hung (#1789);
+/// it isn't probed here, as loading Vulkan's drivers into this process is what crashed once
+/// (`WINDOWS_ORDER`): the new launch finds out, and falls back to software if it has no GPU.
+pub fn after_hang(backend: eframe::wgpu::Backend, cpu: bool) -> Option<&'static str> {
+    match backend {
+        _ if cpu => None,
+        eframe::wgpu::Backend::Dx12 => Some("vulkan"),
+        eframe::wgpu::Backend::Vulkan => Some("gl"),
+        _ => Some(SOFTWARE_BACKEND),
+    }
+}
+
+/// `graphics.json`'s `backend` for the software renderer, kept after the GPU hung on every API.
+pub const SOFTWARE_BACKEND: &str = "cpu";
 
 /// Set on the launch that replaces one whose window never opened on a GPU's D3D12: that backend,
 /// for the notice.
@@ -285,6 +310,7 @@ fn api_name(backend: &str) -> &str {
         "vulkan" => "Vulkan",
         "gl" => "OpenGL",
         "metal" => "Metal",
+        "cpu" | "software" => "the software renderer",
         _ => backend,
     }
 }
@@ -467,25 +493,46 @@ mod tests {
         use eframe::wgpu::Backend;
         let stalled = STALLED_FRAMES_FOR_RESTART;
         let mut watch = HangWatch::default();
-        assert!(!watch.hung(0.0, true, stalled - 1), "not yet");
-        assert!(watch.hung(5.0, false, stalled), "input 5 s ago");
-        assert!(!watch.hung(6.0, true, stalled + 1), "once");
+        assert!(!watch.hung(0.0, true, 0, None));
+        assert!(!watch.hung(4.0, false, stalled - 1, None), "not yet");
+        assert!(watch.hung(5.0, false, stalled, None), "input 5 s ago");
+        assert!(!watch.hung(6.0, true, stalled + 1, None), "once");
         // Nobody at the computer (a display switched off holds frames back too): no restart.
         let mut away = HangWatch::default();
-        assert!(!away.hung(100.0, false, stalled));
-        assert!(!away.hung(200.0, false, 100));
-        let mut left = HangWatch::default();
-        assert!(!left.hung(0.0, true, 0));
-        assert!(!left.hung(STALL_INPUT_WINDOW_S + 1.0, false, stalled));
-        assert!(left.hung(STALL_INPUT_WINDOW_S + 2.0, true, stalled), "the user is back");
+        assert!(!away.hung(100.0, false, stalled, None));
+        assert!(!away.hung(200.0, false, 100, None));
+        // The input that wakes the display comes before a frame shows the GPU is fine: the
+        // stalls from before don't count, and the frames on time that follow end the streak.
+        let mut woke = HangWatch::default();
+        assert!(!woke.hung(0.0, true, 0, None));
+        assert!(!woke.hung(STALL_INPUT_WINDOW_S + 1.0, false, 30, None));
+        assert!(!woke.hung(STALL_INPUT_WINDOW_S + 2.0, true, 30, None), "back at a healthy app");
+        assert!(!woke.hung(STALL_INPUT_WINDOW_S + 3.0, true, 0, None));
+        let later: Vec<bool> = (1..=stalled).map(|n| woke.hung(STALL_INPUT_WINDOW_S + 3.0 + f64::from(n), true, n, None)).collect();
+        assert_eq!(later.last(), Some(&true), "then it hangs: {later:?}");
+        // Back at a GPU that hung while nobody was there: five more stalls.
+        let mut back = HangWatch::default();
+        assert!(!back.hung(100.0, true, 30, None));
+        assert!(!back.hung(103.0, true, 30 + stalled - 1, None));
+        assert!(back.hung(104.0, true, 30 + stalled, None));
+        // A surface refused for good after a reset never reaches the acquire: a blank window.
+        let mut refused = HangWatch::default();
+        assert!(!refused.hung(0.0, true, 0, Some(60.0)), "refused since before the user came");
+        assert!(!refused.hung(REFUSED_S_FOR_RESTART - 1.0, true, 0, Some(60.0 + REFUSED_S_FOR_RESTART - 1.0)));
+        assert!(refused.hung(REFUSED_S_FOR_RESTART, true, 0, Some(60.0 + REFUSED_S_FOR_RESTART)));
+        let mut resized = HangWatch::default();
+        assert!(!resized.hung(0.0, true, 0, Some(0.5)), "a moment's refusal");
 
-        assert_eq!(after_hang(Backend::Dx12, false), Some(Restart::Backend("vulkan")));
-        assert_eq!(after_hang(Backend::Vulkan, false), Some(Restart::SafeMode));
-        assert_eq!(after_hang(Backend::Gl, false), Some(Restart::SafeMode));
+        // Each API hangs at most once: D3D12, then Vulkan, then OpenGL, then software.
+        assert_eq!(after_hang(Backend::Dx12, false), Some("vulkan"));
+        assert_eq!(after_hang(Backend::Vulkan, false), Some("gl"));
+        assert_eq!(after_hang(Backend::Gl, false), Some(SOFTWARE_BACKEND));
         assert_eq!(after_hang(Backend::Dx12, true), None, "software: nothing to fall back to");
+        assert!(cpu_renderer_env(Some(SOFTWARE_BACKEND)), "the saved software renderer starts as such");
         let note = hang_note("Dx12", false, Some("vulkan"));
         assert!(note.contains("on Direct3D 12") && note.contains("on Vulkan") && note.contains("recovery"), "{note}");
-        assert!(hang_note("Vulkan", true, Some("vulkan")).contains("in safe mode"));
+        assert!(hang_note("Vulkan", true, Some("gl")).contains("in safe mode"));
+        assert!(hang_note("Gl", false, Some("cpu")).contains("on the software renderer, which it keeps using"));
     }
 
     #[test]
