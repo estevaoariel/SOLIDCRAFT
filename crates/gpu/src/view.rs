@@ -1926,6 +1926,8 @@ impl Renderer {
             res.product.take(device, cb.key, &cb.slot, None);
             res.product.sort_glass(queue, cb.back);
             queue.write_buffer(&res.uniform, 0, &uniform_bytes(cb, cb.size_px[0], cb.size_px[1], res.linear_out, res.target.reversed_depth()));
+            // Never paint the modelling viewport's last supersampled frame in its place.
+            res.ss_ready = cb.ssaa != 1.0 && res.supersample(device, encoder, cb, false);
             return;
         }
         res.model.take(device, cb.key, &cb.slot, res.tess.as_ref().map(|t| (t, &mut *encoder)));
@@ -2567,22 +2569,34 @@ mod glass_tests {
         assert!(buffer_chunk(TRI_SIZE, 1) >= TRI_SIZE * 6, "a tiny limit still holds one unit");
     }
 
+    const SIZE: u32 = 64;
+
+    /// A renderer drawing into the 64 × 64 frames of these tests. `None` without a GPU adapter.
+    fn renderer() -> Option<(Renderer, wgpu::Device, wgpu::Queue)> {
+        let (_, device, queue) = crate::open_headless().ok()?;
+        let depth = crate::depth_format(&device, true);
+        let r = Renderer::new(&device, GpuTarget { format: wgpu::TextureFormat::Rgba8Unorm, depth: Some(depth), samples: 1, tess: false }, None);
+        Some((r, device, queue))
+    }
+
     /// The middle pixel of `scene` drawn looking down -Z (x, y in -10..10) into a 64 × 64 frame,
     /// with order-independent transparency (`oit`) or with the see-through triangles sorted.
     /// `None` without a GPU adapter.
     fn middle_pixel(scene: GpuScene, oit: bool) -> Option<[u8; 4]> {
-        const SIZE: u32 = 64;
-        let (_, device, queue) = crate::open_headless().ok()?;
-        let depth = crate::depth_format(&device, true);
-        let format = wgpu::TextureFormat::Rgba8Unorm;
-        let mut r = Renderer::new(&device, GpuTarget { format, depth: Some(depth), samples: 1, tess: false }, None);
+        let (mut r, device, queue) = renderer()?;
         assert!(r.oit.is_some(), "this device does order-independent transparency");
         if !oit {
             r.oit = None;
         }
+        draw_middle(&mut r, &device, &queue, &frame(scene, false))
+    }
+
+    /// A frame of `scene` looking down -Z (x, y in -10..10): the modelling viewport's, or with
+    /// `product` the Render workspace's preview.
+    fn frame(scene: GpuScene, product: bool) -> Frame {
         let none = || Arc::new(Mutex::new(None));
-        let frame = Frame {
-            product: false,
+        Frame {
+            product,
             key: 1,
             slot: Arc::new(Mutex::new(Some(scene))),
             sketch_key: 0,
@@ -2605,7 +2619,13 @@ mod glass_tests {
             eye: [0.0, 0.0, 100.0, 0.0],
             ao_radius: 0.0,
             ssaa: 1.0,
-        };
+        }
+    }
+
+    /// The middle pixel `r` paints for `frame` over white.
+    fn draw_middle(r: &mut Renderer, device: &wgpu::Device, queue: &wgpu::Queue, frame: &Frame) -> Option<[u8; 4]> {
+        let depth = crate::depth_format(device, true);
+        let format = wgpu::TextureFormat::Rgba8Unorm;
         let texture = |format, usage| {
             device.create_texture(&wgpu::TextureDescriptor {
                 label: None,
@@ -2622,7 +2642,7 @@ mod glass_tests {
         let depth_tex = texture(depth, wgpu::TextureUsages::RENDER_ATTACHMENT);
         let (color_view, depth_view) = (color.create_view(&Default::default()), depth_tex.create_view(&Default::default()));
         let mut encoder = device.create_command_encoder(&Default::default());
-        r.prepare(&device, &queue, &mut encoder, &frame);
+        r.prepare(device, queue, &mut encoder, frame);
         {
             let mut pass = encoder
                 .begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -2648,7 +2668,7 @@ mod glass_tests {
                     multiview_mask: None,
                 })
                 .forget_lifetime();
-            r.paint(&frame, &mut pass, [0.0, 0.0, SIZE as f32, SIZE as f32]);
+            r.paint(frame, &mut pass, [0.0, 0.0, SIZE as f32, SIZE as f32]);
         }
         let read = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
@@ -2708,6 +2728,28 @@ mod glass_tests {
         let sorted = middle_pixel(two_layers(blue, red, false), false).unwrap();
         assert!(near(either, sorted, 48), "two colours: {either:?} vs sorted {sorted:?}");
         assert!(either[0] > 100 && either[2] > 100, "both colours show: {either:?}");
+    }
+
+    /// The Render workspace's preview once painted the modelling viewport's last frame instead of
+    /// its own: after a frame with see-through surfaces (drawn offscreen for order-independent
+    /// transparency) it stayed frozen on that frame, whatever the camera did. Skipped without a
+    /// GPU adapter.
+    #[test]
+    fn product_preview_never_paints_the_last_modelling_frame() {
+        let Some((mut r, device, queue)) = renderer() else {
+            eprintln!("skipping: no GPU adapter");
+            return;
+        };
+        let red = [220, 40, 40, 128];
+        let model = draw_middle(&mut r, &device, &queue, &frame(two_layers(red, red, true), false)).unwrap();
+        assert!(r.ss_ready, "the see-through modelling frame is drawn offscreen");
+        assert!(i32::from(model[0]) > i32::from(model[2]) + 60, "the modelling frame shows its red layers: {model:?}");
+        let mut product = GpuScene::default();
+        for p in [[-5.0, -5.0], [5.0, -5.0], [5.0, 5.0], [-5.0, -5.0], [5.0, 5.0], [-5.0, 5.0]] {
+            product.tri([p[0], p[1], 0.0], [0.0, 0.0, 1.0], [40, 80, 220, 255]);
+        }
+        let preview = draw_middle(&mut r, &device, &queue, &frame(product, true)).unwrap();
+        assert!(i32::from(preview[2]) > i32::from(preview[0]) + 60, "the preview shows its own blue square: {preview:?}");
     }
 
     #[test]
