@@ -575,3 +575,28 @@ fn copies_of_a_join_that_merged_its_targets_join_the_merged_body() {
         assert!(rel(volume(&mut s), v0 + n * (v1 - v0)) < 1e-3, "{id}: {} vs {}", volume(&mut s), v0 + n * (v1 - v0));
     }
 }
+
+/// #4741: a circular pattern about a construction axis named by the user (an axis through a
+/// hole), as the Circular Pattern dialog passes it: by name. It was refused ("axis must be X,
+/// Y, Z or {origin, dir}").
+#[test]
+fn circular_pattern_turns_about_a_construction_axis_by_name() {
+    let mut s = Session::default();
+    run(&mut s, "sketch.create", json!({"plane":"XY"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0":[0,0],"p1":[100,100]}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"distance":10}));
+    run(&mut s, "sketch.create", json!({"plane":"XY"}));
+    run(&mut s, "sketch.circle.center", json!({"center":[50,50],"radius":3}));
+    run(&mut s, "sketch.circle.center", json!({"center":[50,20],"radius":5}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"distance":10,"operation":"cut","name":"Hole"}));
+    run(&mut s, "construct.axis.through_cylinder", json!({"face":{"face":[53,50,5]},"name":"Axis1"}));
+    run(&mut s, "solid.pattern.circular", json!({"features":["Hole"],"axis":"Axis1","count":4}));
+    // The centre hole turns onto itself; the other lands at four places round it.
+    let expected = 100.0 * 100.0 * 10.0 - (9.0 + 4.0 * 25.0) * PI * 10.0;
+    let v = volume(&mut s);
+    assert!(rel(v, expected) < 1e-4, "{v} vs {expected}");
+    let err = s.execute("solid.pattern.circular", &json!({"features":["Hole"],"axis":"NoSuchAxis","count":4})).unwrap_err().to_string();
+    assert!(err.contains("NoSuchAxis"), "{err}");
+}

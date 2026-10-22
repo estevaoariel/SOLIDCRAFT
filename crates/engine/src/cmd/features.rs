@@ -58,7 +58,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("solid.pattern.circular", "Circular Pattern", pattern_circ)
         .at("SOLID", "CREATE")
         .icon("pattern_circ")
-        .params("features: [names] | bodies: [names] | components: [names]; axis: X|Y|Z | {origin, dir}; count; angle? (default 360 deg; partial arcs include both ends); alignment?: left|center|right (default right; original stays fixed); reversed?: bool (Flip; selects the extra side for even centered counts)"),
+        .params("features: [names] | bodies: [names] | components: [names]; axis: X|Y|Z | {origin, dir} | construction axis name (its line now); count; angle? (default 360 deg; partial arcs include both ends); alignment?: left|center|right (default right; original stays fixed); reversed?: bool (Flip; selects the extra side for even centered counts)"),
     CommandSpec::new("solid.pattern.path", "Pattern on Path", pattern_path)
         .at("SOLID", "CREATE")
         .icon("pattern_path")
@@ -108,7 +108,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("construct.plane.at_angle", "Plane at Angle", plane_angle)
         .at("SOLID", "CONSTRUCT")
         .icon("plane_angle")
-        .params("base: XY|XZ|YZ|plane name; axis: X|Y|Z|{origin, dir}; angle: expr; name?"),
+        .params("base: XY|XZ|YZ|plane name; axis: X|Y|Z|{origin, dir}|construction axis name (its line now); angle: expr; name?"),
     CommandSpec::new("solid.split_face", "Split Face", split_face)
         .at("SOLID", "MODIFY")
         .icon("split_face")
@@ -1325,13 +1325,25 @@ fn source_features(s: &Session, p: &Value, cmd: &str) -> Result<Vec<String>> {
     Ok(names)
 }
 
-fn axis_line(p: &Value, cmd: &str) -> Result<(Vec3, Vec3)> {
+fn axis_line(s: &Session, p: &Value, cmd: &str) -> Result<(Vec3, Vec3)> {
     match p.get("axis") {
         Some(Value::String(a)) => match a.to_ascii_uppercase().as_str() {
             "X" => Ok((Vec3::ZERO, Vec3::X)),
             "Y" => Ok((Vec3::ZERO, Vec3::Y)),
             "Z" => Ok((Vec3::ZERO, Vec3::Z)),
-            _ => Err(bad(cmd, "axis must be X, Y, Z or {origin, dir}")),
+            // A construction axis by name: its line as it is now (#4741).
+            _ => s
+                .model
+                .state()
+                .construct
+                .iter()
+                .find_map(|c| match c.geom {
+                    solidcraft_doc::construct::ConstructGeom::Axis { origin, dir } if c.name == *a => Some((origin, dir.normalized()?)),
+                    _ => None,
+                })
+                .ok_or_else(|| {
+                    bad(cmd, format!("axis must be X, Y, Z, {{origin, dir}} or the name of a construction axis; there is no construction axis `{a}`"))
+                }),
         },
         Some(o @ Value::Object(_)) => {
             let origin = match o.get("origin") {
@@ -1425,7 +1437,7 @@ fn pattern_rect(s: &mut Session, p: &Value) -> Result<Value> {
 fn pattern_circ(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "solid.pattern.circular";
     let (features, bodies) = pattern_sources(s, p, cmd)?;
-    let (origin, axis) = axis_line(p, cmd)?;
+    let (origin, axis) = axis_line(s, p, cmd)?;
     let count = req_expr(cmd, p, "count")?;
     check_expr(s, &count, Kind::Unitless, cmd, "count")?;
     let angle = expr(p, "angle").unwrap_or_else(|| "360 deg".into());
@@ -1613,7 +1625,7 @@ fn plane_offset(s: &mut Session, p: &Value) -> Result<Value> {
 fn plane_angle(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "construct.plane.at_angle";
     let base = plane_param(s, p.get("base"), cmd)?;
-    let (axis_origin, axis_dir) = axis_line(p, cmd)?;
+    let (axis_origin, axis_dir) = axis_line(s, p, cmd)?;
     let angle = req_expr(cmd, p, "angle")?;
     check_expr(s, &angle, Kind::Angle, cmd, "angle")?;
     add_feature(
