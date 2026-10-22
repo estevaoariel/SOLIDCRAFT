@@ -15,6 +15,10 @@ Command shortcuts can be changed in File › Keyboard Shortcuts; these are the d
 | Ctrl+Z | Undo | Ctrl+Y | Redo |
 | Ctrl+N | New Design | Ctrl+O | Open |
 | Ctrl+S | Save | Delete | Delete the selection |
+| Ctrl+1 | Front View | Ctrl+2 | Back View |
+| Ctrl+3 | Left View | Ctrl+4 | Right View |
+| Ctrl+5 | Top View | Ctrl+6 | Bottom View |
+| Ctrl+7 | Isometric View | | |
 
 Keys handled by the window itself:
 
@@ -26,8 +30,6 @@ Keys handled by the window itself:
 | F6 | fit the view to the model |
 | ← → ↑ ↓ | turn the view 15° (with Shift, a quarter turn) |
 | Ctrl+← → ↑ ↓ | pan the view |
-| Ctrl+1 … Ctrl+6 | front, back, left, right, top and bottom view |
-| Ctrl+7 | isometric view |
 | Ctrl+8 | look straight at the selected face, plane or sketch |
 | Esc | cancel the running command, or clear the selection |
 

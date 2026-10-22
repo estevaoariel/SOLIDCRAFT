@@ -204,23 +204,11 @@ fn view_keys_blocked(app: &SolveApp, ctx: &egui::Context) -> bool {
         || ctx.data(|d| d.get_temp::<egui::Id>(egui::Id::new("sc_panel_open")).is_some())
 }
 
-/// Ctrl+1…7: the standard views, in the order other CAD users already have in their fingers.
-pub(crate) const STANDARD_VIEW_KEYS: [(egui::Key, &str); 7] = [
-    (egui::Key::Num1, "front"),
-    (egui::Key::Num2, "back"),
-    (egui::Key::Num3, "left"),
-    (egui::Key::Num4, "right"),
-    (egui::Key::Num5, "top"),
-    (egui::Key::Num6, "bottom"),
-    (egui::Key::Num7, "iso"),
-];
-
 /// View keys (#1541): the arrows turn the view 15° (with Shift a quarter turn, as the navigation
-/// cube's arrows), Ctrl+arrows pan it a tenth of the view, Ctrl+1…7 turn it to a standard view
-/// (`STANDARD_VIEW_KEYS`) and Ctrl+8 looks straight at the selected face, plane or sketch. Held
-/// longer than a tap, an arrow keeps turning the view at a steady rate (`step_key_hold`); the
-/// operating system's key repeat does nothing. Not while a menu, the command box or a focused
-/// widget has the arrows. Returns whether the key was used.
+/// cube's arrows), Ctrl+arrows pan it a tenth of the view, and Ctrl+8 looks straight at the
+/// selected face, plane or sketch. Held longer than a tap, an arrow keeps turning the view at a
+/// steady rate (`step_key_hold`); the operating system's key repeat does nothing. Not while a
+/// menu, the command box or a focused widget has the arrows. Returns whether the key was used.
 pub(crate) fn view_key(app: &mut SolveApp, ctx: &egui::Context, key: egui::Key, mods: egui::Modifiers, repeat: bool) -> bool {
     use egui::Key;
     let menu_open = view_keys_blocked(app, ctx);
@@ -230,17 +218,6 @@ pub(crate) fn view_key(app: &mut SolveApp, ctx: &egui::Context, key: egui::Key, 
     }
     if key == Key::Num8 && ctrl && !mods.shift {
         crate::viewport::look_at_selection(app);
-        return true;
-    }
-    if ctrl
-        && !mods.shift
-        && let Some((_, view)) = STANDARD_VIEW_KEYS.iter().find(|(k, _)| *k == key)
-    {
-        // The flat pattern is a 2D page: it has no other side to turn to.
-        if crate::dialogs_sheet::flat_active(app) {
-            return false;
-        }
-        app.animate_view(view);
         return true;
     }
     let (action, dx, dy): (&'static str, f32, f32) = match key {
@@ -1357,15 +1334,25 @@ mod view_key_tests {
         assert!((turn(before, h.app.cam.yaw).abs() - 30f64.to_radians()).abs() < 1e-6);
     }
 
-    /// Ctrl+1…7 turn the view to front, back, left, right, top, bottom and isometric, as the
-    /// navigation cube's faces do, and no command can take those keys.
+    /// Ctrl+1…7 run Front … Isometric View by default, turning the view as the view cube's faces
+    /// do; the keys are ordinary shortcuts, so one can be moved to another command and back.
     #[test]
-    fn ctrl_digits_turn_to_the_standard_views() {
+    fn ctrl_digits_turn_to_the_standard_views_and_can_be_rebound() {
         use solidcraft_engine::render::StandardView;
         let mut h = Harness::new();
         h.app.preferences.look_at_anim = false;
         h.app.run("solid.box", json!({"length": 10, "width": 10, "height": 10})).unwrap();
         h.frames(2);
+        let looks_from = |h: &mut Harness, digit: &str, view: StandardView| {
+            // Start from somewhere else, so the key has to move the view.
+            h.step(&json!({"key": "ArrowLeft"})).unwrap();
+            h.frames(2);
+            h.step(&json!({"key": digit, "cmd": true})).unwrap();
+            h.frames(2);
+            let mut want = h.app.cam;
+            want.set_view(view);
+            (h.app.cam.back() - want.back()).len() < 1e-6
+        };
         for (digit, view) in [
             ("1", StandardView::Front),
             ("2", StandardView::Back),
@@ -1375,19 +1362,12 @@ mod view_key_tests {
             ("6", StandardView::Bottom),
             ("7", StandardView::Iso),
         ] {
-            // Start from somewhere else, so the key has to move the view.
-            h.step(&json!({"key": "ArrowLeft"})).unwrap();
-            h.frames(2);
-            h.step(&json!({"key": digit, "cmd": true})).unwrap();
-            h.frames(2);
-            let mut want = h.app.cam;
-            want.set_view(view);
-            assert!((h.app.cam.back() - want.back()).len() < 1e-6, "Ctrl+{digit} looks from {:?}, not {:?}", h.app.cam.back(), want.back());
+            assert!(looks_from(&mut h, digit, view), "Ctrl+{digit} turns to {view:?}: {:?}", h.app.cam.back());
         }
-        for (key, _) in super::STANDARD_VIEW_KEYS {
-            let name = crate::keymap::key_name(key, egui::Modifiers::COMMAND);
-            assert!(crate::keymap::RESERVED.contains(&name.as_str()), "{name} must be reserved");
-        }
+        // Top moves to Ctrl+T; Ctrl+5 then does nothing, Ctrl+T turns to the top.
+        crate::keymap::bind(&mut h.app, "view.top", "Ctrl+T", false).unwrap();
+        assert!(!looks_from(&mut h, "5", StandardView::Top), "Ctrl+5 no longer turns to the top");
+        assert!(looks_from(&mut h, "T", StandardView::Top), "Ctrl+T does");
     }
 
     /// #1886: Ctrl+8 looks straight at the sketch; pressed again while the view faces it, it
