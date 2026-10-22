@@ -724,6 +724,33 @@ fn named_pick(doc: &Document, st: &ModelState, pick: Vec3, face: Option<&str>) -
     }
 }
 
+/// A point in a component's coordinates taken into the coordinates of a body placed by `offset`.
+fn body_point(offset: &Mat, p: Vec3) -> Option<Vec3> {
+    mat_inverse(offset).map(|inv| apply_point(&inv, p))
+}
+
+/// The cylindrical face of a component's body at `pick` (the component's coordinates), in the
+/// component's coordinates: a body moved in from another component is looked up where its
+/// geometry is, through its offset.
+pub fn cylinder_face_at(doc: &Document, b: &crate::ModelBody, pick: Vec3) -> Option<solidcraft_kernel::CylinderFace> {
+    placed_cylinder(doc, b, pick, solidcraft_kernel::cylinder_face_at)
+}
+
+/// [`cylinder_face_at`] for a cylinder one of whose end circles is centred at `pick`.
+pub fn cylinder_end_at(doc: &Document, b: &crate::ModelBody, pick: Vec3) -> Option<solidcraft_kernel::CylinderFace> {
+    placed_cylinder(doc, b, pick, solidcraft_kernel::cylinder_end_at)
+}
+
+fn placed_cylinder(
+    doc: &Document,
+    b: &crate::ModelBody,
+    pick: Vec3,
+    find: fn(&solidcraft_kernel::Body, Vec3) -> Option<solidcraft_kernel::CylinderFace>,
+) -> Option<solidcraft_kernel::CylinderFace> {
+    let Some(m) = doc.model_body_offset(b) else { return find(&b.body, pick) };
+    find(&b.body, body_point(m, pick)?).map(|c| face::placed(m, c))
+}
+
 /// The centre and outward normal of the planar face nearest `pick` (component coordinates; a
 /// body moved in from another component placed by its offset, as a named face is).
 fn nearest_plane(doc: &Document, st: &ModelState, o: &JointOrigin, pick: Vec3) -> Result<(Vec3, Vec3)> {
@@ -787,19 +814,14 @@ fn round_of(doc: &Document, st: &ModelState, o: &JointOrigin) -> Result<face::Ro
     let pick = named_pick(doc, st, *pick, face.as_deref())?;
     let comp = component_of(doc, o.occurrence)?;
     // A body moved in from another component: looked at in its own coordinates, its cylinder
-    // placed by its offset (as a named face is).
+    // placed by its offset (as a named face is; see `cylinder_face_at`).
     let cyl = component_bodies(doc, st, comp)
         .into_iter()
-        .filter_map(|b| match doc.model_body_offset(b) {
-            Some(m) => solidcraft_kernel::cylinder_face_at(&b.body, apply_point(&mat_inverse(m)?, pick)).map(|c| face::placed(m, c)),
-            None => solidcraft_kernel::cylinder_face_at(&b.body, pick),
-        })
+        .filter_map(|b| cylinder_face_at(doc, b, pick))
         .min_by(|a, b| {
-            let off = |c: &solidcraft_kernel::CylinderFace| {
-                let v = pick - c.axis_point;
-                ((v - c.axis * v.dot(c.axis)).len() - c.radius).abs()
-            };
-            off(a).total_cmp(&off(b))
+            // Off the wall, and past its ends: coaxial holes of two bodies have one radius, and
+            // the pick is on the wall of only one of them.
+            a.off(pick).total_cmp(&b.off(pick))
         })
         .ok_or_else(|| DocError::Invalid("joint origin: no cylindrical face there".into()))?;
     let s = (pick - cyl.axis_point).dot(cyl.axis);

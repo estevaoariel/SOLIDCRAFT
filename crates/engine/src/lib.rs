@@ -249,6 +249,9 @@ pub struct Session {
     pub revision: u64,
     /// Project a face's edges into a sketch created on it (the default; `sketch.auto_project`).
     pub auto_project: bool,
+    /// Leave the joints unsolved when the model is refreshed, while a command that builds
+    /// several parts solves them once at the end (`parts.fasten`).
+    pub(crate) defer_joints: bool,
     /// How calls that break a command's parameter contract are treated (off by default). It
     /// belongs to the session, not the design, so it survives opening and starting designs.
     pub param_check: schema::ParamCheck,
@@ -297,6 +300,10 @@ pub struct Session {
     /// Record this session's top-level commands in the crash journal (the app's own design;
     /// never previews or other scratch sessions). See [`crash`].
     pub crash_journal: bool,
+    /// Part libraries opened in this session (`parts.library.load`): their fastener families
+    /// sit beside the built-in ones. Not part of the design; a part inserted from one keeps a
+    /// copy of its family.
+    pub part_libraries: Vec<cmd::PartLibrary>,
     /// Full model evaluations (`refresh`), for tests.
     #[cfg(test)]
     pub(crate) evaluations: usize,
@@ -412,6 +419,7 @@ impl Session {
             log: Vec::new(),
             revision: 1,
             auto_project: true,
+            defer_joints: false,
             param_check: schema::ParamCheck::Off,
             active_component: 0,
             active_occurrence_path: None,
@@ -436,11 +444,13 @@ impl Session {
             #[cfg(test)]
             evaluations: 0,
             crash_journal: false,
+            part_libraries: Vec::new(),
         }
     }
 
     /// Become `fresh` (another design opened, recovered or started), keeping the settings that
-    /// are the user's rather than the design's: `auto_project` is a preference (#680).
+    /// are the user's rather than the design's: `auto_project` is a preference (#680), the opened
+    /// part libraries are the user's.
     /// Checkpoints survive too: a batch that failed after `file.new` or `doc.open` goes back
     /// from the checkpoint it took before its first step, and that checkpoint belongs to the
     /// design before the batch, which is what the batch promised (#3242). The design is what a
@@ -452,8 +462,10 @@ impl Session {
         let render_jobs = self.render_jobs.scratch();
         let checkpoints = std::mem::take(&mut self.checkpoints);
         let next_checkpoint = self.next_checkpoint;
+        let part_libraries = std::mem::take(&mut self.part_libraries);
         *self = fresh;
         self.auto_project = auto_project;
+        self.part_libraries = part_libraries;
         self.param_check = param_check;
         self.render_viewport = render_viewport;
         self.render_jobs = render_jobs;
@@ -640,7 +652,7 @@ impl Session {
         self.revision += 1;
         self.prune_occurrence_state();
         // Joints follow the geometry their origins snap to.
-        if !self.doc.assembly.joints.is_empty() {
+        if !self.defer_joints && !self.doc.assembly.joints.is_empty() {
             cmd::joints::resolve(self);
         }
         if let Some(id) = self.active_sketch
@@ -803,6 +815,10 @@ impl Session {
             None => (spec.run)(self, params).map(|v| (v, None)),
         }));
         drop(scope);
+        if outermost {
+            // A command that deferred the joints and panicked leaves them solved again.
+            self.defer_joints = false;
+        }
         let r = match r {
             Ok(r) => r,
             Err(p) => {
@@ -944,6 +960,7 @@ impl Session {
             log: Vec::new(),
             revision: self.revision,
             auto_project: self.auto_project,
+            defer_joints: false,
             param_check: self.param_check,
             active_component: self.active_component,
             active_occurrence_path: self.active_occurrence_path.clone(),
@@ -968,6 +985,7 @@ impl Session {
             #[cfg(test)]
             evaluations: 0,
             crash_journal: false,
+            part_libraries: self.part_libraries.clone(),
         }
     }
 
