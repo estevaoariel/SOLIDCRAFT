@@ -12,6 +12,11 @@
 //! tool's direction and two square to it. A cut that leaves every offending face of the middle
 //! piece beyond it goes first; otherwise one close beside the tool, which splits them (a
 //! chamfer all round a disc is split into two pieces apart, which the next cut leaves out).
+//!
+//! An all-planar tool whose walls lie on the target's planar faces takes the same column with
+//! the target's curved faces as the offending ones, and the exact planar boolean in it (a face
+//! of a rib pushed into the rib, on a part with round holes and fillets elsewhere): the target
+//! need not be a prism there, only planar.
 
 use solidcraft_geom::{Plane, Vec3};
 use truck_modeling as mt;
@@ -40,13 +45,36 @@ thread_local! {
 /// An extent along each of three axes.
 type Extent = [(f64, f64); 3];
 
+/// What a column round the tool must be clear of, and the exact boolean it then takes.
+#[derive(Clone, Copy, PartialEq)]
+enum Column {
+    /// Faces neither a wall along the tool's direction nor square to it; the 2D prism boolean.
+    Prism,
+    /// Faces that are not planar; the exact planar boolean.
+    Planar,
+}
+
 /// [`crate::prism::prism_boolean`] of `a` and the prism `b`, taken in a column of `a` round `b`
 /// (see the module notes). `None` when `b` is not a prism, `a` is one along `b`'s direction
 /// already, or no column round `b` is clear of `a`'s other faces: the caller goes on as before.
 pub(crate) fn local_prism_boolean(a: &Body, b: &Body, op: BoolOp) -> Option<Result<Option<Body>>> {
+    column_boolean(a, b, op, Column::Prism)
+}
+
+/// The exact planar boolean of `a` and the all-planar `b`, taken in a column of `a` round `b`
+/// clear of `a`'s curved faces (see the module notes). `None` when `b` has a face that is not
+/// planar, `a` has none, or no column round `b` is clear of them: the caller goes on as before.
+pub(crate) fn local_planar_boolean(a: &Body, b: &Body, op: BoolOp) -> Option<Result<Option<Body>>> {
+    column_boolean(a, b, op, Column::Planar)
+}
+
+fn column_boolean(a: &Body, b: &Body, op: BoolOp, mode: Column) -> Option<Result<Option<Body>>> {
     // A cut or an intersection: what a tool meeting the target's walls fails on. A union (a
     // shell's cavity joined with its opening) is left to the general path.
     if !matches!(op, BoolOp::Cut | BoolOp::Intersect) || a.face_count() > 4096 || RUNNING.with(std::cell::Cell::get) {
+        return None;
+    }
+    if mode == Column::Planar && !crate::polybool::all_planar(b) {
         return None;
     }
     /// Clears the flag however the boolean ends, a caught panic included.
@@ -58,7 +86,12 @@ pub(crate) fn local_prism_boolean(a: &Body, b: &Body, op: BoolOp) -> Option<Resu
     }
     RUNNING.with(|r| r.set(true));
     let _reset = Reset;
-    let d = crate::prism::prism_axis(b)?;
+    // A planar tool that is no prism has no direction of its own: the column is cut square to
+    // the axes then.
+    let d = match mode {
+        Column::Prism => crate::prism::prism_axis(b)?,
+        Column::Planar => crate::prism::prism_axis(b).unwrap_or(Vec3::Z),
+    };
     let size = a.size().max(b.size());
     let tol = (size * 1e-7).max(1e-9) * 10.0;
     let frame = Plane::from_normal(Vec3::ZERO, d)?;
@@ -67,7 +100,7 @@ pub(crate) fn local_prism_boolean(a: &Body, b: &Body, op: BoolOp) -> Option<Resu
     let mesh_tol = (size * 1e-3).max(1e-4);
     let tool = widened(extent(&b.tessellate(mesh_tol).ok()?.positions, axes)?, mesh_tol);
     let gap = size * 1e-4 + 1e-6;
-    let pieces = survey(a, d, tol, mesh_tol, axes)?.pieces;
+    let pieces = survey(a, d, tol, mesh_tol, axes, mode)?.pieces;
     if pieces.is_empty() {
         return None;
     }
@@ -78,14 +111,18 @@ pub(crate) fn local_prism_boolean(a: &Body, b: &Body, op: BoolOp) -> Option<Resu
         return None;
     }
     let run = || -> Result<Option<Body>> {
-        let fail = |m: &str| KernelError::Failed(format!("prism boolean in a column round the tool: {m}"));
+        let route = match mode {
+            Column::Prism => "prism",
+            Column::Planar => "planar",
+        };
+        let fail = |m: &str| KernelError::Failed(format!("{route} boolean in a column round the tool: {m}"));
         let mut middle: Traced = (a.clone(), recorded::kept(a, 0, OPERANDS));
         let mut outside: Vec<Traced> = Vec::new();
         // The sides already cut (axis, positive side): each is cut once.
         let mut cut: Vec<(usize, bool)> = Vec::new();
         let mut box_cuts = 0;
         for _ in 0..MAX_CUTS {
-            let survey = survey(&middle.0, d, tol, mesh_tol, axes).ok_or_else(|| fail("the middle piece"))?;
+            let survey = survey(&middle.0, d, tol, mesh_tol, axes, mode).ok_or_else(|| fail("the middle piece"))?;
             let off = survey.faces();
             if off.is_empty() {
                 break;
@@ -116,12 +153,12 @@ pub(crate) fn local_prism_boolean(a: &Body, b: &Body, op: BoolOp) -> Option<Resu
             outside.extend(away);
             middle = kept;
         }
-        if !survey(&middle.0, d, tol, mesh_tol, axes).is_some_and(|s| s.pieces.is_empty()) {
+        if !survey(&middle.0, d, tol, mesh_tol, axes, mode).is_some_and(|s| s.pieces.is_empty()) {
             return Err(fail("other faces are left round the tool"));
         }
-        let r = match crate::prism::prism_boolean(&middle.0, b, op) {
-            Some(r) => r?,
-            None => return Err(fail("the column is not a prism along the tool")),
+        let r = match mode {
+            Column::Prism => crate::prism::prism_boolean(&middle.0, b, op).ok_or_else(|| fail("the column is not a prism along the tool"))??,
+            Column::Planar => crate::polybool::exact_planar(&middle.0, b, op).ok_or_else(|| fail("the column is not planar"))??,
         };
         crate::polybool::reassembled(a, b, op, &middle, r, outside, OPERANDS, &fail)
     };
@@ -195,10 +232,11 @@ fn extent(points: &[Vec3], axes: [Vec3; 3]) -> Option<Extent> {
     e.iter().all(|(lo, hi)| lo.is_finite() && hi.is_finite()).then_some(e)
 }
 
-/// What a cut is chosen from: a piece's extent (`here`), the mesh triangles of its faces that
-/// are neither a wall along the direction nor a plane square to it (the faces that keep it from
-/// being a prism along it: each one's index and extent), and its planar faces (unit normal,
-/// offset along it) for a cut to keep out of. Extents are widened by the mesh's tolerance.
+/// What a cut is chosen from: a piece's extent (`here`), the mesh triangles of its offending
+/// faces (for a [`Column::Prism`], those neither a wall along the direction nor a plane square
+/// to it, which keep it from being a prism along it; for a [`Column::Planar`], those that are not
+/// planar: each one's index and extent), and its planar faces (unit normal, offset along it) for
+/// a cut to keep out of. Extents are widened by the mesh's tolerance.
 struct Survey {
     here: Extent,
     pieces: Vec<(usize, Extent)>,
@@ -224,7 +262,7 @@ impl Survey {
 }
 
 /// [`Survey`] of `body` along `d`, from one mesh of it. `None` when it can't be meshed.
-fn survey(body: &Body, d: Vec3, tol: f64, mesh_tol: f64, axes: [Vec3; 3]) -> Option<Survey> {
+fn survey(body: &Body, d: Vec3, tol: f64, mesh_tol: f64, axes: [Vec3; 3], mode: Column) -> Option<Survey> {
     let mut work = 262_144usize;
     let mut flat = Vec::new();
     let off: Vec<bool> = body
@@ -238,11 +276,14 @@ fn survey(body: &Body, d: Vec3, tol: f64, mesh_tol: f64, axes: [Vec3; 3]) -> Opt
                     let Some(n) = Vec3::new(n.x, n.y, n.z).normalized() else { return true };
                     let o = p.origin();
                     flat.push((n, n.dot(Vec3::new(o.x, o.y, o.z))));
+                    if mode == Column::Planar {
+                        return false;
+                    }
                     let along = n.dot(d).abs();
                     // NaN counts as inside, as the comparisons it replaces did.
                     along.is_nan() || (1e-9..=1.0 - 1e-9).contains(&along)
                 }
-                _ => !crate::prism::wall_along(&surface, d, tol, &mut work),
+                _ => mode == Column::Planar || !crate::prism::wall_along(&surface, d, tol, &mut work),
             }
         })
         .collect();

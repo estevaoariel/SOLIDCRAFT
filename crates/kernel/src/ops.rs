@@ -1568,6 +1568,20 @@ where
                 return Ok(Some(body));
             }
         }
+        // An all-planar tool whose walls lie on the target's planar faces, on a target with
+        // curved faces elsewhere (a rib's sloping face pushed into the rib, beside a round hole
+        // and fillets): the exact planar boolean in a column cut round the tool, clear of them.
+        // The slab above takes only a target whose curved faces all lie past the tool along one
+        // axis, the prism column only a target that is a prism along the tool round it.
+        if attempt == 1 && matches!(op, BoolOp::Cut | BoolOp::Intersect) {
+            let (local, diagnostics) = capture_boolean_diagnostics(|| crate::prism_local::local_planar_boolean(a, b, op));
+            if let Some(Ok(Some(body))) = local
+                && check(&body).0
+            {
+                merge(diagnostics);
+                return Ok(Some(body));
+            }
+        }
         // A lens cut from a sphere's projected outline carries a redundant cylinder
         // tangent to the sphere (#2750). Remove it only after proving that it
         // encloses the entire target, keeping the other wall and both caps exact.

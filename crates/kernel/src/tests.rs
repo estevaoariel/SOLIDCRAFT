@@ -3152,3 +3152,32 @@ fn transform_refuses_a_matrix_that_is_not_an_affine_placement() {
     let removed = measure(&lifted).unwrap().volume - measure(&cut).unwrap().volume;
     assert!((removed - 6.0 * 6.0 * 3.0).abs() < 1.0, "{removed}");
 }
+
+/// The sloping face of a rib pushed into the rib, on a part with a round hole elsewhere: the
+/// tool's walls lie on the rib's sides and its start on the slope, which the B-rep boolean can't
+/// intersect, and the exact planar route took only an all-planar target. The column round the
+/// tool is planar, and takes it there: all of the tool is in the part, and it all goes.
+#[test]
+fn a_ribs_slope_pushed_into_the_rib_beside_a_hole_cuts_exactly() {
+    let plate = box_solid(Vec3::ZERO, Vec3::new(40.0, 20.0, 4.0)).unwrap();
+    let wall = box_solid(Vec3::ZERO, Vec3::new(4.0, 20.0, 30.0)).unwrap();
+    // The rib: a right triangle from the plate's top up the wall, 4 thick across y 8..12.
+    let side = Plane::new(Vec3::new(0.0, 12.0, 0.0), Vec3::X, Vec3::Z).unwrap();
+    let triangle = Region2 { outer: Loop2::polygon(&[Vec2::new(4.0, 4.0), Vec2::new(24.0, 4.0), Vec2::new(4.0, 24.0)]), holes: vec![] };
+    let rib = extrude(&side, &[triangle], 0.0, 4.0).unwrap().pop().unwrap();
+    let part = boolean(&plate, &wall, BoolOp::Union).unwrap().unwrap();
+    let part = boolean(&part, &rib, BoolOp::Union).unwrap().unwrap();
+    let hole = cylinder(Vec3::new(32.0, 10.0, -1.0), Vec3::Z, 2.0, 6.0).unwrap();
+    let part = boolean(&part, &hole, BoolOp::Cut).unwrap().unwrap();
+    let before = measure(&part).unwrap().volume;
+    // The slope's face, 20√2 long and 4 wide, pushed 3 into the rib along its inward normal.
+    let length = 20.0 * 2f64.sqrt();
+    let slope = Plane::new(Vec3::new(4.0, 8.0, 24.0), Vec3::new(1.0, 0.0, -1.0), Vec3::Y).unwrap();
+    let tool = extrude(&slope, &[rect(length, 4.0)], -3.0, 0.0).unwrap().pop().unwrap();
+    let want = before - length * 4.0 * 3.0;
+    let column = crate::prism_local::local_planar_boolean(&part, &tool, BoolOp::Cut).unwrap().unwrap().unwrap();
+    assert!(rel(measure(&column).unwrap().volume, want) < 1e-6, "{} vs {want}", measure(&column).unwrap().volume);
+    let cut = boolean(&part, &tool, BoolOp::Cut).unwrap().unwrap();
+    assert!(rel(measure(&cut).unwrap().volume, want) < 1e-6, "{} vs {want}", measure(&cut).unwrap().volume);
+    assert!(cut.validity().is_empty(), "{:?}", cut.validity());
+}

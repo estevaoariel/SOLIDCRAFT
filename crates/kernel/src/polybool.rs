@@ -456,6 +456,19 @@ pub fn planar_boolean(a: &Body, b: &Body, op: BoolOp) -> Result<Option<Body>> {
     polys_boolean(pa, pb, size, op, size * 1e-9, &Sources::of(&[a, b]))
 }
 
+/// Whether every face of `b` is planar, so it can take the exact boolean.
+pub(crate) fn all_planar(b: &Body) -> bool {
+    !b.is_mesh() && planar_polys(b, 1).is_ok()
+}
+
+/// The exact boolean of two all-planar bodies; `None` when either has a face that is not planar.
+/// Shared with [`crate::prism_local`], which cuts a column of planar faces round the tool.
+pub(crate) fn exact_planar(a: &Body, b: &Body, op: BoolOp) -> Option<Result<Option<Body>>> {
+    let (pa, pb) = (planar_polys(a, 0).ok()?, planar_polys(b, 1).ok()?);
+    let size = a.size().max(b.size());
+    Some(polys_boolean(pa, pb, size, op, size * 1e-9, &Sources::of(&[a, b])))
+}
+
 /// [`planar_boolean`] of a body with curved faces and an all-planar one, when a slab between
 /// two parallel planes holds `b` and none of `a`'s curved faces (a pocket cut beside a round
 /// hole): `a` is split across the slab, the middle piece takes the exact boolean, and the
