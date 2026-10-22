@@ -208,7 +208,13 @@ fn auto_operation_in(s: &Session, p: &Value, world_faces: bool) -> Option<&'stat
     } else {
         extrude_base(s, p)?
     };
-    let d = if grouped.is_some() && p.get("to").is_some() { (p.get("to").and_then(vec3)? - base).dot(n) } else { extrude_reach(s, p)? };
+    let d = if grouped.is_some() && p.get("to").is_some() {
+        (p.get("to").and_then(vec3)? - base).dot(n)
+    } else if let Some(d) = extrude_reach(s, p) {
+        d
+    } else {
+        through_all_reach(&st, p, base)?
+    };
     if st.bodies.is_empty() || !d.is_finite() {
         return Some("new");
     }
@@ -243,6 +249,20 @@ fn auto_operation_in(s: &Session, p: &Value, world_faces: bool) -> Option<&'stat
         // Default additions to Join and let the boolean merge the actual geometry.
         Some("join")
     }
+}
+
+/// How far a Through All extrude with no distance reaches from `base`, signed by its
+/// direction: past every body of the model. Without it `auto` could not tell a cut through
+/// a part from an addition and made a separate body.
+fn through_all_reach(st: &solidcraft_doc::ModelState, p: &Value, base: Vec3) -> Option<f64> {
+    let through_all = bool_(p, "through_all").unwrap_or(false) || str_(p, "extent").is_some_and(|e| e.eq_ignore_ascii_case("through_all"));
+    if !through_all {
+        return None;
+    }
+    let reach =
+        st.bodies.iter().map(|b| b.mesh().bounds()).map(|bb| bb.center().dist(base) + bb.diagonal()).filter(|r| r.is_finite()).fold(1.0, f64::max);
+    let dir = str_(p, "direction").map(str::to_ascii_lowercase);
+    Some(if matches!(dir.as_deref(), Some("negative" | "reverse" | "flip")) { -reach } else { reach })
 }
 
 pub(super) fn operation(p: &Value, cmd: &str) -> Result<Operation> {
