@@ -424,7 +424,8 @@ fn auto_project(s: &mut Session, p: &Value) -> Result<Value> {
 /// Point arguments that snap to model geometry while drawing, rewritten to sketch point ids:
 /// `{"vertex": [x,y,z]}` projects the vertex (a linked point); `{"on_edge": [x,y,z]}` projects
 /// the edge and makes a free point on it (coincident with the projection); `"mid:<line>"`
-/// makes a point held at the line's midpoint (and `"vertex:x,y,z"` is the vertex form). Everything
+/// makes a point held at the line's midpoint, `"cross:<curve>,<curve>:x,y"` a point held where
+/// the two curves cross (and `"vertex:x,y,z"` is the vertex form). Everything
 /// else is left as it is. The links are added to the active sketch in the session's document.
 pub(super) fn snap_points(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
     let Some(id) = s.active_sketch else { return Ok(p.clone()) };
@@ -451,7 +452,17 @@ pub(super) fn snap_points(s: &mut Session, p: &Value, cmd: &str) -> Result<Value
                 _ => None,
             }
         });
-        if vertex.is_none() && edge.is_none() && mid.is_none() && on.is_none() {
+        // "cross:<curve>,<curve>:x,y": a point where the two curves cross, near x,y.
+        let cross = v.as_str().and_then(|x| x.strip_prefix("cross:")).and_then(|t| {
+            let (cs, xy) = t.rsplit_once(':')?;
+            let (a, b) = cs.split_once(',')?;
+            let n: Vec<f64> = xy.split(',').filter_map(|x| x.trim().parse().ok()).collect();
+            match n[..] {
+                [x, y] if x.is_finite() && y.is_finite() => Some((a.to_string(), b.to_string(), solidcraft_geom::Vec2::new(x, y))),
+                _ => None,
+            }
+        });
+        if vertex.is_none() && edge.is_none() && mid.is_none() && on.is_none() && cross.is_none() {
             return Ok(());
         }
         if doc.is_none() {
@@ -462,7 +473,20 @@ pub(super) fn snap_points(s: &mut Session, p: &Value, cmd: &str) -> Result<Value
         }
         let Some((d, sk)) = doc.as_mut() else { return Ok(()) };
         let body = str_(v, "body").unwrap_or("").to_string();
-        let pid = if let Some((curve, near)) = on {
+        let pid = if let Some((a, b, near)) = cross {
+            let unknown = |c: &str| bad(cmd, format!("unknown curve `{c}`"));
+            let (ca, cb) = (sk.curve_index(&a).ok_or_else(|| unknown(&a))?, sk.curve_index(&b).ok_or_else(|| unknown(&b))?);
+            // The crossing nearest the click: the solver keeps the point on both curves.
+            let at = match (sk.shape(ca), sk.shape(cb)) {
+                (Some(x), Some(y)) => solidcraft_sketch::intersections(&x, &y).into_iter().min_by(|p, q| p.dist(near).total_cmp(&q.dist(near))),
+                _ => None,
+            }
+            .ok_or_else(|| bad(cmd, format!("`{a}` and `{b}` don't cross")))?;
+            let pi = sk.add_point(at, None)?;
+            sk.add_constraint(ConstraintKind::PointOnCurve { p: pi, c: ca }, None)?;
+            sk.add_constraint(ConstraintKind::PointOnCurve { p: pi, c: cb }, None)?;
+            sk.points.get(pi).map(|q| q.id.clone()).unwrap_or_default()
+        } else if let Some((curve, near)) = on {
             let c = sk.curve_index(&curve).ok_or_else(|| bad(cmd, format!("unknown curve `{curve}`")))?;
             let at = match sk.shape(c) {
                 Some(sh) => sh.project(near),

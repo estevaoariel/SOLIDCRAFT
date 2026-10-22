@@ -362,7 +362,7 @@ fn combs(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
 }
 
 /// Snap a cursor point on the sketch plane to what is inferred while drawing: a line's
-/// midpoint, or alignment (horizontal/vertical) with the previous point of the tool. None:
+/// midpoint, where two curves cross, or alignment (horizontal/vertical) with the previous point of the tool. None:
 /// nothing near, use the grid.
 pub fn refine_snap(
     app: &SolveApp,
@@ -397,6 +397,28 @@ pub fn refine_snap(
             if d < mid_tol && best.is_none_or(|x| d < x.0) {
                 best = Some((d, "Mid", m));
                 mid_of = Some(c.id.clone());
+            }
+        }
+    }
+    // Where two curves under the cursor cross (#2290): a point kept on both.
+    if !mid_only {
+        let near: Vec<(&str, solidcraft_engine::sketch::Shape)> = sk
+            .curves
+            .iter()
+            .enumerate()
+            .filter_map(|(i, c)| sk.shape(i).filter(|sh| sh.dist(lp) < tol).map(|sh| (c.id.as_str(), sh)))
+            .take(32)
+            .collect();
+        for (k, (a, x)) in near.iter().enumerate() {
+            for (b, y) in near.iter().skip(k + 1) {
+                // Crossings of the whole lines and circles: keep those on both pieces.
+                for q in solidcraft_engine::sketch::intersections(x, y) {
+                    let d = q.dist(lp);
+                    if x.dist(q).max(y.dist(q)) < px * 1e-3 && d < tol && best.is_none_or(|m| d < m.0) {
+                        best = Some((d, "X", q));
+                        mid_of = Some(format!("{a},{b}:{},{}", q.x, q.y));
+                    }
+                }
             }
         }
     }
@@ -461,6 +483,7 @@ pub fn refine_snap(
         let arg = match l {
             "Mid" => mid_of.map(|m| format!("mid:{m}")),
             "On" => mid_of.map(|m| format!("on:{m}")),
+            "X" => mid_of.map(|m| format!("cross:{m}")),
             _ => None,
         };
         (p, arg)
