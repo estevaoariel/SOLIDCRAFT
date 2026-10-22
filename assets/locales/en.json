@@ -1238,6 +1238,7 @@
   "search.suggest": "Did you mean {label}?",
   "search.try": "Type a command name, a feature in this design, or a parameter. To run a command with values, type its id and a JSON object: {example}",
   "search.valid": "Valid",
+  "section.off_hint": "No plane picked: OK turns the section off.",
   "settings.display_quality_note": "Only the display. Designs and exports are not affected.",
   "settings.frame_rate_note": "Shows frames per second in the view's bottom-right corner. While it is on, the view redraws continuously.",
   "settings.measure_axis_distances": "Show X/Y/Z distances",

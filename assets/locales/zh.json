@@ -1238,6 +1238,7 @@
   "search.suggest": "您是否想找 {label}？",
   "search.try": "输入命令名称、此设计中的特征或参数。要带值运行命令，请输入其ID和JSON对象：{example}",
   "search.valid": "有效",
+  "section.off_hint": "未选择平面：按“确定”将移除剖面。",
   "settings.display_quality_note": "仅影响显示，不影响设计和导出。",
   "settings.frame_rate_note": "在视图右下角显示每秒帧数。开启时视图会持续重绘。",
   "settings.measure_axis_distances": "显示 X/Y/Z 距离",

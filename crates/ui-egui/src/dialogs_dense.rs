@@ -789,6 +789,9 @@ fn additional_rows(app: &mut SolveApp, d: &mut Dialog, ui: &mut egui::Ui) -> boo
         Kind::Section { offset, flip } => {
             enter |= expr_row(ui, "Distance", offset);
             ui_kit::options(ui, "feature_options", &mut [("Flip", flip)]);
+            if section_turns_off(&app.session, &d.inputs) {
+                ui_kit::text(ui, tr("section.off_hint"), ui_kit::Text::Hint("section_off"));
+            }
         }
         Kind::Rename { name, .. } => {
             form_row(ui, "Name", |ui| {
