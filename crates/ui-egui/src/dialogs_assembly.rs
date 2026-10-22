@@ -386,12 +386,17 @@ pub struct SnapPt {
     pub param: Value,
 }
 
-/// The occurrence placing a body (0: the root design), when the body is its primary instance.
+/// The occurrence placing a world body (0: the root design), the instance its name says.
 pub(crate) fn occurrence_of_body(s: &Session, body: &str) -> Option<u64> {
+    // The world name tells the instance: a further occurrence of a component is not its first.
     let st = s.world_state();
     let b = st.body(body)?;
-    let comp = s.doc.model_body_component(b);
-    if comp == 0 { Some(0) } else { s.doc.occurrence_of(comp).map(|o| o.id) }
+    if s.doc.model_body_component(b) == 0 {
+        return Some(0);
+    }
+    let model = s.model.state();
+    let (_, _, _, path, _) = s.doc.body_frames_with_source(&model).into_iter().find(|(world, ..)| world == body)?;
+    path.last().copied()
 }
 
 /// Centre and unit normal of the circle through a polyline's points, if it lies on one.
