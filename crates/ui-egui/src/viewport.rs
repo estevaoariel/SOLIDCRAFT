@@ -340,6 +340,8 @@ fn scene_key(app: &SolveApp) -> u64 {
     app.tree.redefine.hash(&mut h);
     crate::theme::is_dark().hash(&mut h);
     crate::theme::vision().hash(&mut h);
+    // Two themes may share a light/dark base while drawing different geometry colours.
+    crate::theme_files::color_key(&Tokens::get()).hash(&mut h);
     app.session.active_sketch.hash(&mut h);
     h.finish()
 }
@@ -2147,6 +2149,8 @@ fn highlight_geometry_key(app: &SolveApp) -> u64 {
     (app.dialog.is_some(), app.tool.is_some()).hash(&mut h);
     crate::theme::is_dark().hash(&mut h);
     crate::theme::vision().hash(&mut h);
+    // Two themes may share a light/dark base while drawing different geometry colours.
+    crate::theme_files::color_key(&Tokens::get()).hash(&mut h);
     app.preview.effective_replaced().hash(&mut h);
     app.preview.rolled_back.hash(&mut h);
     app.origin_visible().hash(&mut h);

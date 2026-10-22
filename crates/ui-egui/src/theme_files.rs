@@ -252,6 +252,17 @@ macro_rules! theme_keys {
             k
         }
 
+        /// Stable identity of resolved colours, including custom themes with the same base/id.
+        /// Share the token inventory with import/export so added colour tokens cannot be missed.
+        pub(crate) fn color_key(t: &Tokens) -> u64 {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            $(t.$one.hash(&mut h);)*
+            $(t.$many.hash(&mut h);)*
+            $(t.icons.$ione.hash(&mut h);)*
+            h.finish()
+        }
+
         fn slot<'a>(t: &'a mut Tokens, key: &str) -> Option<&'a mut [Color32]> {
             match key {
                 $(stringify!($one) => Some(std::slice::from_mut(&mut t.$one)),)*
