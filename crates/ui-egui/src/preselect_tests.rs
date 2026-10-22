@@ -2251,3 +2251,41 @@ fn hovering_a_large_body_does_not_wait_for_its_pick_index() {
     assert!(matches!(h.app.viewport.hover, Some(crate::viewport::Hit::Face { .. })), "{:?}", h.app.viewport.hover);
     assert!(hover_ms < index_ms / 3.0, "the first hover took {hover_ms:.1} ms; making the index takes {index_ms:.1} ms");
 }
+
+/// What can be seen can be picked: an edge behind the front of a box can't be clicked through
+/// the solid box, but it can through the same box made see-through, and in Shaded with Hidden
+/// Edges (which draws it). Clicks used to reach it only where it showed past the outline.
+#[test]
+fn edges_seen_through_a_see_through_body_or_drawn_hidden_can_be_picked() {
+    use crate::viewport::Hit;
+    let mut h = crate::scenario::Harness::new();
+    h.app.run("solid.box", json!({"length": 20, "width": 20, "height": 10})).unwrap();
+    h.call("ui.view", json!({"view": "iso"}));
+    h.settle();
+    let proj = |h: &crate::scenario::Harness| crate::viewport::projection(&h.app, h.app.viewport.rect.unwrap());
+    let edges_at = |h: &crate::scenario::Harness, at: egui::Pos2| -> Vec<usize> {
+        crate::viewport::pick(&h.app, &proj(h), at)
+            .into_iter()
+            .filter_map(|x| if let Hit::Edge { index, .. } = x { Some(index) } else { None })
+            .collect()
+    };
+    // An edge whose middle the box hides: a click there picks no edge at all.
+    let m = h.app.session.model.state().bodies[0].mesh();
+    let hidden = m.edges.iter().enumerate().find_map(|(i, e)| {
+        let mid = e[e.len() / 2];
+        let at = proj(&h).to_screen(mid)?;
+        (!edges_at(&h, at).contains(&i) && edges_at(&h, at).is_empty()).then_some((i, at))
+    });
+    let (edge, at) = hidden.expect("an iso view of a box hides an edge");
+    // See-through: the edge is the pick.
+    h.app.run("appearance.assign", json!({"bodies": ["Body1"], "color": "#808080", "opacity": 0.4})).unwrap();
+    h.settle();
+    assert!(edges_at(&h, at).contains(&edge), "seen through the body");
+    // Opaque again, but Shaded with Hidden Edges: still the pick.
+    h.app.run("appearance.assign", json!({"bodies": ["Body1"], "color": "#808080", "opacity": 1})).unwrap();
+    h.settle();
+    assert!(!edges_at(&h, at).contains(&edge), "hidden by the solid body");
+    h.app.ui.visual_style = 3;
+    h.settle();
+    assert!(edges_at(&h, at).contains(&edge), "drawn hidden, so picked");
+}

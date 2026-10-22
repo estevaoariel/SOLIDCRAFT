@@ -327,7 +327,10 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
             i.pointer.delta(),
         )
     });
-    let hover = hover.filter(|p| !crate::shell::covered(app, *p));
+    // A card over the view owns the pointer, except during a drag that began in the view:
+    // that keeps following it (an orbit, a point or a triad arrow carried over the palette).
+    let owned = resp.dragged() || resp.is_pointer_button_down_on();
+    let hover = hover.filter(|p| owned || !crate::shell::covered(app, *p));
     // The right button belongs to the marking menu while it is open.
     let secondary_down = secondary_down && app.viewport.context_menu.is_none();
     // The axis view handles its own clicks; the model underneath must not see them.

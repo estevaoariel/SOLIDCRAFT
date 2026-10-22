@@ -1012,7 +1012,7 @@ impl SolveApp {
         }
         if let Some(mut t) = tools::Tool::for_command(id) {
             if let Some(params) = tools::constraint_preselection(id, &self.session.selection) {
-                if self.run(id, params).is_ok() {
+                if self.run(id, tools::picked(id, params)).is_ok() {
                     let _ = self.session.execute("select.clear", &json!({}));
                     self.set_status("Constraint applied", false);
                 }
@@ -1041,7 +1041,7 @@ impl SolveApp {
                 self.session.selection.as_slice()
                 && a != b
             {
-                let params = json!({ "a": a, "b": b });
+                let params = tools::picked(id, json!({ "a": a, "b": b }));
                 if self.run(id, params).is_ok() {
                     let _ = self.session.execute("select.clear", &json!({}));
                     self.set_status("Constraint applied", false);
@@ -1646,10 +1646,12 @@ impl SolveApp {
             // Draw the scene first, then let the unchanged panel layouts cover it. The
             // viewport keeps its full projection even underneath the browser and cards.
             preview::update(self, ui.ctx());
-            // A camera drag that began on the model keeps capture across cards. New
-            // gestures over chrome are blocked, as are selection drags into the ribbon.
+            // A camera drag that began on the model keeps capture across cards, and so does
+            // a drag of geometry (a sketch point, a handle). New gestures over chrome are
+            // blocked, as are selection drags into the ribbon.
+            let holding = viewport::drag_holds_pointer(self);
             let continuing_navigation = ui.input(|i| {
-                (i.pointer.middle_down() || i.pointer.secondary_down())
+                (i.pointer.middle_down() || i.pointer.secondary_down() || (holding && i.pointer.primary_down()))
                     && i.pointer.press_origin().is_some_and(|p| full.contains(p) && !shell::covered(self, p))
             });
             let blocked = !continuing_navigation && ui.input(|i| i.pointer.latest_pos()).is_some_and(|p| shell::covered(self, p));

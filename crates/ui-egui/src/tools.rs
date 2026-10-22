@@ -244,7 +244,7 @@ pub fn on_click(app: &mut SolveApp, proj: &Proj, pos: Pos2, shift: bool) {
             });
             if let Some(point) = point {
                 if let Some(first) = tool.point_picks.first() {
-                    if first != &point && app.run(tool.cmd, json!({"points": [first, point]})).is_ok() {
+                    if first != &point && app.run(tool.cmd, picked(tool.cmd, json!({"points": [first, point]}))).is_ok() {
                         tool.point_picks.clear();
                     }
                 } else {
@@ -254,7 +254,7 @@ pub fn on_click(app: &mut SolveApp, proj: &Proj, pos: Pos2, shift: bool) {
                 && tool.point_picks.is_empty()
                 && let Some(Hit::SketchCurve { id, straight: true, .. }) = hit
             {
-                let _ = app.run(tool.cmd, json!({"line": id}));
+                let _ = app.run(tool.cmd, picked(tool.cmd, json!({"line": id})));
             }
         }
         Kind::Pick(n) => {
@@ -564,6 +564,18 @@ fn sketch_axis_of(app: &SolveApp, name: &str) -> Option<&'static str> {
     }
 }
 
+/// A constraint picked in the app: one the sketch already implies is refused (the status line
+/// names what determines it) instead of kept as redundant, so a sketch cannot be over-constrained
+/// from the UI. Scripts and the control channel keep the engine's default.
+pub(crate) fn picked(cmd: &str, mut params: Value) -> Value {
+    if cmd.starts_with("sketch.constraint.")
+        && let Some(o) = params.as_object_mut()
+    {
+        o.entry("if_redundant").or_insert_with(|| json!("refuse"));
+    }
+    params
+}
+
 fn run_pick(app: &mut SolveApp, t: &Tool) {
     let k = &t.picks;
     let params = match t.cmd {
@@ -574,7 +586,7 @@ fn run_pick(app: &mut SolveApp, t: &Tool) {
         "sketch.constraint.symmetry" => json!({"a": k[0], "b": k[1], "line": k[2]}),
         _ => json!({"a": k[0], "b": k[1]}),
     };
-    let _ = app.run(t.cmd, params);
+    let _ = app.run(t.cmd, picked(t.cmd, params));
 }
 
 /// Right click / Esc: end the current chain (line) or cancel the tool.

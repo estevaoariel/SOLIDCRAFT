@@ -48,6 +48,36 @@ fn redundant_dimensions_are_refused_driven_ones_measure() {
     assert_eq!(g["fully_constrained"], true);
 }
 
+/// The same constraint between the same two lines, picked again (in either order), adds nothing:
+/// the one already there is reported back as redundant, and the sketch keeps one. They used to
+/// stack up without limit, a glyph each. Asked to refuse redundant ones, it is refused.
+#[test]
+fn the_same_constraint_twice_adds_nothing() {
+    let mut s = new_sketch();
+    let a = ids(&run(&mut s, "sketch.line", json!({"points": [[0, 0], [10, 1]]}))["curves"])[0].clone();
+    let b = ids(&run(&mut s, "sketch.line", json!({"points": [[0, 5], [10, 7]]}))["curves"])[0].clone();
+    let first = run(&mut s, "sketch.constraint.parallel", json!({"a": a, "b": b}));
+    for (x, y) in [(&a, &b), (&b, &a), (&a, &b)] {
+        let r = run(&mut s, "sketch.constraint.parallel", json!({"a": x, "b": y}));
+        assert_eq!(r["redundant"], true, "{r}");
+        assert_eq!(r["constraint"], first["constraint"], "the one already there: {r}");
+    }
+    let e = s.execute("sketch.constraint.parallel", &json!({"a": a, "b": b, "if_redundant": "refuse"})).unwrap_err().to_string();
+    assert!(e.contains("already determined"), "{e}");
+    let parallels = sketch(&s).constraints.iter().filter(|c| matches!(c.kind, solidcraft_sketch::ConstraintKind::Parallel { .. })).count();
+    assert_eq!(parallels, 1);
+    // The sketch model itself hands back the one already there.
+    let mut sk = sketch(&s);
+    let n = sk.constraints.len();
+    let k = sk.constraints.iter().find(|c| matches!(c.kind, solidcraft_sketch::ConstraintKind::Parallel { .. })).unwrap().clone();
+    let (ia, ib) = match k.kind {
+        solidcraft_sketch::ConstraintKind::Parallel { a, b } => (a, b),
+        _ => (0, 0),
+    };
+    assert_eq!(sk.add_constraint(solidcraft_sketch::ConstraintKind::Parallel { a: ib, b: ia }, None).unwrap(), k.id);
+    assert_eq!(sk.constraints.len(), n);
+}
+
 /// `measured` is the dimension on the solved sketch: a trough drawn 99.84 long and dimensioned
 /// 100 reports 100, not the length it had before solving.
 #[test]

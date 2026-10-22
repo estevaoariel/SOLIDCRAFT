@@ -1445,6 +1445,9 @@ fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_points: bool, 
     hits.extend(bestc.hits());
     // Nearest face along the ray (hides what is behind it); with `all`, every body's nearest.
     let mut bestf: Option<(f64, Hit)> = None;
+    // The nearest face that hides what is behind it: a see-through body's faces don't, so the
+    // edges and corners seen through them can be picked.
+    let mut blocking: Option<f64> = None;
     let mut faces = Near::new(all);
     // Bounds retain the state's body order. Looking each one up by name made both passes
     // quadratic for assemblies with many small parts.
@@ -1471,20 +1474,27 @@ fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_points: bool, 
             if bestf.as_ref().is_none_or(|(bt, _)| t < *bt) {
                 bestf = Some((t, hit.clone()));
             }
+            if blocking.is_none_or(|bt| t < bt) && app.session.doc.model_body_opacity(b) >= 0.999 {
+                blocking = Some(t);
+            }
             if all {
                 faces.offer(t, hit);
             }
         }
     }
     let slack = scene_radius(app) * 0.02;
-    // Wireframe draws no faces, so nothing hides an edge or a vertex.
+    // What can be seen can be picked. Wireframe draws no faces, and Shaded with Hidden Edges
+    // draws the edges behind them, so nothing hides an edge or a vertex there; otherwise only an
+    // opaque face does (a see-through body's edges behind it show, and pick).
     let wireframe = app.ui.visual_style == 2;
-    let visible = |p: Vec3| wireframe || bestf.as_ref().is_none_or(|(t, _)| (p - o).dot(d) <= *t + slack);
+    let hidden_shown = app.ui.visual_style == 3;
+    let visible = |p: Vec3| wireframe || hidden_shown || blocking.is_none_or(|t| (p - o).dot(d) <= t + slack);
     // Vertices (edge end points) and edges, within 7 and 6 points of the cursor.
     let reach = crate::pick_index::reach(proj, pos, 8.0);
     // The edges seen near the cursor, when the GPU pick buffer has them for this view (Select
-    // Other wants hidden ones too).
-    let seen = if all { None } else { crate::pick_buffer::edges_near(app, proj, pos, &st) };
+    // Other wants hidden ones too, and so do views that show edges through faces).
+    let through = hidden_shown || st.bodies.iter().any(|b| app.session.body_visible(&b.name) && app.session.doc.model_body_opacity(b) < 0.999);
+    let seen = if all || through { None } else { crate::pick_buffer::edges_near(app, proj, pos, &st) };
     let mut bestv = Near::new(all);
     let mut beste = Near::new(all);
     for (i, b) in st.bodies.iter().enumerate() {
@@ -2082,6 +2092,7 @@ fn highlight_geometry_key(app: &SolveApp) -> u64 {
     app.ui.pick_bodies.hash(&mut h);
     app.session.active_sketch.hash(&mut h);
     (app.dialog.is_some(), app.tool.is_some()).hash(&mut h);
+    picks_bodies(app).hash(&mut h);
     crate::theme::is_dark().hash(&mut h);
     crate::theme::vision().hash(&mut h);
     app.preview.effective_replaced().hash(&mut h);
@@ -2325,8 +2336,8 @@ pub(crate) fn build_highlight(app: &SolveApp) -> GpuScene {
     }
     // Hover (pre-highlight).
     match hover {
-        // Body selection: the whole body lights up.
-        Some(Hit::Face { body, .. }) if app.ui.pick_bodies && app.dialog.is_none() && app.tool.is_none() => {
+        // Body selection, or a dialog input that takes bodies: the whole body lights up.
+        Some(Hit::Face { body, .. }) if (app.ui.pick_bodies && app.dialog.is_none() && app.tool.is_none()) || picks_bodies(app) => {
             if let Some(b) = st.body(body) {
                 let k = t.hover_face_lift;
                 let c = body_rgb(app, body);
@@ -2401,6 +2412,12 @@ pub(crate) fn build_highlight(app: &SolveApp) -> GpuScene {
     }
 
     sc
+}
+
+/// Does the open dialog's active input take a face hit as its body (it takes bodies, not faces)?
+fn picks_bodies(app: &SolveApp) -> bool {
+    use crate::selection::{BODIES, FACES, PLANAR_FACES};
+    app.dialog.as_ref().and_then(|d| d.active_input()).is_some_and(|i| i.accept & BODIES != 0 && i.accept & (FACES | PLANAR_FACES) == 0)
 }
 
 /// A body's display colour (appearance, material or imported colour), if it has one.
@@ -2488,6 +2505,20 @@ pub fn delete_selection(app: &mut SolveApp) {
 /// preview back, even when Primary (preview-reselect) is held.
 pub(crate) fn preview_should_roll_back(app: &SolveApp, held: crate::tool_modifiers::Held, manipulator_dragging: bool) -> bool {
     app.dialog.as_ref().is_some_and(|d| d.previews()) && app.preview.active && crate::tool_modifiers::preview_reselect(held, manipulator_dragging)
+}
+
+/// A drag of geometry begun in the view is under way (a sketch point or curve, a 3D sketch
+/// handle, a manipulator's arrow, a dimension, a joint, sketch text, a shape being dragged out):
+/// it keeps the pointer when the pointer crosses a floating card.
+pub(crate) fn drag_holds_pointer(app: &SolveApp) -> bool {
+    app.viewport.point_drag.is_some()
+        || crate::tool_modifiers::manipulator_dragging()
+        || app.viewport.draw_drag.is_some()
+        || app.viewport.text_drag.is_some()
+        || crate::sketch3d::dragging()
+        || crate::dim_view::dragging()
+        || crate::joint_drag::active(app)
+        || crate::sketch_text_handles::dragging(app)
 }
 
 pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
@@ -5872,6 +5903,23 @@ mod tests {
         app.session.visibility.hidden_bodies.clear();
         let shown = build_highlight(&app);
         assert_eq!(shown.blocks[0].bytes.tris, bytes.tris);
+    }
+
+    /// Hovering a face while Combine waits for its target lights the whole body, as the pick
+    /// will take it; with no dialog only the face lights.
+    #[test]
+    fn a_dialog_that_takes_bodies_lights_the_whole_hovered_body() {
+        let mut app = cylinder_app();
+        let body = app.session.world_state().bodies[0].clone();
+        let whole = shown_mesh(&app, &body, &None).triangles.len() * 3 * crate::gpu::TRI_SIZE;
+        app.viewport.hover = Some(Hit::Face { body: body.name.clone(), index: 0, point: Vec3::ZERO });
+        let face = build_highlight(&app).merged().tris.len();
+        assert!(face > 0 && face < whole, "a face alone lights: {face} of {whole}");
+        let key = highlight_key(&app);
+        app.dialog = crate::dialogs::Dialog::for_command(&app, "solid.combine");
+        assert!(picks_bodies(&app), "Combine's target takes bodies");
+        assert_ne!(highlight_key(&app), key);
+        assert_eq!(build_highlight(&app).merged().tris.len(), whole, "the whole body lights");
     }
 
     #[test]

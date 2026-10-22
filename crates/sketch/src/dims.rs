@@ -306,7 +306,14 @@ pub fn dim_layout_reaching(f: &DimFrame, text: Option<Vec2>, px: f64, half: Vec2
             }
         }
         DimFrame::Radial { center, radius, diameter, arc } => {
-            let t = text.unwrap_or_else(|| Vec2::new(1.0, 1.0) * ((radius + 18.0 * px) * std::f64::consts::FRAC_1_SQRT_2));
+            // By default the text sits just outside the curve: a circle's up and to the right, an
+            // arc's at the middle of its span, so it reads against the arc itself rather than off
+            // in empty space at a fixed 45° (#3-point arcs used to put it wherever that fell).
+            let toward = match arc {
+                Some((start, sweep)) if start.is_finite() && sweep.is_finite() => Vec2::from_angle(start + 0.5 * sweep),
+                _ => Vec2::new(1.0, 1.0) * std::f64::consts::FRAC_1_SQRT_2,
+            };
+            let t = text.unwrap_or_else(|| toward * (radius + 18.0 * px));
             let u = t.normalized().unwrap_or(Vec2::new(1.0, 1.0) * std::f64::consts::FRAC_1_SQRT_2);
             let d = t.len();
             let at = center + u * radius;
@@ -477,6 +484,27 @@ mod tests {
         let dia = DimFrame::Radial { center, radius, diameter: true, arc };
         let lay = dim_layout(&dia, Some(Vec2::from_angle(0.75 * std::f64::consts::PI) * 20.0), 0.1, Vec2::new(2.0, 1.0));
         assert_eq!(lay.lines.iter().filter(|l| on_circle(l)).count(), 2);
+    }
+
+    /// An arc's radius text, with no place of its own, sits off the middle of the arc: one in the
+    /// lower left (180°–270°, as a three-point arc there makes) gets it in the lower left too, not
+    /// at the fixed upper right where it floated away from the arc.
+    #[test]
+    fn an_arcs_radius_text_defaults_to_the_middle_of_the_arc() {
+        let mut sk = Sketch::new();
+        let c = sk.add_arc(Vec2::ZERO, Vec2::new(-10.0, 0.0), Vec2::new(0.0, -10.0), [None, None, None], None).unwrap_or(0);
+        let f =
+            dim_frame(&sk, &ConstraintKind::Radius { c, value: 10.0 }).unwrap_or(DimFrame::Linear { p0: Vec2::ZERO, p1: Vec2::ZERO, dir: Vec2::X });
+        let lay = dim_layout(&f, None, 0.1, Vec2::new(2.0, 1.0));
+        let dir = lay.text.normalized().unwrap_or(Vec2::X);
+        assert!(dir.dist(Vec2::from_angle(1.25 * std::f64::consts::PI)) < 1e-6, "text at {:?}", lay.text);
+        assert!(lay.text.len() > 10.0, "outside the arc: {:?}", lay.text);
+        // On the arc, so no extension is drawn.
+        assert!(!lay.lines.iter().any(|l| l.len() > 2), "{:?}", lay.lines);
+        // A full circle keeps its upper-right default.
+        let circle = DimFrame::Radial { center: Vec2::ZERO, radius: 10.0, diameter: false, arc: None };
+        let t = dim_layout(&circle, None, 0.1, Vec2::ZERO).text;
+        assert!(t.x > 0.0 && t.y > 0.0 && (t.x - t.y).abs() < 1e-9);
     }
 
     #[test]

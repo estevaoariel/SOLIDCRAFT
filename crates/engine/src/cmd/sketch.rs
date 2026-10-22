@@ -1406,6 +1406,8 @@ fn constrain(s: &mut Session, p: &Value, cmd: &str, f: impl FnOnce(&mut Sketch) 
     let mut residual = None;
     let (id, info) = edit(s, p, cmd, true, |sk, _| {
         let k = f(sk)?;
+        // The same constraint again is not added (`Sketch::add_constraint` hands back the one
+        // already there), so it comes back below as redundant, determined by itself.
         let rep = solve(&mut sk.clone());
         before = Some(rep.dof);
         let order = entity_order(sk, p);
