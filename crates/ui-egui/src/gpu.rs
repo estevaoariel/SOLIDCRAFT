@@ -8,8 +8,8 @@ use std::sync::{Arc, Mutex};
 
 use egui_wgpu::wgpu;
 pub use solidcraft_gpu::view::{
-    AccessMap, BlockBytes, Frame, GpuImage, GpuScene, GpuTarget, LINE_SIZE, PBR_SIZE, PlannedBody, Renderer, SceneBlock, SceneSlot, TRI_SIZE,
-    supersampled_size,
+    AccessMap, BlockBytes, Frame, GpuImage, GpuScene, GpuTarget, InstancedMesh, LINE_SIZE, PBR_SIZE, PlannedBody, Renderer, SHARED_SIZE, SceneBlock,
+    SceneSlot, SharedTris, TRI_SIZE, supersampled_size,
 };
 
 /// A frame of the viewport as an egui paint callback.
@@ -270,6 +270,7 @@ fn offscreen(
         hl_slot: Arc::new(Mutex::new(highlight)),
         pv_key: 0,
         pv_slot: none(),
+        pv_hide: false,
         view_proj,
         back,
         size_px: [size as f32; 2],

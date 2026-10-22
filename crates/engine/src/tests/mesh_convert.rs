@@ -22,6 +22,31 @@ fn imported_box() -> Session {
     Session::new(doc)
 }
 
+/// An edit keeps the design as it was for undo, and an imported mesh's triangles are shared
+/// with that copy, not copied (a scan's are hundreds of megabytes): after an edit and its undo
+/// the document holds the same arrays. They still save as plain arrays.
+#[test]
+fn edits_share_an_imported_meshs_triangles_with_undo() {
+    let mut s = imported_box();
+    let arrays = |s: &Session| match &s.doc.features[0].kind {
+        FeatureKind::MeshImport { meshes, .. } => (meshes[0].positions.clone(), meshes[0].triangles.clone()),
+        other => panic!("{other:?}"),
+    };
+    let (positions, triangles) = arrays(&s);
+    run(&mut s, "parameters.add", json!({"name":"size","expression":"2","unit":""}));
+    let (p, t) = arrays(&s);
+    assert!(std::sync::Arc::ptr_eq(&p, &positions) && std::sync::Arc::ptr_eq(&t, &triangles), "shared after an edit");
+    run(&mut s, "edit.undo", json!({}));
+    let (p, t) = arrays(&s);
+    assert!(std::sync::Arc::ptr_eq(&p, &positions) && std::sync::Arc::ptr_eq(&t, &triangles), "shared after undo");
+    let saved =
+        serde_json::to_value(MeshData { name: "M".into(), positions: vec![1.5, 2.0, 3.0].into(), triangles: vec![0, 0, 0].into(), color: None })
+            .unwrap();
+    assert_eq!(saved, json!({"name":"M","positions":[1.5,2.0,3.0],"triangles":[0,0,0]}));
+    let back: MeshData = serde_json::from_value(saved).unwrap();
+    assert_eq!(&back.positions[..], &[1.5, 2.0, 3.0]);
+}
+
 #[test]
 fn mesh_conversion_is_parametric_undoable_and_editable_after_cold_reopen() {
     let mut s = imported_box();
@@ -68,6 +93,34 @@ fn failed_mesh_conversions_leave_the_design_unchanged() {
         assert_eq!(s.doc.to_json(), before);
         assert!(s.model.state().body("Mesh").unwrap().body.is_mesh());
     }
+}
+
+#[test]
+fn convert_uses_the_selected_mesh_body_when_body_is_omitted() {
+    let mut s = imported_box();
+    s.selection = vec![crate::Sel::Body { name: "Mesh".into() }];
+    run(&mut s, "mesh.convert", json!({"tolerance":"0.01 mm"}));
+    let state = s.model.state();
+    let body = &state.body("Mesh").unwrap().body;
+    assert!(!body.is_mesh());
+    assert_eq!(body.faces(0.01).unwrap().len(), 6);
+}
+
+#[test]
+fn convert_without_body_or_selection_is_refused() {
+    let mut s = imported_box();
+    let before = s.doc.to_json();
+    assert!(s.execute("mesh.convert", &json!({"tolerance":"0.01 mm"})).is_err());
+    assert_eq!(s.doc.to_json(), before);
+    assert!(s.model.state().body("Mesh").unwrap().body.is_mesh());
+}
+
+#[test]
+fn an_explicit_body_wins_over_the_selection() {
+    let mut s = imported_box();
+    s.selection = vec![crate::Sel::Body { name: "Missing".into() }];
+    run(&mut s, "mesh.convert", json!({"body":"Mesh","tolerance":"0.01 mm"}));
+    assert!(!s.model.state().body("Mesh").unwrap().body.is_mesh());
 }
 
 #[test]

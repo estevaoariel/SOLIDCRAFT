@@ -1,5 +1,4 @@
 [
-  {"call":"ui.prefs","params":{"look_at_anim":false}},
   {"call":"engine.execute","params":{"command":"sketch.create","params":{"plane":"XY"}}},
   {"call":"ui.prefs","params":{"open":"Keyboard Shortcuts"}},
   {"click":{"handle":"shortcut:filter"}},

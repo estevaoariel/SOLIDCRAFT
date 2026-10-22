@@ -17,6 +17,7 @@
 //!
 //! The control channel's `ui.selectOther` opens, describes and picks from the list.
 
+use crate::ui_kit::{Container, Surface};
 use egui::{Align2, FontId, Pos2, Rect, Sense, pos2, vec2};
 use serde_json::{Value, json};
 use solidcraft_engine::Sel;
@@ -297,7 +298,7 @@ pub fn open(app: &mut SolveApp, at: Pos2) -> bool {
 fn open_with(app: &mut SolveApp, proj: &Proj, at: Pos2) -> bool {
     let (rows, total) = rows_capped(app, proj, at);
     if rows.is_empty() {
-        app.status = Some(("Nothing to select here".into(), crate::now_ms(), false));
+        app.set_status("Nothing to select here", false);
         return false;
     }
     close(app);
@@ -318,23 +319,26 @@ pub fn is_open(app: &SolveApp) -> bool {
     app.viewport.select_other.popup.is_some()
 }
 
-/// Pick row `i` of the open list (`add`: Shift/Ctrl, add to the selection) and close it.
-pub fn choose(app: &mut SolveApp, i: usize, add: bool) -> Result<Row, String> {
+/// Pick row `i` of the open list and close it.
+///
+/// `add` / `toggle` match viewport selection (Shift pure-add, Primary toggle when
+/// `selection_shift_add_only` is on).
+pub fn choose(app: &mut SolveApp, i: usize, add: bool, toggle: bool) -> Result<Row, String> {
     let Some(p) = app.viewport.select_other.popup.as_ref() else { return Err("Select Other is not open".into()) };
     let at = p.at;
     let row = p.rows.get(i).cloned().ok_or_else(|| format!("no row {i} (the list has {})", p.rows.len()))?;
     close(app);
-    apply(app, &row, add);
+    apply(app, &row, add, toggle);
     remember(app, at, if add { None } else { Some(row.sel.clone()) });
     Ok(row)
 }
 
 /// Select a row's entity: into the dialog's active input, or as a click does.
-fn apply(app: &mut SolveApp, row: &Row, add: bool) {
+fn apply(app: &mut SolveApp, row: &Row, add: bool, toggle: bool) {
     if app.dialog.as_ref().is_some_and(|d| d.wants_picks()) {
         crate::viewport::dialog_pick(app, &row.hit, row.sel.clone());
     } else {
-        crate::viewport::select(app, Some(row.sel.clone()), add);
+        crate::viewport::select(app, Some(row.sel.clone()), add, toggle);
     }
 }
 
@@ -376,7 +380,9 @@ pub fn control(app: &mut SolveApp, p: &Value) -> Result<Value, String> {
         return Ok(describe(app));
     }
     if let Some(i) = p.get("pick").and_then(Value::as_u64) {
-        let row = choose(app, i as usize, p.get("add").and_then(Value::as_bool).unwrap_or(false))?;
+        // Control channel: `add` enables both add and toggle (legacy API).
+        let add = p.get("add").and_then(Value::as_bool).unwrap_or(false);
+        let row = choose(app, i as usize, add, add)?;
         return Ok(json!({ "picked": row.label, "sel": row.sel, "selection": app.session.selection }));
     }
     Ok(describe(app))
@@ -487,8 +493,8 @@ pub fn cycle_click(app: &mut SolveApp, proj: &Proj, at: Pos2) -> bool {
     }
     let next = rows.iter().position(|r| crate::selection::same_item(&r.sel, &c.chosen)).map_or(0, |k| (k + 1) % rows.len());
     let Some(row) = rows.get(next).cloned() else { return false };
-    apply(app, &row, false);
-    app.status = Some((format!("{} ({} of {})", row.label, next + 1, rows.len()), crate::now_ms(), false));
+    apply(app, &row, false, false);
+    app.set_status(format!("{} ({} of {})", row.label, next + 1, rows.len()), false);
     remember(app, c.at, Some(row.sel));
     true
 }
@@ -510,7 +516,8 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let w = crate::context_menu::LIST_W - 10.0;
     // Title, rows up to the scroll height, margins and border.
     let size = vec2(w + 10.0, 30.0 + (p.rows.len() as f32 * 24.0).min(360.0));
-    let resp = crate::frame::area(egui::Id::new("sc_select_other"))
+    let resp = Container::new(ctx, Surface::Popup)
+        .area(egui::Id::new("sc_select_other"))
         .fixed_pos(crate::context_menu::place(p.at, vec2(12.0, 12.0), size, ctx.content_rect()))
         .constrain(true)
         .order(egui::Order::Foreground)
@@ -519,7 +526,13 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                 let (r, _) = ui.allocate_exact_size(vec2(w, 20.0), Sense::hover());
                 let title = crate::i18n::tr_label("Select Other").to_uppercase();
                 let title = if p.total > p.rows.len() { format!("{title} · {} / {}", p.rows.len(), p.total) } else { title };
-                ui.painter().text(pos2(r.left() + 8.0, r.center().y), Align2::LEFT_CENTER, title, FontId::proportional(10.5), t.text_dim);
+                ui.painter().text(
+                    pos2(r.left() + 8.0, r.center().y),
+                    Align2::LEFT_CENTER,
+                    title,
+                    FontId::proportional(crate::theme::Tokens::get().font_panel),
+                    t.text_dim,
+                );
                 egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
                     for (i, row) in p.rows.iter().enumerate() {
                         let (r, resp) = ui.allocate_exact_size(vec2(w, 24.0), Sense::click());
@@ -528,15 +541,19 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                             hovered = Some(i);
                             ui.painter().rect_filled(r.shrink2(vec2(2.0, 1.0)), 4.0, t.hover);
                         }
-                        crate::icons::paint(
+                        crate::icons::paint_icon(
                             ui.painter(),
                             Rect::from_center_size(pos2(r.left() + 16.0, r.center().y), vec2(16.0, 16.0)),
                             row.icon,
-                            t.icon,
-                            t.icon_fill,
-                            t.accent,
+                            f32::from(t.icon.a()) / 255.0,
                         );
-                        ui.painter().text(pos2(r.left() + 32.0, r.center().y), Align2::LEFT_CENTER, &row.label, FontId::proportional(13.0), t.text);
+                        ui.painter().text(
+                            pos2(r.left() + 32.0, r.center().y),
+                            Align2::LEFT_CENTER,
+                            &row.label,
+                            FontId::proportional(crate::theme::Tokens::get().font_button),
+                            t.text,
+                        );
                         if resp.clicked() {
                             picked = Some(i);
                         }
@@ -552,7 +569,9 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     }
     let (pressed, pointer, mods) = ctx.input(|i| (i.pointer.any_pressed(), i.pointer.interact_pos(), i.modifiers));
     if let Some(i) = picked {
-        let _ = choose(app, i, mods.shift || mods.ctrl || mods.command);
+        let held = crate::tool_modifiers::Held::from_modifiers(mods);
+        let (add, toggle) = crate::tool_modifiers::selection_click(held, app.preferences.selection_shift_add_only);
+        let _ = choose(app, i, add, toggle);
     } else if pressed && !pointer.is_some_and(|q| resp.response.rect.contains(q)) {
         // A press elsewhere only closes the list.
         close(app);

@@ -8,6 +8,8 @@ mod hidraw;
 #[cfg(target_os = "linux")]
 mod spacenavd;
 
+#[cfg(target_os = "linux")]
+use std::sync::atomic::AtomicU8;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -19,9 +21,22 @@ use quick_xml::Reader;
 use quick_xml::events::Event;
 use solidcraft_space_mouse::Layout;
 use solidcraft_ui_egui::SolveApp;
-use solidcraft_ui_egui::space_mouse::{Axes, AxisRule, DriverMapping, WheelGuard, navigate_frame};
+#[cfg(target_os = "linux")]
+use solidcraft_ui_egui::prefs::SpaceMouseDriver;
+#[cfg(target_os = "linux")]
+use solidcraft_ui_egui::space_mouse::DriversPresent;
+use solidcraft_ui_egui::space_mouse::{Axes, AxisRule, Calibration, DriverMapping, WheelGuard, calibrated, calibration, navigate_frame};
 
 const STALE_AFTER: Duration = Duration::from_millis(150);
+/// How long a held (spacenavd) reading that is nearly at rest may go without a new record before
+/// it reads as rest: spacenavd sends no final record when the cap springs back, only the last
+/// small leftover. Longer than `STALE_AFTER` so a light, steady hold gets a moment before it ends.
+const HELD_SETTLE_AFTER: Duration = Duration::from_millis(500);
+/// How far from rest (raw units, full deflection is 350) every axis of a held reading must be for
+/// it to settle. The dead zone is 20, but the last records of real releases reach 129 on one axis
+/// (tangency-labs/solidcraft#3523), so this sits well above it. A firmer push is a deliberate
+/// hold and stays.
+const HELD_SETTLE_BAND: u16 = 150;
 /// Whether the 3Dconnexion driver (macOS) has the device: it then reports the cap, and reading
 /// the HID device would fail or report it twice.
 static DRIVER_CONNECTED: AtomicBool = AtomicBool::new(false);
@@ -165,34 +180,79 @@ fn load_driver_mapping() -> Option<DriverMapping> {
     parse_driver_mapping(&xml)
 }
 
+/// Where the reading comes from, which a calibration is saved under (`Source::key`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Source {
+    /// The device itself, with its vendor and product ids when known.
+    Hid(Option<(u16, u16)>),
+    /// spacenavd, which may have swapped or inverted axes on its own (`spnavcfg`).
+    #[cfg(target_os = "linux")]
+    Spacenavd,
+    /// The 3Dconnexion driver (macOS), which applies its own settings first.
+    #[cfg(target_os = "macos")]
+    Driver,
+}
+
+impl Source {
+    fn key(self) -> String {
+        match self {
+            Self::Hid(Some((vendor, product))) => format!("hid {vendor:04x}:{product:04x}"),
+            Self::Hid(None) => "hid".into(),
+            #[cfg(target_os = "linux")]
+            Self::Spacenavd => "spacenavd".into(),
+            #[cfg(target_os = "macos")]
+            Self::Driver => "3dxware".into(),
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 struct Reading {
+    /// The device being read; none between devices.
+    device: Option<Source>,
     axes: Axes,
     /// When each of X, Y, Z, Rx, Ry and Rz last arrived. Each ages on its own: a device may send
     /// translation and rotation in separate reports, or spread even one group over several.
     at: [Instant; 6],
-    /// The source says when the cap is back at rest, so a reading stays until the next one.
-    /// A HID device repeats its report while the cap is held; spacenavd sends a record only when
-    /// the values change, and a steady hold can go seconds without one.
+    /// The source sends a record only when the values change, so a reading stays until the next
+    /// one: a steady hold can go seconds without one. It never says when the cap springs back,
+    /// though, so a reading within `HELD_SETTLE_BAND` of rest on every axis settles after
+    /// `HELD_SETTLE_AFTER`. A HID device repeats its report while the cap is held, so it ages out
+    /// per axis instead.
     held: bool,
 }
 
 impl Reading {
     fn new(now: Instant) -> Self {
-        Self { axes: Axes::default(), at: [now; 6], held: false }
+        Self { device: None, axes: Axes::default(), at: [now; 6], held: false }
     }
 
-    fn current(self, now: Instant) -> Axes {
+    /// The axes at `now`. One with nothing fresh reads as `rest`: the device's own rest when it
+    /// is calibrated, so a device that rests off zero calibrates to no motion rather than drifting.
+    fn current(self, now: Instant, rest: Axes) -> Axes {
         let mut axes = self.axes;
-        if !self.held {
-            for (value, at) in axes.translation.iter_mut().chain(axes.rotation.iter_mut()).zip(self.at) {
+        if self.held {
+            let values = axes.translation.into_iter().chain(axes.rotation);
+            let rests = rest.translation.into_iter().chain(rest.rotation);
+            let near_rest = values.zip(rests).all(|(value, rest)| value.abs_diff(rest) <= HELD_SETTLE_BAND);
+            if near_rest && now.duration_since(self.at[0]) >= HELD_SETTLE_AFTER {
+                return rest;
+            }
+        } else {
+            let rest = rest.translation.into_iter().chain(rest.rotation);
+            for ((value, at), rest) in axes.translation.iter_mut().chain(axes.rotation.iter_mut()).zip(self.at).zip(rest) {
                 if now.duration_since(at) >= STALE_AFTER {
-                    *value = 0;
+                    *value = rest;
                 }
             }
         }
         axes
     }
+}
+
+/// The raw axes at the device's rest, which calibrate to no motion; 0 without a calibration.
+fn at_rest(calibration: Option<Calibration>) -> Axes {
+    calibration.map(|calibration| calibration.raw_rest().into()).unwrap_or_default()
 }
 
 /// The Generic Desktop "Multi-Axis Controller" usage names a 3D mouse's motion interface, whoever
@@ -233,9 +293,20 @@ fn publish(ctx: &Context, shared: &Mutex<Reading>, layout: Layout, report: &[u8]
 #[cfg(target_os = "linux")]
 fn publish_held(ctx: &Context, shared: &Mutex<Reading>, axes: Axes) {
     if let Ok(mut reading) = shared.lock() {
-        *reading = Reading { axes, held: true, ..Reading::new(Instant::now()) };
+        *reading = Reading { device: reading.device, axes, held: true, ..Reading::new(Instant::now()) };
         ctx.request_repaint();
     }
+}
+
+/// A device is open: say which, so its calibration applies.
+fn connected(ctx: &Context, shared: &Mutex<Reading>, source: Source) {
+    if let Ok(mut reading) = shared.lock() {
+        // Nothing has arrived from it yet, so every axis starts out stale.
+        let now = Instant::now();
+        let stale = now.checked_sub(STALE_AFTER).unwrap_or(now);
+        *reading = Reading { device: Some(source), at: [stale; 6], ..Reading::new(now) };
+    }
+    ctx.request_repaint();
 }
 
 /// The device is gone: stop reporting its last position.
@@ -255,7 +326,7 @@ fn reader(ctx: Context, shared: Arc<Mutex<Reading>>) {
     loop {
         if let Err(error) = api.refresh_devices() {
             log::warn!("3D mouse: device scan failed: {error}");
-        } else if let Some((device, layout)) = api.device_list().filter(|info| is_3d_mouse(info)).find_map(|info| {
+        } else if let Some((device, layout, ids)) = api.device_list().filter(|info| is_3d_mouse(info)).find_map(|info| {
             let device = info
                 .open_device(&api)
                 .inspect_err(|error| {
@@ -267,8 +338,9 @@ fn reader(ctx: Context, shared: Arc<Mutex<Reading>>) {
                 })
                 .ok()?;
             let layout = device_layout(&device, info.vendor_id())?;
-            Some((device, layout))
+            Some((device, layout, (info.vendor_id(), info.product_id())))
         }) {
+            connected(&ctx, &shared, Source::Hid(Some(ids)));
             let mut report = [0_u8; REPORT_BUFFER_BYTES];
             loop {
                 match device.read_timeout(&mut report, 100) {
@@ -311,37 +383,130 @@ fn device_layout(device: &hidapi::HidDevice, vendor_id: u16) -> Option<Layout> {
     }
 }
 
-/// Reads the 3D mouse through spacenavd when it runs, so what `spnavcfg` sets (swapped and inverted
-/// axes, sensitivity, dead zones) applies here as in other programs. Without the daemon it reads
-/// `/dev/hidrawN` with plain blocking reads, which end with an error when the device is unplugged.
-/// Opening needs permission: most distributions grant it to the logged-in user for devices that
-/// carry the `uaccess` udev tag, which a rule for the 3D mouse has to add.
+/// What the user chose for the reader and what the reader found, shared with the egui thread.
 #[cfg(target_os = "linux")]
-fn reader(ctx: Context, shared: Arc<Mutex<Reading>>) {
-    use std::io::Read;
+#[derive(Default)]
+struct Drivers {
+    /// `SpaceMouseDriver::to_u8` of the preference.
+    choice: AtomicU8,
+    /// `PRESENT_SPACENAVD` and `PRESENT_DIRECT`, as of the reader's last look.
+    found: AtomicU8,
+}
+
+#[cfg(target_os = "linux")]
+const PRESENT_SPACENAVD: u8 = 1;
+#[cfg(target_os = "linux")]
+const PRESENT_DIRECT: u8 = 2;
+/// How often a connected reader looks again at what is there, and how long a read of spacenavd
+/// waits for a record before it checks the choice.
+#[cfg(target_os = "linux")]
+const LOOK_EVERY: Duration = Duration::from_secs(1);
+#[cfg(target_os = "linux")]
+const SPACENAVD_WAKE: Duration = Duration::from_millis(250);
+
+#[cfg(target_os = "linux")]
+impl Drivers {
+    fn choice(&self) -> SpaceMouseDriver {
+        SpaceMouseDriver::from_u8(self.choice.load(Ordering::Relaxed))
+    }
+
+    fn present(&self) -> DriversPresent {
+        let found = self.found.load(Ordering::Relaxed);
+        DriversPresent { spacenavd: found & PRESENT_SPACENAVD != 0, direct: found & PRESENT_DIRECT != 0 }
+    }
+
+    fn publish(&self, present: DriversPresent) {
+        let found = (u8::from(present.spacenavd) * PRESENT_SPACENAVD) | (u8::from(present.direct) * PRESENT_DIRECT);
+        self.found.store(found, Ordering::Relaxed);
+    }
+}
+
+/// The reader that was picked.
+#[cfg(target_os = "linux")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Pick {
+    Spacenavd,
+    Direct,
+}
+
+/// Which reader to use: the one asked for when it is there, else the other, else none. Automatic
+/// asks for spacenavd, which is what has always been read first.
+#[cfg(target_os = "linux")]
+fn choose(wanted: SpaceMouseDriver, spacenavd: bool, direct: bool) -> Option<Pick> {
+    let first = match wanted {
+        SpaceMouseDriver::Automatic | SpaceMouseDriver::Spacenavd => Pick::Spacenavd,
+        SpaceMouseDriver::Direct => Pick::Direct,
+    };
+    let there = |pick| match pick {
+        Pick::Spacenavd => spacenavd,
+        Pick::Direct => direct,
+    };
+    let other = if first == Pick::Spacenavd { Pick::Direct } else { Pick::Spacenavd };
+    [first, other].into_iter().find(|&pick| there(pick))
+}
+
+/// Reads the 3D mouse through spacenavd or `/dev/hidrawN`, as `Drivers::choice` says (Automatic
+/// is spacenavd when it runs, so what `spnavcfg` sets, swapped and inverted axes, sensitivity,
+/// dead zones, applies here as in other programs). Both reads wake up when idle to see whether
+/// the choice changed, which then moves to the other reader without a restart. hidraw is opened
+/// non-blocking and ends with an error when the device is unplugged. Opening needs permission:
+/// most distributions grant it to the logged-in user for devices that carry the `uaccess` udev
+/// tag, which a rule for the 3D mouse has to add.
+#[cfg(target_os = "linux")]
+fn reader(ctx: Context, shared: Arc<Mutex<Reading>>, drivers: Arc<Drivers>) {
+    use std::os::unix::fs::OpenOptionsExt;
+    let look = || DriversPresent { spacenavd: spacenavd::exists(), direct: hidraw::find().is_some() };
     let mut denied = None;
+    let mut told = None;
     loop {
-        if let Some(daemon) = spacenavd::connect() {
-            log::info!("3D mouse: reading spacenavd, which applies the spnavcfg settings");
-            spacenavd::read(daemon, |axes| publish_held(&ctx, &shared, axes));
-            reset(&ctx, &shared);
-        } else if let Some(device) = hidraw::find() {
-            match std::fs::File::open(&device.path) {
-                Ok(mut file) => {
+        let device = hidraw::find();
+        let present = DriversPresent { spacenavd: spacenavd::exists(), direct: device.is_some() };
+        drivers.publish(present);
+        let wanted = drivers.choice();
+        let mut pick = choose(wanted, present.spacenavd, present.direct);
+        // A socket file with no daemon behind it is no spacenavd.
+        let daemon = if pick == Some(Pick::Spacenavd) { spacenavd::connect() } else { None };
+        if pick == Some(Pick::Spacenavd) && daemon.is_none() {
+            pick = choose(wanted, false, present.direct);
+        }
+        let asked_for = match wanted {
+            SpaceMouseDriver::Automatic => None,
+            SpaceMouseDriver::Spacenavd => Some(Pick::Spacenavd),
+            SpaceMouseDriver::Direct => Some(Pick::Direct),
+        };
+        if let (Some(asked), Some(pick)) = (asked_for, pick)
+            && asked != pick
+            && told != Some((wanted, pick))
+        {
+            log::info!("3D mouse: {asked:?} is not available, reading {pick:?} instead");
+            told = Some((wanted, pick));
+        }
+        // Asked at every idle moment of a read: has the choice changed, and what is there now.
+        let mut looked = Instant::now();
+        let mut stop = || {
+            if looked.elapsed() >= LOOK_EVERY {
+                looked = Instant::now();
+                drivers.publish(look());
+            }
+            drivers.choice() != wanted
+        };
+        match (pick, daemon, device) {
+            (Some(Pick::Spacenavd), Some(daemon), _) => {
+                log::info!("3D mouse: reading spacenavd, which applies the spnavcfg settings");
+                if let Err(error) = daemon.set_read_timeout(Some(SPACENAVD_WAKE)) {
+                    log::warn!("3D mouse: spacenavd reads cannot time out ({error}); a change of driver waits for the next event");
+                }
+                connected(&ctx, &shared, Source::Spacenavd);
+                spacenavd::read(daemon, |axes| publish_held(&ctx, &shared, axes), &mut stop);
+                reset(&ctx, &shared);
+            }
+            (Some(Pick::Direct), _, Some(device)) => match std::fs::OpenOptions::new().read(true).custom_flags(hidraw::O_NONBLOCK).open(&device.path)
+            {
+                Ok(file) => {
                     denied = None;
                     log::info!("3D mouse: reading {}", device.path.display());
-                    let mut report = [0_u8; REPORT_BUFFER_BYTES];
-                    loop {
-                        match file.read(&mut report) {
-                            Ok(0) => break,
-                            Ok(size) => publish(&ctx, &shared, device.layout, report.get(..size).unwrap_or_default()),
-                            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
-                            Err(error) => {
-                                log::info!("3D mouse disconnected: {error}");
-                                break;
-                            }
-                        }
-                    }
+                    connected(&ctx, &shared, Source::Hid(device.ids));
+                    hidraw::read_reports(file, |report| publish(&ctx, &shared, device.layout, report), &mut stop);
                     reset(&ctx, &shared);
                 }
                 // Say so once per device node, not every retry.
@@ -350,9 +515,13 @@ fn reader(ctx: Context, shared: Arc<Mutex<Reading>>) {
                     denied = Some(device.path);
                 }
                 Err(_) => {}
-            }
+            },
+            _ => {}
         }
-        std::thread::sleep(RETRY_AFTER);
+        // A new choice is taken up at once; anything else waits to try again.
+        if drivers.choice() == wanted {
+            std::thread::sleep(RETRY_AFTER);
+        }
     }
 }
 
@@ -362,36 +531,50 @@ fn reader(ctx: Context, shared: Arc<Mutex<Reading>>) {
 fn start_driver_client(ctx: &Context, shared: &Arc<Mutex<Reading>>) {
     use solidcraft_3dx_client::Event;
     let (ctx, shared) = (ctx.clone(), Arc::clone(shared));
-    let started = solidcraft_3dx_client::start("SolidCraft", move |event| match event {
-        Event::DeviceAdded => DRIVER_CONNECTED.store(true, Ordering::Relaxed),
-        Event::DeviceRemoved => {
-            DRIVER_CONNECTED.store(false, Ordering::Relaxed);
-            reset(&ctx, &shared);
-        }
-        Event::Axes { translation, rotation } => {
-            if let Ok(mut reading) = shared.lock() {
-                let now = Instant::now();
-                reading.axes = Axes { translation, rotation };
-                reading.at = [now; 6];
-                ctx.request_repaint();
+    let started = solidcraft_3dx_client::start(
+        "SolidCraft",
+        move |event| match event {
+            Event::DeviceAdded => {
+                DRIVER_CONNECTED.store(true, Ordering::Relaxed);
+                connected(&ctx, &shared, Source::Driver);
             }
-        }
-        Event::Buttons(_) => {}
-    });
-    match started {
-        Ok(()) => DRIVER_REGISTERED.store(true, Ordering::Relaxed),
-        Err(error) => log::info!("3D mouse: no driver client: {error}"),
+            Event::DeviceRemoved => {
+                DRIVER_CONNECTED.store(false, Ordering::Relaxed);
+                reset(&ctx, &shared);
+            }
+            Event::Axes { translation, rotation } => {
+                if let Ok(mut reading) = shared.lock() {
+                    let now = Instant::now();
+                    reading.axes = Axes { translation, rotation };
+                    reading.at = [now; 6];
+                    ctx.request_repaint();
+                }
+            }
+            Event::Buttons(_) => {}
+        },
+        |connected| match connected {
+            Ok(()) => DRIVER_REGISTERED.store(true, Ordering::Relaxed),
+            Err(error) => log::info!("3D mouse: no driver client: {error}"),
+        },
+    );
+    if let Err(error) = started {
+        log::info!("3D mouse: no driver client: {error}");
     }
 }
 
 pub struct SpaceMouse {
     shared: Arc<Mutex<Reading>>,
+    #[cfg(target_os = "linux")]
+    drivers: Arc<Drivers>,
     last_frame: Instant,
     driver_mapping: DriverMapping,
     mapping_checked_at: Instant,
     /// Drops 3DxWare's emulated wheel while the cap moves (#1380).
     wheel: WheelGuard,
     started: Instant,
+    /// The calibration as of the last frame and the device it is for, for the wheel filter, which
+    /// runs before the app sees the frame.
+    calibration: Option<(Source, Calibration)>,
 }
 
 impl SpaceMouse {
@@ -400,18 +583,31 @@ impl SpaceMouse {
         let shared = Arc::new(Mutex::new(Reading::new(now)));
         let worker_state = Arc::clone(&shared);
         let worker_ctx = ctx.clone();
-        if let Err(error) = std::thread::Builder::new().name("solidcraft-3d-mouse".into()).spawn(move || reader(worker_ctx, worker_state)) {
+        #[cfg(target_os = "linux")]
+        let drivers = Arc::new(Drivers::default());
+        #[cfg(target_os = "linux")]
+        let worker_drivers = Arc::clone(&drivers);
+        let spawned = std::thread::Builder::new().name("solidcraft-3d-mouse".into()).spawn(move || {
+            #[cfg(target_os = "linux")]
+            reader(worker_ctx, worker_state, worker_drivers);
+            #[cfg(not(target_os = "linux"))]
+            reader(worker_ctx, worker_state);
+        });
+        if let Err(error) = spawned {
             log::warn!("3D mouse: reader could not start: {error}");
         }
         #[cfg(target_os = "macos")]
         start_driver_client(ctx, &shared);
         Self {
             shared,
+            #[cfg(target_os = "linux")]
+            drivers,
             last_frame: now,
             driver_mapping: load_driver_mapping().unwrap_or_else(without_profile),
             mapping_checked_at: now,
             wheel: WheelGuard::default(),
             started: now,
+            calibration: None,
         }
     }
 
@@ -425,7 +621,15 @@ impl SpaceMouse {
         if !enabled {
             return;
         }
-        let moving = self.shared.lock().map(|reading| reading.current(now).moving()).unwrap_or(false);
+        let moving = self
+            .shared
+            .lock()
+            .map(|reading| {
+                // Only the calibration of the device being read: another's would misjudge it.
+                let calibration = self.calibration.filter(|(source, _)| Some(*source) == reading.device).map(|(_, calibration)| calibration);
+                calibrated(reading.current(now, at_rest(calibration)), calibration).moving()
+            })
+            .unwrap_or(false);
         self.wheel.filter(moving, now.duration_since(self.started).as_secs_f64(), &mut raw.events);
     }
 
@@ -445,11 +649,77 @@ impl SpaceMouse {
             }
             self.mapping_checked_at = now;
         }
-        let axes = match self.shared.lock() {
-            Ok(reading) => reading.current(now),
-            Err(_) => return,
-        };
-        navigate_frame(app, ctx, self.driver_mapping, axes, seconds);
+        #[cfg(target_os = "linux")]
+        {
+            self.drivers.choice.store(app.preferences.space_mouse_driver.to_u8(), Ordering::Relaxed);
+            app.space_mouse.drivers = Some(self.drivers.present());
+        }
+        let Ok(reading) = self.shared.lock().map(|reading| *reading) else { return };
+        app.space_mouse.device = reading.device.map(Source::key);
+        let calibration = calibration(app);
+        self.calibration = reading.device.zip(calibration);
+        // While this device is being calibrated, an axis with nothing fresh reads 0, as a HID
+        // device's silence means: the old calibration's rest isn't fed back into the new one. A
+        // calibration of another device doesn't count; it ends in `navigate_frame`.
+        let calibrating = app.space_mouse.calibrating.as_ref().is_some_and(|(device, _)| app.space_mouse.device.as_ref() == Some(device));
+        let rest = if calibrating { Axes::default() } else { at_rest(calibration) };
+        navigate_frame(app, ctx, self.driver_mapping, reading.current(now, rest), seconds);
+    }
+}
+
+/// A stream that answers reads from a script, for the timeout paths.
+#[cfg(all(test, target_os = "linux"))]
+mod fake {
+    use std::collections::VecDeque;
+    use std::io::{Error, ErrorKind, Read, Result};
+
+    enum Step {
+        Data(Vec<u8>),
+        Fail(ErrorKind),
+        End,
+    }
+
+    #[derive(Default)]
+    pub struct Script(VecDeque<Step>);
+
+    impl Script {
+        pub fn new() -> Self {
+            Self::default()
+        }
+
+        pub fn data(&mut self, bytes: &[u8]) -> &mut Self {
+            self.0.push_back(Step::Data(bytes.to_vec()));
+            self
+        }
+
+        pub fn timeout(&mut self, kind: ErrorKind) -> &mut Self {
+            self.fail(kind)
+        }
+
+        pub fn fail(&mut self, kind: ErrorKind) -> &mut Self {
+            self.0.push_back(Step::Fail(kind));
+            self
+        }
+
+        pub fn end(&mut self) -> &mut Self {
+            self.0.push_back(Step::End);
+            self
+        }
+    }
+
+    /// Past the script's last step the stream has ended.
+    impl Read for Script {
+        fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
+            match self.0.pop_front() {
+                Some(Step::Data(bytes)) => {
+                    let size = bytes.len().min(buf.len());
+                    buf[..size].copy_from_slice(&bytes[..size]);
+                    Ok(size)
+                }
+                Some(Step::Fail(kind)) => Err(Error::from(kind)),
+                Some(Step::End) | None => Ok(0),
+            }
+        }
     }
 }
 
@@ -457,6 +727,47 @@ impl SpaceMouse {
 mod tests {
     use super::*;
     use solidcraft_ui_egui::space_mouse::{DeviceMotion, Motion};
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_reader_asked_for_is_used_when_it_is_there_and_the_other_when_it_is_not() {
+        use Pick::{Direct, Spacenavd};
+        use SpaceMouseDriver::{Automatic, Direct as AskDirect, Spacenavd as AskSpacenavd};
+        // (asked, spacenavd there, device there) and what is read.
+        let cases = [
+            (Automatic, true, true, Some(Spacenavd)),
+            (Automatic, true, false, Some(Spacenavd)),
+            (Automatic, false, true, Some(Direct)),
+            (Automatic, false, false, None),
+            (AskSpacenavd, true, true, Some(Spacenavd)),
+            (AskSpacenavd, true, false, Some(Spacenavd)),
+            (AskSpacenavd, false, true, Some(Direct)),
+            (AskSpacenavd, false, false, None),
+            (AskDirect, true, true, Some(Direct)),
+            (AskDirect, true, false, Some(Spacenavd)),
+            (AskDirect, false, true, Some(Direct)),
+            (AskDirect, false, false, None),
+        ];
+        for (asked, spacenavd, direct, expected) in cases {
+            assert_eq!(choose(asked, spacenavd, direct), expected, "{asked:?}, spacenavd {spacenavd}, device {direct}");
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn what_the_reader_found_and_the_choice_pass_between_threads() {
+        let drivers = Drivers::default();
+        assert_eq!(drivers.present(), DriversPresent::default());
+        for (spacenavd, direct) in [(true, false), (false, true), (true, true), (false, false)] {
+            drivers.publish(DriversPresent { spacenavd, direct });
+            assert_eq!(drivers.present(), DriversPresent { spacenavd, direct });
+        }
+        assert_eq!(drivers.choice(), SpaceMouseDriver::Automatic);
+        for choice in SpaceMouseDriver::ALL {
+            drivers.choice.store(choice.to_u8(), Ordering::Relaxed);
+            assert_eq!(drivers.choice(), choice);
+        }
+    }
 
     /// The logical axes a reading reaches. Logical Rz rolls the view and logical Ry turns it about
     /// its vertical (`navigation::device_camera` in solidcraft-ui-egui, tested there).
@@ -471,14 +782,14 @@ mod tests {
         let mut reading = Reading::new(now);
         let layout = Layout::default();
         assert!(!decode_report(&[1, 1, 2], layout, &mut reading, now));
-        assert_eq!(reading.current(now), Axes::default());
+        assert_eq!(reading.current(now, Axes::default()), Axes::default());
         assert!(decode_report(&[1, 0x9c, 0xff, 0x2c, 0x01, 0, 0], layout, &mut reading, now));
         assert!(decode_report(&[2, 0, 0, 1, 0, 0xff, 0xff], layout, &mut reading, now));
-        assert_eq!(reading.current(now), Axes { translation: [-100, 300, 0], rotation: [0, 1, -1] });
+        assert_eq!(reading.current(now, Axes::default()), Axes { translation: [-100, 300, 0], rotation: [0, 1, -1] });
         // Only rotation arrives again: translation goes stale, rotation stays current.
         let later = now + STALE_AFTER + Duration::from_millis(1);
         assert!(decode_report(&[2, 4, 0, 5, 0, 6, 0], layout, &mut reading, later));
-        assert_eq!(reading.current(later), Axes { translation: [0; 3], rotation: [4, 5, 6] });
+        assert_eq!(reading.current(later, Axes::default()), Axes { translation: [0; 3], rotation: [4, 5, 6] });
         // A device sending all six in one report updates both at once.
         let combined = solidcraft_space_mouse::Descriptor::parse(&[
             0x05, 0x01, 0x09, 0x08, 0xA1, 0x01, 0x85, 0x01, 0x16, 0xA2, 0xFE, 0x26, 0x5E, 0x01, 0x75, 0x10, 0x95, 0x06, 0x19, 0x30, 0x29, 0x35, 0x81,
@@ -488,7 +799,7 @@ mod tests {
         .expect("six axes declared");
         let mut both = Reading::new(now);
         assert!(decode_report(&[1, 1, 0, 2, 0, 3, 0, 4, 0, 5, 0, 6, 0], combined, &mut both, now));
-        assert_eq!(both.current(now), Axes { translation: [1, 2, 3], rotation: [4, 5, 6] });
+        assert_eq!(both.current(now, Axes::default()), Axes { translation: [1, 2, 3], rotation: [4, 5, 6] });
     }
 
     #[test]
@@ -507,11 +818,11 @@ mod tests {
         let mut reading = Reading::new(now);
         assert!(decode_report(&[1, 100, 0], split_x_y, &mut reading, now));
         assert!(decode_report(&[2, 200, 0], split_x_y, &mut reading, now));
-        assert_eq!(reading.current(now).translation, [100, 200, 0]);
+        assert_eq!(reading.current(now, Axes::default()).translation, [100, 200, 0]);
         // Then only X keeps coming: Y goes stale on its own.
         let later = now + STALE_AFTER + Duration::from_millis(1);
         assert!(decode_report(&[1, 50, 0], split_x_y, &mut reading, later));
-        assert_eq!(reading.current(later).translation, [50, 0, 0]);
+        assert_eq!(reading.current(later, Axes::default()).translation, [50, 0, 0]);
     }
 
     #[test]
@@ -524,8 +835,8 @@ mod tests {
         let mut reading = Reading::new(now);
         assert!(decode_report(&[1, 100, 0, 0, 0, 0, 0], layout, &mut reading, now));
         // Just before the timeout X is still there; at exactly the timeout it's stale.
-        assert_eq!(reading.current(now + STALE_AFTER - Duration::from_millis(1)).translation, [100, 0, 0]);
-        assert_eq!(reading.current(now + STALE_AFTER).translation, [0; 3]);
+        assert_eq!(reading.current(now + STALE_AFTER - Duration::from_millis(1), Axes::default()).translation, [100, 0, 0]);
+        assert_eq!(reading.current(now + STALE_AFTER, Axes::default()).translation, [0; 3]);
         // Button reports and reports with an id the layout doesn't know keep coming, but neither
         // refreshes X: it goes stale on time all the same.
         for step in 1..=10 {
@@ -533,7 +844,7 @@ mod tests {
             assert!(decode_report(&[3, 1], layout, &mut reading, at));
             assert!(!decode_report(&[0x17, 80], layout, &mut reading, at));
         }
-        assert_eq!(reading.current(now + STALE_AFTER).translation, [0; 3]);
+        assert_eq!(reading.current(now + STALE_AFTER, Axes::default()).translation, [0; 3]);
     }
 
     #[test]
@@ -543,10 +854,59 @@ mod tests {
         let later = now + STALE_AFTER * 20;
         // spacenavd sends nothing while the values stay the same: the push lasts.
         let held = Reading { axes, held: true, ..Reading::new(now) };
-        assert_eq!(held.current(later), axes);
+        assert_eq!(held.current(later, Axes::default()), axes);
         // A HID device repeats its report: silence means the cap, or the device, is gone.
         let hid = Reading { axes, ..Reading::new(now) };
-        assert_eq!(hid.current(later), Axes::default());
+        assert_eq!(hid.current(later, Axes::default()), Axes::default());
+    }
+
+    #[test]
+    fn a_held_reading_near_rest_settles_after_the_timeout() {
+        // The last records of seven releases from tangency-labs/solidcraft#3523: spacenavd sends
+        // nothing after them.
+        let leftovers = [
+            [15, -60, 13, 59, 34, 129],
+            [-12, -69, 4, -26, 7, -6],
+            [0, -45, -3, 16, 8, -60],
+            [-31, 27, 22, -5, 6, -10],
+            [0, -30, -3, 3, -6, 0],
+            [5, 32, -2, 43, -8, 12],
+            [3, 2, -22, 3, 6, 5],
+        ];
+        let now = Instant::now();
+        for [x, y, z, rx, ry, rz] in leftovers {
+            let axes = Axes { translation: [x, y, z], rotation: [rx, ry, rz] };
+            let held = Reading { axes, held: true, ..Reading::new(now) };
+            assert_eq!(held.current(now + HELD_SETTLE_AFTER - Duration::from_millis(1), Axes::default()), axes);
+            assert_eq!(held.current(now + HELD_SETTLE_AFTER, Axes::default()), Axes::default());
+        }
+    }
+
+    #[test]
+    fn a_settled_held_reading_reads_as_the_devices_own_rest() {
+        let now = Instant::now();
+        let rest = Axes { translation: [10, -8, 0], rotation: [0, 5, 0] };
+        // 40 from zero on X, but only 30 from this device's rest.
+        let held = Reading { axes: Axes { translation: [40, -8, 0], rotation: [0, 5, 0] }, held: true, ..Reading::new(now) };
+        assert_eq!(held.current(now + HELD_SETTLE_AFTER, rest), rest);
+    }
+
+    #[test]
+    fn a_firm_held_push_stays_however_long_it_lasts() {
+        let now = Instant::now();
+        let later = now + Duration::from_secs(10);
+        let push = Axes { translation: [0, 350, 0], rotation: [0; 3] };
+        let held = Reading { axes: push, held: true, ..Reading::new(now) };
+        assert_eq!(held.current(later, Axes::default()), push);
+        // One firm axis keeps the small ones with it.
+        let mixed = Axes { translation: [5, 300, -10], rotation: [3, 0, 20] };
+        let held = Reading { axes: mixed, held: true, ..Reading::new(now) };
+        assert_eq!(held.current(later, Axes::default()), mixed);
+        // The band is per reading, edge included: at it is a leftover, one past it is a hold.
+        let band = HELD_SETTLE_BAND as i16;
+        let twist = |value| Reading { axes: Axes { translation: [0; 3], rotation: [0, 0, value] }, held: true, ..Reading::new(now) };
+        assert_eq!(twist(band).current(later, Axes::default()), Axes::default());
+        assert_eq!(twist(band + 1).current(later, Axes::default()).rotation, [0, 0, band + 1]);
     }
 
     #[test]
@@ -613,13 +973,19 @@ mod tests {
         reading.axes.rotation = [0, 350, 0];
         let mut mouse = SpaceMouse {
             shared: Arc::new(Mutex::new(reading)),
+            #[cfg(target_os = "linux")]
+            drivers: Arc::default(),
             last_frame: now - Duration::from_millis(20),
             driver_mapping: DriverMapping::object_mode(),
             mapping_checked_at: now,
             wheel: WheelGuard::default(),
             started: now,
+            calibration: None,
         };
-        mouse.tick_at(&mut app, &Context::default(), now);
+        // A window that has run a frame with focus, as the app's always has by now.
+        let ctx = Context::default();
+        let _ = ctx.run_ui(egui::RawInput::default(), |_| {});
+        mouse.tick_at(&mut app, &ctx, now);
         let DeviceMotion { motion, seconds } = app.viewport.device_motion.expect("the frame hands the page its motion");
         assert_eq!(motion, Motion { translation: [0.0; 3], rotation: [0.0, 0.0, -1.0] });
         assert!(seconds > 0.0);
@@ -637,12 +1003,89 @@ mod tests {
     fn mouse(reading: Reading, now: Instant) -> SpaceMouse {
         SpaceMouse {
             shared: Arc::new(Mutex::new(reading)),
+            #[cfg(target_os = "linux")]
+            drivers: Arc::default(),
             last_frame: now,
             driver_mapping: DriverMapping::object_mode(),
             mapping_checked_at: now,
             wheel: WheelGuard::default(),
             started: now,
+            calibration: None,
         }
+    }
+
+    const DEVICE: Source = Source::Hid(Some((0x1234, 0x5678)));
+
+    /// A device whose raw axes all rest at 100, calibrated as such.
+    fn resting_at_100() -> Calibration {
+        Calibration {
+            dead_zone_share: 0.0,
+            axes: std::array::from_fn(|source| solidcraft_space_mouse::AxisCalibration {
+                source,
+                reversed: false,
+                rest: 100,
+                dead_zone: 0,
+                full: [350; 2],
+            }),
+        }
+    }
+
+    #[test]
+    fn a_calibrated_device_resting_off_zero_leaves_the_wheel_alone() {
+        // Read raw, X at 100 is the cap pushed past the dead zone: the wheel is dropped.
+        let now = Instant::now();
+        let mut resting = Reading::new(now);
+        resting.device = Some(DEVICE);
+        resting.axes = Axes { translation: [100; 3], rotation: [100; 3] };
+        let wheel_kept = |calibration| {
+            let mut mouse = mouse(resting, now);
+            mouse.calibration = calibration;
+            let mut raw = egui::RawInput { events: vec![wheel()], ..Default::default() };
+            mouse.raw_input_hook_at(true, &mut raw, now);
+            raw.events.len() == 1
+        };
+        assert!(!wheel_kept(None));
+        // Calibrated, it's at rest, so the wheel is the user's.
+        assert!(wheel_kept(Some((DEVICE, resting_at_100()))));
+        // Another device's calibration, kept from the last frame, isn't used for this one.
+        assert!(!wheel_kept(Some((Source::Hid(Some((0x256f, 0xc63a))), resting_at_100()))));
+    }
+
+    #[test]
+    fn a_calibrated_device_resting_off_zero_doesnt_drift_when_nothing_fresh_arrives() {
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), solidcraft_ui_egui::Services::default());
+        app.home.open = false;
+        app.preferences.space_mouse_calibrations.insert(DEVICE.key(), resting_at_100());
+        // A window that has run a frame with focus, as the app's always has by now.
+        let ctx = Context::default();
+        let mut frame = ctx.run_ui(egui::RawInput::default(), |_| {});
+        frame.textures_delta.clear();
+        let motion = |app: &mut SolveApp, reading: Reading, now: Instant| {
+            let mut mouse = mouse(reading, now);
+            mouse.last_frame = now - Duration::from_millis(20);
+            app.viewport.device_motion = None;
+            mouse.tick_at(app, &ctx, now);
+            app.viewport.device_motion.is_some()
+        };
+        // Connected, and nothing reported yet.
+        let shared = Mutex::new(Reading::new(Instant::now()));
+        connected(&Context::default(), &shared, DEVICE);
+        let fresh = *shared.lock().unwrap();
+        let now = Instant::now();
+        assert!(!motion(&mut app, fresh, now), "connected, nothing reported yet");
+        // The same, while another device's calibration window was open: it ends, and this one
+        // doesn't move on the first frame either.
+        app.space_mouse.calibrating = Some(("hid 256f:c63a".into(), solidcraft_space_mouse::Wizard::default()));
+        assert!(!motion(&mut app, fresh, now), "connected mid-calibration of another device");
+        assert!(app.space_mouse.calibrating.is_none());
+        // Translation reported at rest, rotation not for a while.
+        let old = now - STALE_AFTER - Duration::from_millis(1);
+        let partly = Reading { axes: Axes { translation: [100; 3], rotation: [0; 3] }, at: [now, now, now, old, old, old], ..fresh };
+        assert!(!motion(&mut app, partly, now), "translation at rest, rotation stale");
+        // Pushed, then the reports stopped.
+        let pushed = Reading { axes: Axes { translation: [450, 100, 100], rotation: [100; 3] }, at: [old; 6], ..fresh };
+        assert!(!motion(&mut app, pushed, now), "the push timed out");
+        assert!(motion(&mut app, Reading { at: [now; 6], ..pushed }, now), "a fresh push moves the view");
     }
 
     #[test]
