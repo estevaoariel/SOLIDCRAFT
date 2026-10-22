@@ -165,9 +165,11 @@ pub(crate) fn ball_rate(travel: [f32; 6]) -> [f32; 4] {
 /// A trackball kept in `ui`'s memory for one call `site` (`ui` and `site` together are its key, so
 /// the Preferences picture, the corner and the demo each roll their own once a frame), rolled by
 /// `travel` since the last frame: unlike a cap, its ball and scroll ring keep their turn from frame to frame.
-fn rolled(ui: &egui::Ui, site: &str, travel: [f32; 6]) -> ball::Ball {
+/// With `repaint` a rolling ball asks for the next frame in 16 ms; the demo sets its own pace instead
+/// (egui keeps the shortest request, so a 16 ms one would beat its slower ones, unfocused too).
+fn rolled(ui: &egui::Ui, site: &str, travel: [f32; 6], repaint: bool) -> ball::Ball {
     let (rate, seconds) = (ball_rate(travel), ui.input(|i| i.stable_dt));
-    if rate.iter().any(|&v| v != 0.0) {
+    if repaint && rate.iter().any(|&v| v != 0.0) {
         ui.ctx().request_repaint_after(std::time::Duration::from_millis(16));
     }
     ui.data_mut(|data| {
@@ -177,12 +179,15 @@ fn rolled(ui: &egui::Ui, site: &str, travel: [f32; 6]) -> ball::Ball {
     })
 }
 
+/// The call site of the demo, which paces its own repaints.
+const DEMO: &str = "demo";
+
 /// Draws a device of `kind` in `rect` moved by `travel`, its markers lit by `moving`.
 fn draw(ui: &egui::Ui, site: &str, rect: egui::Rect, kind: Kind, travel: [f32; 6], moving: [bool; 6]) {
     match kind {
         Kind::ReturnToCenter => paint(ui, rect, &Pose::new(travel), moving),
         Kind::Trackball => {
-            let shown = rolled(ui, site, travel);
+            let shown = rolled(ui, site, travel, site != DEMO);
             ball::paint(ui, rect, &shown, moving[0] || moving[1] || moving[5], moving[2]);
         }
     }
@@ -303,7 +308,7 @@ pub(crate) fn demo(ui: &mut egui::Ui, step: Step, kind: Kind) {
         *live = swing > 0.15;
     }
     let (rect, _) = ui.allocate_exact_size(SIZE, egui::Sense::hover());
-    draw(ui, "demo", rect, kind, travel, moving);
+    draw(ui, DEMO, rect, kind, travel, moving);
     let focused = ui.input(|i| i.focused);
     ui.ctx().request_repaint_after(demo_repaint_after((now - started) as f32, focused));
 }

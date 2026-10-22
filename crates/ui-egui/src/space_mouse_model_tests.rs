@@ -233,3 +233,27 @@ fn the_demo_repaints_at_20_fps_only_while_it_moves() {
     assert_eq!(demo_repaint_after(out + hold + back + rest / 2.0 - 0.1, true), Duration::from_millis(250), "resting");
     assert_eq!(demo_repaint_after(out / 2.0, false), Duration::from_millis(500), "not in use");
 }
+
+/// The demo asks for its own pace and nothing shorter, for a ball as for a cap: 50 ms while it moves with the
+/// window in use, and 500 ms when the window is not (the ball's own 16 ms request used to win both).
+#[test]
+fn the_demo_asks_for_its_own_repaint_pace_for_a_ball_and_a_cap() {
+    let step = Step { axis: 1, positive: true };
+    for kind in [Kind::Trackball, Kind::ReturnToCenter] {
+        for (focused, expected) in [(true, std::time::Duration::from_millis(50)), (false, std::time::Duration::from_millis(500))] {
+            let ctx = crate::fonts::test_context();
+            let mut delay = None;
+            for time in [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6] {
+                let mut output = ctx.run_ui(egui::RawInput { time: Some(time), focused, ..Default::default() }, |ui| demo(ui, step, kind));
+                output.textures_delta.clear();
+                delay = output.viewport_output.get(&egui::ViewportId::ROOT).map(|viewport| viewport.repaint_delay);
+            }
+            // egui takes a frame's worth off the delay it reports, so allow for that.
+            let delay = delay.expect("a repaint delay");
+            assert!(
+                delay <= expected && delay + std::time::Duration::from_millis(20) >= expected,
+                "{kind:?}, focused {focused}: {delay:?}, wanted about {expected:?}"
+            );
+        }
+    }
+}
