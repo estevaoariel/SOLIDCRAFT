@@ -634,6 +634,9 @@ impl SolveApp {
     /// stencil buffer bits and MSAA sample count). Without it the viewport renders on the CPU.
     pub fn set_wgpu(&mut self, rs: &egui_wgpu::RenderState, depth_bits: u8, stencil_bits: u8, samples: u32) {
         self.viewport.gpu = Some(gpu::install(rs, depth_bits, stencil_bits, samples, !self.cpu_meshing));
+        // The device's own limits (what it was created with), not the adapter's: uploads are split
+        // at the device's buffer size.
+        self.render_workspace.geometry_budget = render_workspace::geometry_budget(rs.device.limits().max_buffer_size, cfg!(target_arch = "wasm32"));
         render_workspace::invalidate_scene(self);
         self.render_workspace.host = match render_workspace::host_executor(
             rs.device.limits().max_texture_dimension_2d,
