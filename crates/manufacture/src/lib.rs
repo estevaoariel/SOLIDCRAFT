@@ -461,6 +461,9 @@ pub enum Stock {
         bottom_offset: f64,
         /// Optional round-up increment (0 = off).
         round_up: f64,
+        /// When true, sit the relative box on the model origin plane.
+        #[serde(default)]
+        ground_at_model_origin: bool,
     },
     /// Fixed-size cylinder (diameter × length mm).
     Cylinder { diameter: f64, height: f64 },
@@ -470,6 +473,8 @@ pub enum Stock {
     Tube { outer_diameter: f64, inner_diameter: f64, height: f64 },
     /// Inherit stock from the preceding setup (rest machining).
     FromPreceding { continue_rest: bool },
+    /// Stock is an existing solid body in the design (named body).
+    FromSolid { body: String },
 }
 
 impl Default for Stock {
@@ -487,6 +492,7 @@ impl Stock {
             Stock::RelativeCylinder { .. } => "Relative size cylinder",
             Stock::Tube { .. } => "Fixed size tube",
             Stock::FromPreceding { .. } => "From preceding setup",
+            Stock::FromSolid { .. } => "From solid",
         }
     }
 
@@ -497,7 +503,9 @@ impl Stock {
             Stock::RelativeBox { side_offset, top_offset, bottom_offset, .. } => {
                 Some((100.0 + 2.0 * side_offset, 100.0 + 2.0 * side_offset, 25.0 + top_offset + bottom_offset))
             }
-            Stock::Cylinder { .. } | Stock::RelativeCylinder { .. } | Stock::Tube { .. } | Stock::FromPreceding { .. } => None,
+            Stock::Cylinder { .. } | Stock::RelativeCylinder { .. } | Stock::Tube { .. } | Stock::FromPreceding { .. } | Stock::FromSolid { .. } => {
+                None
+            }
         }
     }
 }
@@ -544,6 +552,11 @@ fn validate_stock(s: &Stock, path: &str) -> Result<()> {
             }
         }
         Stock::FromPreceding { .. } => {}
+        Stock::FromSolid { body } => {
+            if body.trim().is_empty() || body.len() > MAX_NAME_BYTES {
+                return Err(invalid(format!("{path}: from-solid stock needs a valid body name")));
+            }
+        }
     }
     Ok(())
 }
@@ -4503,6 +4516,9 @@ pub struct MfgSetup {
     /// Bodies that define this setup's work area. Empty is not a valid "machine everything".
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub model_bodies: Vec<String>,
+    /// Clamp / vise / fixture bodies for this setup. Distinct from [`Self::model_bodies`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fixture_bodies: Vec<String>,
     /// Setup → Post Process tab.
     #[serde(default)]
     pub post_opts: SetupPostOpts,
@@ -4524,6 +4540,7 @@ impl Default for MfgSetup {
             flip_z: false,
             flip_x: false,
             model_bodies: Vec::new(),
+            fixture_bodies: Vec::new(),
             post_opts: SetupPostOpts::default(),
         }
     }
@@ -4544,6 +4561,14 @@ fn validate_setup(setup: &MfgSetup, path: &str) -> Result<()> {
     for (i, body) in setup.model_bodies.iter().enumerate() {
         if body.trim().is_empty() || body.len() > MAX_NAME_BYTES {
             return Err(invalid(format!("{path}.model_bodies[{i}]: invalid body name")));
+        }
+    }
+    if setup.fixture_bodies.len() > 256 {
+        return Err(invalid(format!("{path}.fixture_bodies: too many bodies")));
+    }
+    for (i, body) in setup.fixture_bodies.iter().enumerate() {
+        if body.trim().is_empty() || body.len() > MAX_NAME_BYTES {
+            return Err(invalid(format!("{path}.fixture_bodies[{i}]: invalid body name")));
         }
     }
 
@@ -5961,6 +5986,23 @@ mod tests {
         assert!(validate_stock(&Stock::Cylinder { diameter: 10.0, height: -1.0 }, "s").is_err());
         assert!(validate_stock(&Stock::Box { width: f64::NAN, depth: 10.0, height: 10.0 }, "s").is_err());
         validate_stock(&Stock::Cylinder { diameter: 50.0, height: 100.0 }, "s").unwrap();
+    }
+
+    #[test]
+    fn from_solid_stock_requires_a_body_name() {
+        assert!(validate_stock(&Stock::FromSolid { body: String::new() }, "s").is_err());
+        validate_stock(&Stock::FromSolid { body: "StockBody".into() }, "s").unwrap();
+    }
+
+    #[test]
+    fn fixture_bodies_are_validated_separately_from_model_bodies() {
+        let mut setup = MfgSetup::default();
+        setup.stock = Stock::FromSolid { body: "StockBody".into() };
+        setup.model_bodies = vec!["Part".into()];
+        setup.fixture_bodies = vec!["Vise".into()];
+        validate_setup(&setup, "setups.S1").unwrap();
+        setup.fixture_bodies = vec!["  ".into()];
+        assert!(validate_setup(&setup, "setups.S1").is_err());
     }
 
     #[test]
