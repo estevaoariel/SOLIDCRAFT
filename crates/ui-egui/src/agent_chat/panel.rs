@@ -887,6 +887,7 @@ fn desktop_body(app: &mut SolveApp, ui: &mut egui::Ui) {
 pub(super) fn login_chip(ui: &mut egui::Ui, login: &str) {
     let t = Tokens::get();
     let (text, color) = match login {
+        "login_found" => (tr("ui.agent_chat_login_found"), t.text_dim),
         "signed_in" => (tr("ui.agent_chat_signed_in"), t.accent),
         "key" => (tr("ui.agent_chat_key_in_env"), t.accent),
         "signed_out" => (tr("ui.agent_chat_not_signed_in"), t.warning),
