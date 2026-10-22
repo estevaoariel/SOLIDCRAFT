@@ -11,6 +11,7 @@ pub mod capture;
 pub mod cmd;
 pub mod control_auth;
 pub mod crash;
+pub mod display_state;
 pub mod frames;
 pub mod fuzz;
 pub mod licences;
@@ -1166,6 +1167,8 @@ mod delete_face_tests;
 mod derived_units_tests;
 #[cfg(test)]
 mod display_mesh_tests;
+#[cfg(test)]
+mod display_state_tests;
 #[cfg(test)]
 mod exact_tool_tests;
 #[cfg(test)]
