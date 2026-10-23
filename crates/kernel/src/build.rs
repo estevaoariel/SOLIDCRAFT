@@ -1,13 +1,14 @@
 //! Building bodies: extrude and revolve planar regions, primitives.
 
 use mt::builder;
-use solidcraft_geom::{Grid, Loop2, Plane, Region2, Seg2, Vec2, Vec3};
+use solidcraft_geom::{Grid, Loop2, Plane, Region2, Ring, Seg2, Vec2, Vec3};
 use truck_modeling as mt;
 
 use crate::body::{Body, Solid, from_p3, p3, v3};
 use crate::history::FaceProv;
 use crate::numbered::{self, NumberedLoop, NumberedRegion};
 use crate::record::{self, Side};
+use crate::sweep_path::RailFit;
 use crate::{KernelError, Result, guard};
 
 const MAX_SEGS: usize = 20_000;
@@ -1583,8 +1584,7 @@ fn revolve_on_axis(plane: &Plane, numbered: &NumberedLoop, axis_origin: Vec2, d:
                         }
                     };
                     // The loop's turning (Newell) against the surface normal halfway round.
-                    let mut nw = Vec3::ZERO;
-                    let poly: Vec<Vec3> = wire
+                    let poly: Ring<Vec3> = wire
                         .edge_iter()
                         .flat_map(|ed| {
                             let c = ed.oriented_curve();
@@ -1592,11 +1592,7 @@ fn revolve_on_axis(plane: &Plane, numbered: &NumberedLoop, axis_origin: Vec2, d:
                             (0..8).map(move |j| from_p3(c.subs(t0 + (t1 - t0) * j as f64 / 8.0))).collect::<Vec<_>>()
                         })
                         .collect();
-                    for (j, p) in poly.iter().enumerate() {
-                        if let Some(q) = poly.get((j + 1) % poly.len()) {
-                            nw += p.cross(*q);
-                        }
-                    }
+                    let nw = poly.area_vector();
                     let probe = turn(&half, plane.to_world(sg.mid()));
                     let sn = surface.search_nearest_parameter(p3(probe), None, 100).map(|(u, v)| surface.normal(u, v));
                     if sn.is_some_and(|m| nw.dot(Vec3::new(m.x, m.y, m.z)) < 0.0) {
@@ -1797,21 +1793,34 @@ pub(crate) fn close_sweep(sides: Vec<Side>) -> Result<Body> {
 /// Ruled loft through two or more planar sections (outer loops only). The sections and the
 /// same sections in reverse order give the same body.
 pub fn loft(sections: &[(Plane, Loop2)]) -> Result<Body> {
+    loft_with_rails(sections, &[], RailFit::Scale)
+}
+
+/// [`loft`] following one or two guide rails (polylines from the first section to the last,
+/// through every section's curve; see [`crate::loft_rails`]), `fit` saying how they reshape the
+/// sections between. Without rails, the plain loft.
+pub fn loft_with_rails(sections: &[(Plane, Loop2)], rails: &[Vec<Vec3>], fit: RailFit) -> Result<Body> {
     let (wires, edge_sources, reversed) = loft_wires(sections)?;
+    let (Some(first), Some(last)) = (wires.first(), wires.last()) else { return Err(KernelError::Failed("loft: sections".into())) };
+    let mut planes: Vec<Plane> = sections.iter().map(|(p, _)| *p).collect();
+    if reversed {
+        planes.reverse();
+    }
+    let all = guard("loft", || crate::loft_rails::railed_wires(&planes, &wires, true, rails, fit))?;
     // The wires run from the first section given, or (turned round) the last.
-    // Three sections or more: one smooth surface through them all for each segment.
-    if wires.len() >= 3
-        && let Ok(b) = guard("loft", || {
-            let faces = smooth_loft_faces(&wires, &edge_sources, true)?;
-            let (Some(w0), Some(w1)) = (wires.first(), wires.last()) else { return Err(KernelError::Failed("smooth loft: sections".into())) };
-            cap_and_close(faces, std::slice::from_ref(w0), std::slice::from_ref(w1), reversed)
-        })
-    {
-        return Ok(b);
+    // Three wires or more: one smooth surface through them all for each segment. A plain loft
+    // falls back to ruled faces where that fails; a railed one has to follow its rails.
+    if all.len() >= 3 {
+        let smooth = guard("loft", || {
+            let faces = smooth_loft_faces(&all, &edge_sources, true)?;
+            cap_and_close(faces, std::slice::from_ref(first), std::slice::from_ref(last), reversed)
+        });
+        if smooth.is_ok() || !rails.is_empty() {
+            return smooth;
+        }
     }
     guard("loft", || {
         let sides = ruled_loft_faces(&wires, &edge_sources)?;
-        let (Some(first), Some(last)) = (wires.first(), wires.last()) else { return Err(KernelError::Failed("loft".into())) };
         cap_and_close(sides, std::slice::from_ref(first), std::slice::from_ref(last), reversed)
     })
 }
@@ -1958,6 +1967,18 @@ fn loft_reversed(sections: &[(Plane, Loop2)]) -> Result<bool> {
     // loft touches the body along an edge: an internal panic, or "shell not oriented and
     // closed").
     let centre = |(p, l): &(Plane, Loop2)| p.to_world(l.centroid());
+    // Two consecutive sections in one plane span no volume between them: a loft through them
+    // used to build a flat, zero-volume body and report success.
+    for (i, w) in sections.windows(2).enumerate() {
+        let (a, b) = (&w[0], &w[1]);
+        let n = a.0.normal();
+        let size = (centre(a) - a.0.origin).len().max((centre(b) - b.0.origin).len()).max(1.0);
+        let parallel = n.cross(b.0.normal()).len() < 1e-9;
+        let in_plane = (centre(b) - centre(a)).dot(n).abs() < 1e-9 * size;
+        if parallel && in_plane {
+            return Err(KernelError::Invalid(format!("loft sections {} and {} lie in the same plane (no volume between them)", i + 1, i + 2)));
+        }
+    }
     let (Some(first), Some(last)) = (sections.first(), sections.last()) else { return Err(KernelError::Invalid("no sections".into())) };
     let step = centre(last) - centre(first);
     let big = [step.x, step.y, step.z].into_iter().max_by(|a, b| a.abs().total_cmp(&b.abs())).unwrap_or(0.0);
@@ -1965,6 +1986,19 @@ fn loft_reversed(sections: &[(Plane, Loop2)]) -> Result<bool> {
 }
 
 fn loft_numbered_wires(sections: &[(Plane, NumberedLoop)], reversed: bool) -> Result<(Vec<mt::Wire>, Vec<Vec<Vec<usize>>>)> {
+    let mut wires: Vec<mt::Wire> = Vec::new();
+    // Per section, the profile segments under each of its wire's edges.
+    let mut edge_sources: Vec<Vec<Vec<usize>>> = Vec::new();
+    for (p, r) in loft_section_loops(sections, reversed)? {
+        wires.push(uniform_wire(&p, &r.lp)?);
+        edge_sources.push(r.from);
+    }
+    Ok((wires, edge_sources))
+}
+
+/// The sections of a loft as the wires are built from them: in loft order, oriented alike,
+/// re-split to the same number of segments and started where they line up best.
+pub(crate) fn loft_section_loops(sections: &[(Plane, NumberedLoop)], reversed: bool) -> Result<Vec<(Plane, NumberedLoop)>> {
     let n = sections.iter().map(|(_, l)| l.lp.segs.len()).max().unwrap_or(0);
     if n == 0 || n > MAX_SEGS {
         return Err(KernelError::Invalid("empty section".into()));
@@ -1979,28 +2013,51 @@ fn loft_numbered_wires(sections: &[(Plane, NumberedLoop)], reversed: bool) -> Re
     // with the most segments.
     let n0 = ordered.first().map(|(p, _)| p.normal()).unwrap_or(Vec3::Z);
     let parallel = ordered.iter().all(|(p, _)| p.normal().dot(n0).abs() > 1.0 - 1e-9);
+    // Whether a section faces the first one's way is followed neighbour to neighbour, not by its
+    // normal against the first's: planes turning about an axis pass 90 degrees and would be
+    // flipped, folding the loft (#2847).
+    let mut facing = true;
+    let mut before = n0;
     let oriented: Vec<(Plane, NumberedLoop)> = ordered
         .iter()
         .map(|(p, l)| {
-            let ccw = p.normal().dot(n0) >= 0.0;
-            (*p, l.oriented(!ccw))
+            let n = p.normal();
+            if n.dot(before) < 0.0 {
+                facing = !facing;
+            }
+            before = n;
+            (*p, l.oriented(!facing))
         })
         .collect();
     let lead = oriented.iter().max_by_key(|(_, l)| l.lp.segs.len()).ok_or_else(|| KernelError::Invalid("no sections".into()))?;
     let lead_c = lead.0.to_world(lead.1.lp.centroid());
     let lead_dirs: Vec<Vec3> = lead.1.lp.segs.iter().map(|s| lead.0.to_world(s.start()) - lead_c).collect();
-    let mut wires: Vec<mt::Wire> = Vec::new();
-    // Per section, the profile segments under each of its wire's edges.
-    let mut edge_sources: Vec<Vec<Vec<usize>>> = Vec::new();
+    // The share of the lead's perimeter before each of its vertices: where a circle section
+    // breaks when the lead's vertex directions do not go round in order.
+    let lead_len: f64 = lead.1.lp.segs.iter().map(Seg2::length).sum();
+    let fractions: Vec<f64> = lead
+        .1
+        .lp
+        .segs
+        .iter()
+        .scan(0.0, |before, s| {
+            let f = *before / lead_len;
+            *before += s.length();
+            Some(f)
+        })
+        .collect();
+    let mut out: Vec<(Plane, NumberedLoop)> = Vec::new();
     for (p, l) in &oriented {
         let c = l.lp.centroid();
         // Break angles: the lead section's vertex directions seen in this plane.
         let angles: Vec<f64> = lead_dirs.iter().map(|d| Vec2::new(d.dot(p.x), d.dot(p.y)).angle()).collect();
-        let mut r = l.resample(n, &angles);
         // Circle resampling creates increasing local angles. An antiparallel sketch
-        // plane must run clockwise locally to keep the same winding in world space.
-        // Curving a run through a right angle does not reverse a section's winding.
-        if parallel && p.normal().dot(n0) < 0.0 {
+        // plane must run clockwise locally to keep the same winding in world space (the lead's
+        // directions go round clockwise there). Curving a run through a right angle does not
+        // reverse a section's winding.
+        let flip = parallel && p.normal().dot(n0) < 0.0;
+        let mut r = l.resample(n, &angles, &fractions, flip);
+        if flip {
             r = r.oriented(true);
         }
         // Start where every vertex lines up best with the lead's vertex of the same number (the
@@ -2015,10 +2072,9 @@ fn loft_numbered_wires(sections: &[(Plane, NumberedLoop)], reversed: bool) -> Re
         if let Some(k) = (0..m).min_by(|a, b| fit(*b).total_cmp(&fit(*a))) {
             r.rotate_left(k);
         }
-        wires.push(uniform_wire(p, &r.lp)?);
-        edge_sources.push(r.from);
+        out.push((*p, r));
     }
-    Ok((wires, edge_sources))
+    Ok(out)
 }
 
 /// Ruled faces between each two neighbouring section wires; each comes from the section edges
@@ -2039,7 +2095,7 @@ pub(crate) fn ruled_loft_faces(wires: &[mt::Wire], edge_sources: &[Vec<Vec<usize
 /// Points across the sections (one per section, in order) as a smooth B-spline through them at the
 /// parameters `u` (rising from 0 to 1, one per section): cubic through four or more, quadratic
 /// through three.
-fn across(pts: &[Vec3], u: &[f64]) -> Option<mt::BSplineCurve<mt::Point3>> {
+pub(crate) fn across(pts: &[Vec3], u: &[f64]) -> Option<mt::BSplineCurve<mt::Point3>> {
     match pts {
         [a, b, c] => {
             // The quadratic Bezier through `b` at t = u[1].
@@ -2059,7 +2115,7 @@ fn across(pts: &[Vec3], u: &[f64]) -> Option<mt::BSplineCurve<mt::Point3>> {
 /// them. At a uniform parameter a section close to its neighbour makes the surface overshoot
 /// between the others (by several times the section's size when the spacing differs tenfold).
 /// Evenly spaced sections give the uniform parameters.
-fn section_parameters(edges: &[Vec<mt::Edge>]) -> Vec<f64> {
+pub(crate) fn section_parameters(edges: &[Vec<mt::Edge>]) -> Vec<f64> {
     let m = edges.len();
     let uniform = || (0..m).map(|i| i as f64 / (m.max(2) - 1) as f64).collect::<Vec<f64>>();
     let corners: Vec<Vec<Vec3>> = edges.iter().map(|es| es.iter().map(|e| from_p3(e.front().point())).collect()).collect();

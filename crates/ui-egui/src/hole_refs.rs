@@ -189,9 +189,7 @@ pub(crate) fn input_rows(d: &mut Dialog, ui: &mut egui::Ui, s: &Session) -> bool
         if let Kind::Hole { opts, .. } = &mut d.kind
             && let (Some(label), Some(value)) = (DISTANCES.get(k), opts.refs.distance.get_mut(k))
         {
-            crate::dialogs::row_label(ui, label);
-            enter |= crate::dialogs::field(ui, value);
-            ui.end_row();
+            enter |= crate::ui_kit::expr_row(ui, label, value);
         }
     }
     sync(s, d);
@@ -226,7 +224,7 @@ pub(crate) fn restore(s: &Session, d: &mut Dialog, references: &[HoleReference],
         // Where the edge is now, else where it was picked.
         let sel = found.as_ref().zip(mesh.as_ref()).and_then(|(f, m)| {
             let index = *f.edges.get(k)?;
-            let point = crate::dialogs::polyline_mid(m.edges.get(index)?);
+            let point = crate::selection::polyline_mid(m.edges.get(index)?);
             Some(Sel::Edge { body: f.body.clone(), index, point })
         });
         let sel = sel.or_else(|| nearest_edge(s, at, r.edge.0));

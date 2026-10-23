@@ -12,7 +12,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use solidcraft_geom::Vec3;
+use solidcraft_geom::{Aabb3, Vec3};
 use truck_modeling::{self as mt, builder};
 
 use crate::body::{Body, Solid, from_p3, p3};
@@ -117,19 +117,9 @@ pub fn delete_faces(body: &Body, faces: &[usize]) -> Result<Body> {
         }
     }
     // Corners across the gap: three neighbour planes meeting near the deleted faces.
-    let (mut lo, mut hi) =
-        (Vec3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY), Vec3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY));
-    for &f in &del {
-        for v in all.get(f).into_iter().flat_map(|x| x.vertex_iter()) {
-            let p = from_p3(v.point());
-            lo = lo.min(p);
-            hi = hi.max(p);
-        }
-    }
-    let reach = (hi - lo).len().max(size * 1e-3);
-    let near = |p: Vec3| {
-        p.x >= lo.x - reach && p.y >= lo.y - reach && p.z >= lo.z - reach && p.x <= hi.x + reach && p.y <= hi.y + reach && p.z <= hi.z + reach
-    };
+    let gap: Aabb3 = del.iter().flat_map(|f| all.get(*f).into_iter().flat_map(|x| x.vertex_iter())).map(|v| from_p3(v.point())).collect();
+    let near_gap = gap.inflated(gap.diagonal().max(size * 1e-3));
+    let near = |p: Vec3| near_gap.contains(p);
     let on = |p: Vec3, f: usize| planes.get(&f).is_some_and(|(n, d)| (n.dot(p) - d).abs() <= size * 1e-6);
     let nb: Vec<usize> = neighbours.iter().copied().collect();
     let mut corners: Vec<Vec3> = Vec::new();

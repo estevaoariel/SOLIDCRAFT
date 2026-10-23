@@ -24,7 +24,7 @@
 
 use std::collections::HashMap;
 
-use solidcraft_geom::{Aabb3, UnitVec3, Vec3};
+use solidcraft_geom::{Aabb3, Ring, UnitVec3, Vec3};
 use truck_modeling::{self as mt, builder};
 
 use crate::body::shell_groups::boxes_separate;
@@ -999,6 +999,44 @@ pub(crate) fn faces_touch(a: &Body, b: &Body) -> bool {
     })
 }
 
+/// Does `r` hold a skin of no thickness: a planar face lying on another of its planar faces that
+/// faces the other way, with no material behind part of it? A cut whose tool ends exactly on a
+/// face of the target can come out with the target's face whole over the hole and the tool's end
+/// face under it, closing the hole. No volume shows that, and points sampled off the surface see
+/// the hole either way. Faces back to back in one plane with material behind both (the top of a
+/// step beside the underside of an overhang) are not this. `mesh` is `r`'s mesh; what counts is
+/// an area of the faces with nothing behind it, so that the few triangles along an edge where the
+/// mesh of a curved neighbour cuts the corner don't.
+pub(crate) fn has_skin(r: &Body, mesh: &solidcraft_geom::Mesh) -> bool {
+    let size = r.size();
+    let tol = (size * 1e-7).max(1e-9) * 10.0;
+    let p = planes(r);
+    if p.len() > MAX_SKIN_FACES {
+        return false;
+    }
+    let paired: HashMap<usize, Vec3> = p
+        .iter()
+        .filter(|(i, x)| p.iter().any(|(j, y)| i != j && x.n.dot(y.n) < -1.0 + 1e-9 && (x.d + y.d).abs() < tol))
+        .map(|(i, x)| (*i, x.n))
+        .collect();
+    if paired.is_empty() {
+        return false;
+    }
+    let inside = mesh.inside_index();
+    let depth = (size * 1e-4).max(1e-6);
+    let mut open = 0.0;
+    for (t, face) in mesh.triangles.iter().zip(&mesh.tri_face).take(100_000) {
+        let (Some(n), Some([a, b, c])) = (paired.get(&(*face as usize)), mesh.tri(t)) else { continue };
+        if !inside.contains((a + b + c) / 3.0 - *n * depth) {
+            open += (b - a).cross(c - a).len() * 0.5;
+        }
+    }
+    open > (size * size * 1e-6).max(1e-9)
+}
+
+/// The most planar faces [`has_skin`] pairs up (every pair is compared).
+const MAX_SKIN_FACES: usize = 2000;
+
 /// The triangles of `tool`'s faces in the plane (`m`, `d`), `m` their outward normal, each with
 /// how far its face reaches past it sideways. A face bounded by straight edges is its
 /// triangles; they are drawn in by `skin`, so that faces of the other body lying against the
@@ -1098,7 +1136,7 @@ fn faces_box(body: &Body, faces: &[usize], gap: f64) -> Option<Aabb3> {
         bb.add(b.min);
         bb.add(b.max);
     }
-    (!bb.is_empty()).then(|| Aabb3 { min: bb.min - Vec3::new(gap, gap, gap), max: bb.max + Vec3::new(gap, gap, gap) })
+    (!bb.is_empty()).then(|| bb.inflated(gap))
 }
 
 /// `body` (with its history `h` over its operand) with its faces in the plane (n, d) split
@@ -1396,7 +1434,7 @@ fn inset_into(outer: &Body, inner: &Body, outer_operand: usize) -> Option<Result
     let tol = (size * 1e-7).max(1e-9) * 10.0;
     // Clear of the outer face's edges by more than the samples' chord error.
     let clear = (size * 2e-3).max(1e-6);
-    let sample = |w: &mt::Wire| -> Option<Vec<Vec3>> {
+    let sample = |w: &mt::Wire| -> Option<Ring<Vec3>> {
         if w.len() > 1000 {
             return None;
         }
@@ -1406,7 +1444,7 @@ fn inset_into(outer: &Body, inner: &Body, outer_operand: usize) -> Option<Result
             let (t0, t1) = c.range_tuple();
             pts.extend((0..SAMPLES).map(|k| from_p3(c.subs(t0 + (t1 - t0) * k as f64 / SAMPLES as f64))));
         }
-        (!pts.is_empty() && pts.iter().all(|p| p.is_finite())).then_some(pts)
+        (!pts.is_empty() && pts.iter().all(|p| p.is_finite())).then(|| Ring::new(pts))
     };
     let fo: Vec<&mt::Face> = outer.solid.face_iter().collect();
     let fi: Vec<&mt::Face> = inner.solid.face_iter().collect();
@@ -1423,7 +1461,7 @@ fn inset_into(outer: &Body, inner: &Body, outer_operand: usize) -> Option<Result
             let (Some(inner_pts), Some(outer_loops)) = (sample(&outline), face_o.boundaries().iter().map(sample).collect::<Option<Vec<_>>>()) else {
                 continue;
             };
-            let outer_count: usize = outer_loops.iter().map(Vec::len).sum();
+            let outer_count: usize = outer_loops.iter().map(|l| l.len()).sum();
             if inner_pts.len().saturating_mul(outer_count) > MAX_WORK {
                 continue;
             }
@@ -1436,8 +1474,7 @@ fn inset_into(outer: &Body, inner: &Body, outer_operand: usize) -> Option<Result
             let outer_polys: Vec<_> = outer_loops.iter().map(|l| flat(l)).collect();
             let inner_poly = flat(&inner_pts);
             let in_outer = |p: Vec3| outer_polys.iter().filter(|l| l.contains(flat_point(p))).count() % 2 == 1;
-            let near_outer =
-                |p: Vec3| outer_loops.iter().any(|l| l.iter().zip(l.iter().cycle().skip(1)).any(|(s, t)| p.dist_to_segment(*s, *t) < clear));
+            let near_outer = |p: Vec3| outer_loops.iter().any(|l| l.edges().any(|(s, t)| p.dist_to_segment(*s, *t) < clear));
             let fits = inner_pts.iter().all(|p| in_outer(*p) && !near_outer(*p))
                 && outer_loops.iter().flatten().all(|p| !inner_poly.contains(flat_point(*p)));
             if !fits {

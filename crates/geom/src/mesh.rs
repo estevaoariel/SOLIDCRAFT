@@ -47,6 +47,48 @@ impl Aabb3 {
     pub fn diagonal(&self) -> f64 {
         self.size().len()
     }
+    /// The box grown by `by` on every side; an empty box stays empty.
+    pub fn inflated(&self, by: f64) -> Aabb3 {
+        if self.is_empty() {
+            return *self;
+        }
+        let d = Vec3::new(by, by, by);
+        Aabb3 { min: self.min - d, max: self.max + d }
+    }
+    /// Whether `p` lies in the box, its sides included (never in an empty box, never for NaN).
+    pub fn contains(&self, p: Vec3) -> bool {
+        p.x >= self.min.x && p.y >= self.min.y && p.z >= self.min.z && p.x <= self.max.x && p.y <= self.max.y && p.z <= self.max.z
+    }
+    /// The box both hold: empty when they do not meet.
+    pub fn intersection(&self, o: &Aabb3) -> Aabb3 {
+        Aabb3 { min: self.min.max(o.min), max: self.max.min(o.max) }
+    }
+    /// Whether the two boxes share a point (never when either is empty).
+    pub fn meets(&self, o: &Aabb3) -> bool {
+        self.min.x <= o.max.x
+            && o.min.x <= self.max.x
+            && self.min.y <= o.max.y
+            && o.min.y <= self.max.y
+            && self.min.z <= o.max.z
+            && o.min.z <= self.max.z
+    }
+}
+
+/// The box around the finite points (non-finite ones are skipped, as [`Aabb3::add`] does).
+impl FromIterator<Vec3> for Aabb3 {
+    fn from_iter<I: IntoIterator<Item = Vec3>>(points: I) -> Aabb3 {
+        let mut b = Aabb3::EMPTY;
+        b.extend(points);
+        b
+    }
+}
+
+impl Extend<Vec3> for Aabb3 {
+    fn extend<I: IntoIterator<Item = Vec3>>(&mut self, points: I) {
+        for p in points {
+            self.add(p);
+        }
+    }
 }
 
 /// An indexed triangle mesh with per-vertex normals, a face id per triangle (the B-rep face it
@@ -74,10 +116,6 @@ pub struct Mesh {
     /// Per edge: the B-rep faces it bounds (one or two).
     #[serde(default)]
     pub edge_faces: Vec<Vec<u32>>,
-}
-
-fn boxes_meet(a: &Aabb3, b: &Aabb3) -> bool {
-    a.min.x <= b.max.x && b.min.x <= a.max.x && a.min.y <= b.max.y && b.min.y <= a.max.y && a.min.z <= b.max.z && b.min.z <= a.max.z
 }
 
 /// A triangle with its bounding box, as [`find_close_pair`] takes them.
@@ -410,6 +448,34 @@ impl Mesh {
         rim.sort_unstable();
         rim
     }
+    /// Whether the two faces at edge `i` meet tangentially there (a smooth seam, with no corner).
+    fn smooth_seam(&self, i: usize, cos: f64) -> bool {
+        if self.sharp_edges.get(i).copied().unwrap_or(false) {
+            return false;
+        }
+        if self.smooth_edges.get(i).copied().unwrap_or(false) {
+            return true;
+        }
+        let Some([a, b]) = self.edge_faces.get(i).map(Vec::as_slice) else { return false };
+        if a == b {
+            return false;
+        }
+        let Some(p) = self.edges.get(i) else { return false };
+        let (Some(&first), Some(&mid)) = (p.first(), p.get(p.len() / 2)) else { return false };
+        let normal_near = |f: u32, q: Vec3| -> Option<Vec3> {
+            self.triangles
+                .iter()
+                .zip(&self.tri_face)
+                .filter(|(_, tf)| **tf == f)
+                .flat_map(|(t, _)| t.iter().copied())
+                .filter_map(|v| Some((self.positions.get(v as usize)?.dist(q), *self.normals.get(v as usize)?)))
+                .min_by(|x, y| x.0.total_cmp(&y.0))
+                .and_then(|(_, n)| n.normalized())
+        };
+        let both = [first, mid];
+        let sample = if p.len() == 2 { &both[..] } else { std::slice::from_ref(&mid) };
+        sample.iter().all(|&q| matches!((normal_near(*a, q), normal_near(*b, q)), (Some(na), Some(nb)) if na.dot(nb) > cos))
+    }
     /// The edges reached from `e` through vertices where the next edge continues smoothly
     /// (angle between the end tangents below `max_angle`), including `e` itself.
     pub fn tangent_chain(&self, e: usize, max_angle: f64) -> Vec<usize> {
@@ -435,11 +501,45 @@ impl Mesh {
         let tol = size * 1e-7;
         let cos = max_angle.cos();
         let mut chain = vec![e];
+        if self.smooth_seam(e, cos) {
+            return chain;
+        }
+        // The edges by the grid cell of each end, so each step looks only at the edges that end
+        // near it (#3745: scanning every edge for every edge of a long helical chain held a hover
+        // for seconds). Cells are twice the join tolerance: two ends within it share a cell or
+        // touch neighbouring ones.
+        let cell = tol * 2.0;
+        let key = |p: Vec3| [(p.x / cell).floor() as i64, (p.y / cell).floor() as i64, (p.z / cell).floor() as i64];
+        let mut at_end: std::collections::HashMap<[i64; 3], Vec<usize>> = std::collections::HashMap::new();
+        for (i, p) in self.edges.iter().enumerate() {
+            for q in [p.first(), p.last()].into_iter().flatten().filter(|q| q.is_finite()) {
+                let slot = at_end.entry(key(*q)).or_default();
+                if slot.last() != Some(&i) {
+                    slot.push(i);
+                }
+            }
+        }
+        let mut in_chain: std::collections::HashSet<usize> = chain.iter().copied().collect();
         let mut todo = vec![e];
         while let Some(cur) = todo.pop() {
             let Some(ce) = ends(cur) else { continue };
-            for (i, _) in self.edges.iter().enumerate() {
-                if chain.contains(&i) || !self.edge_pickable(i) {
+            // The edges with an end near one of `cur`'s, in edge order (as a scan of every edge
+            // meets them).
+            let mut near: Vec<usize> = Vec::new();
+            for (p, _) in &ce {
+                let [x, y, z] = key(*p);
+                for dx in -1..=1 {
+                    for dy in -1..=1 {
+                        for dz in -1..=1 {
+                            near.extend(at_end.get(&[x + dx, y + dy, z + dz]).into_iter().flatten());
+                        }
+                    }
+                }
+            }
+            near.sort_unstable();
+            near.dedup();
+            for i in near {
+                if in_chain.contains(&i) || !self.edge_pickable(i) || self.smooth_seam(i, cos) {
                     continue;
                 }
                 let Some(ne) = ends(i) else { continue };
@@ -447,6 +547,7 @@ impl Mesh {
                 let smooth = ce.iter().any(|(p, d)| ne.iter().any(|(q, dn)| p.dist(*q) < tol && d.dot(-*dn) > cos));
                 if smooth && chain.len() < 10_000 {
                     chain.push(i);
+                    in_chain.insert(i);
                     todo.push(i);
                 }
             }
@@ -559,7 +660,7 @@ impl Mesh {
                     let t = m.tri(t)?;
                     let mut bx = Aabb3::EMPTY;
                     t.iter().for_each(|p| bx.add(*p));
-                    (!bx.is_empty() && boxes_meet(&bx, &region)).then(|| ((t, bx), m.tri_face.get(i).copied().unwrap_or(u32::MAX)))
+                    (!bx.is_empty() && bx.meets(&region)).then(|| ((t, bx), m.tri_face.get(i).copied().unwrap_or(u32::MAX)))
                 })
                 .unzip()
         };

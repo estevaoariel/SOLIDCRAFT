@@ -17,7 +17,7 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use serde::{Deserialize, Serialize};
-use solidcraft_geom::Vec3;
+use solidcraft_geom::{Aabb3, Vec3};
 
 use solidcraft_sketch::linalg;
 
@@ -1209,15 +1209,14 @@ fn limit_bounds(tree: &Tree, vars: &[(u64, usize)]) -> Vec<(f64, f64)> {
 /// The loops' size: the diagonal of the box around their joints' A frames, 1 mm to 1 km. Points
 /// that far apart weigh turns like moves.
 fn loop_scale(tree: &Tree, around: &BTreeSet<u64>, vals: &Values) -> f64 {
-    let (mut lo, mut hi) = (Vec3::new(f64::MAX, f64::MAX, f64::MAX), Vec3::new(f64::MIN, f64::MIN, f64::MIN));
-    for id in around {
-        let (Some(j), Some((fa, _))) = (tree.joints.get(id), tree.frames.get(id)) else { continue };
-        let Some(t) = tree.world(j.a.occurrence, vals) else { continue };
-        let p = apply_point(&mat_mul(&t, fa), Vec3::ZERO);
-        lo = Vec3::new(lo.x.min(p.x), lo.y.min(p.y), lo.z.min(p.z));
-        hi = Vec3::new(hi.x.max(p.x), hi.y.max(p.y), hi.z.max(p.z));
-    }
-    if lo.x <= hi.x { (hi - lo).len().clamp(1.0, 1e6) } else { 1.0 }
+    let joints: Aabb3 = around
+        .iter()
+        .filter_map(|id| {
+            let (j, (fa, _)) = (tree.joints.get(id)?, tree.frames.get(id)?);
+            Some(apply_point(&mat_mul(&tree.world(j.a.occurrence, vals)?, fa), Vec3::ZERO))
+        })
+        .collect();
+    if joints.is_empty() { 1.0 } else { joints.diagonal().clamp(1.0, 1e6) }
 }
 
 /// How far each closing joint is from meeting: three points of B's joint frame, `scale` apart,
@@ -1234,6 +1233,29 @@ fn closure_gaps(tree: &Tree, closing: &[u64], vals: &Values, scale: f64, out: &m
         }
     }
     Some(())
+}
+
+/// How far a closing joint may be off before it is a conflict: its frames apart by more than
+/// this many millimetres or turned by more than this many radians.
+const CONFLICT_MM: f64 = 1e-6;
+const CONFLICT_RAD: f64 = 1e-8;
+
+/// The largest gap (`closure_gaps`, for loops of size `scale`) that still passes the conflict
+/// check, with room to spare.
+fn loose_gap(scale: f64) -> f64 {
+    CONFLICT_MM.min(CONFLICT_RAD * scale) / 4.0
+}
+
+/// Close loops whose gaps `f` gives from `x`, and the tolerance to keep them closed to from here
+/// on: `tol`, or, where they come no closer than that but within `loose`, a little more than they
+/// do come. Faces modelled a few nanometres apart along parallel axes leave a gap no value of a
+/// planar loop takes out; the loop still moves, as closed as it is. `None` when they can't close.
+fn close_within(f: &mut dyn FnMut(&[f64]) -> Option<Vec<f64>>, x: &mut Vec<f64>, bounds: &[(f64, f64)], tol: f64, loose: f64) -> Option<f64> {
+    if least_squares(f, x, bounds, tol) {
+        return Some(tol);
+    }
+    let left = largest(&f(x)?);
+    (left <= loose).then(|| (4.0 * left).clamp(tol, loose.max(tol)))
 }
 
 /// Occurrences whose degrees of freedom are worked out through their loops, at most; the rest
@@ -1288,7 +1310,7 @@ fn nearby_pose(tree: &Tree, groups: &[Group], asm: &Assembly, linked: &BTreeSet<
             closure_gaps(tree, closing, &work, scale, &mut out)?;
             out.iter().all(|v| v.is_finite()).then_some(out)
         };
-        if least_squares(&mut gaps, &mut x, &bounds, (1e-10 * scale).min(1e-7))
+        if close_within(&mut gaps, &mut x, &bounds, (1e-10 * scale).min(1e-7), loose_gap(scale)).is_some()
             && x.iter().zip(&x0).zip(&step).all(|((a, b), d)| (a - b).abs() <= 4.0 * d)
             && gaps(&x).is_some()
         {
@@ -1526,11 +1548,15 @@ fn close_group(
     if moves.is_empty() && gaps(&x0, 1.0).is_some_and(|r| largest(&r) <= tol) {
         return Some(BTreeMap::new());
     }
-    // A loop open at the start closes first.
+    // A loop open at the start closes first. One that comes only to within the conflict check
+    // (`close_within`) moves on as closed as it is; with nothing held moving, one that started
+    // that close is left as it is.
     let mut x = x0;
-    if largest(&gaps(&x, 0.0)?) > tol && !least_squares(&mut |x| gaps(x, 0.0), &mut x, &bounds, tol) {
-        return None;
-    }
+    let start = largest(&gaps(&x, 0.0)?);
+    let tol = match close_within(&mut |x| gaps(x, 0.0), &mut x, &bounds, tol, loose_gap(scale))? {
+        t if t > tol && moves.is_empty() && start <= t => return Some(BTreeMap::new()),
+        t => t,
+    };
     let (mut t, mut dt) = (if moves.is_empty() { 1.0 } else { 0.0 }, first);
     let mut at = effective(&x, t);
     while t < 1.0 {
@@ -1681,7 +1707,7 @@ pub fn solve_holding(doc: &Document, st: &ModelState, held: &Held) -> Solution {
         let (Some(want), Some((_, fb))) = (tree.step(*id, true, ta, &vals), tree.frames.get(id)) else { continue };
         // Measured at the joint, where the loop solver closes it.
         let (dt, da) = mismatch(&mat_mul(&want, fb), &mat_mul(tb, fb));
-        if dt > 1e-6 || da > 1e-8 {
+        if dt > CONFLICT_MM || da > CONFLICT_RAD {
             sol.conflicts.push((
                 j.id,
                 j.name.clone(),

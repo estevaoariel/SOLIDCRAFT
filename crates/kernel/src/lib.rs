@@ -28,6 +28,7 @@ mod boundary;
 mod boundary_network;
 mod bridge;
 mod build;
+mod candidate_reach;
 #[cfg(test)]
 mod chamfer_sides_curved_tests;
 mod clearance;
@@ -81,6 +82,9 @@ mod issue_871_tests;
 mod join_between_caps_tests;
 mod lip;
 pub mod loft_blend;
+mod loft_rails;
+#[cfg(test)]
+mod loft_rails_tests;
 #[cfg(test)]
 mod loft_region_tests;
 mod loopblend;
@@ -149,6 +153,7 @@ mod tspline;
 #[cfg(test)]
 mod untouched_faces_tests;
 pub mod watch;
+mod whole_face;
 
 pub use blend::{ChamferSide, chamfer, chamfer_sides, fillet, fillet_each, fillet_g2, fillet_g2_corners, fillet_max, fillet_max_each};
 pub use blend_corner::fillet_radii;
@@ -160,7 +165,7 @@ pub use boundary_network::{BoundaryCurve, CurveSource, MAX_CHAIN_CURVES, MAX_EDG
 pub use bridge::{Continuity, Frame, blend_between, bridge, chain, chain_closes, frames, frames_across, sample_grid};
 pub use build::{
     PathSeg, box_solid, canonical_revolve_axis, cylinder, extrude, extrude_tapered, extrude_tapered_between, extrude_whole_sides, loft, loft_regions,
-    path_polyline, revolve, revolve_whole, sphere, sweep, sweep_with, torus,
+    loft_with_rails, path_polyline, revolve, revolve_whole, sphere, sweep, sweep_with, torus,
 };
 pub use clearance::{Clearance, Occupancy};
 pub use coaxial_overlap::{CoaxialOverlap, coaxial_candidate, coaxial_overlap};
@@ -189,7 +194,7 @@ pub use native::{decode_native_body, encode_native_body, native_preview_mesh};
 pub use offset::with_same_surface;
 pub use ops::{
     BoolOp, boolean, can_join_all_touching_faces, can_join_touching_faces, compound_disjoint_extrusions, half_space, is_planar, join_apart,
-    split_by_plane, transform, transform_matrix, union_apart, with_attempt_budget,
+    place_matrix, split_by_plane, transform, transform_matrix, union_apart, with_attempt_budget,
 };
 pub use polybool::{faceted_boolean, planar_boolean};
 pub use polyhedron::{HalfSpace, convex_polyhedron, draft, offset_faces, shell};
@@ -209,13 +214,14 @@ pub use surface_ruled::{Ruled, RuledCorners, RuledMode, ruled_surface};
 pub use surface_trim::{TrimKeep, mutual_trim, trim, trim_keep};
 pub use surface_untrim::{UntrimHoles, untrim};
 pub use surfaces::{
-    copy_faces, extend, extrude_sheet, loft_sheet, patch_edges, patch_region, remove_faces, reverse_faces, revolve_sheet, stitch, sweep_sheet,
-    sweep_sheet_points, sweep_sheet_points_with, sweep_sheet_with, thicken, unstitch,
+    copy_faces, extend, extrude_sheet, loft_sheet, loft_sheet_with_rails, patch_edges, patch_region, remove_faces, reverse_faces, revolve_sheet,
+    stitch, sweep_sheet, sweep_sheet_points, sweep_sheet_points_with, sweep_sheet_with, thicken, unstitch,
 };
 pub use sweep_path::{RailFit, SweepControl, SweepOrientation, sweep_path, sweep_path_with};
 pub use topo::{CylinderFace, cylinder_end_at, cylinder_face, cylinder_face_at};
 pub use topo::{TopoCounts, merged_topology, seam_flags};
 pub use tspline::tspline_sheet;
+pub use whole_face::{WholeFace, cut_takes_only_the_face, cut_tool, face_prism, matching_face};
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum KernelError {
@@ -268,3 +274,6 @@ pub fn guard<T>(what: &str, f: impl FnOnce() -> Result<T>) -> Result<T> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod trimmed_face_mesh_tests;

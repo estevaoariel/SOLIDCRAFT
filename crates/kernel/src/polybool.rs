@@ -5,7 +5,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use solidcraft_geom::{Mesh, Vec3};
+use solidcraft_geom::{Aabb3, Mesh, Vec3};
 use truck_modeling::{self as mt, builder};
 
 use crate::body::{Body, Solid, edge_order, from_p3, p3};
@@ -365,11 +365,7 @@ fn faceted_boolean_untimed(a: &Body, b: &Mesh, op: BoolOp, tol: f64) -> Result<O
     if pa.len() + pb.len() > MAX_POLYS {
         return Err(KernelError::Failed("the bodies are too detailed to facet".into()));
     }
-    let (lo, hi) = b
-        .positions
-        .iter()
-        .fold((Vec3::new(f64::MAX, f64::MAX, f64::MAX), Vec3::new(f64::MIN, f64::MIN, f64::MIN)), |(l, h), p| (l.min(*p), h.max(*p)));
-    let size = if b.positions.is_empty() { a.size() } else { a.size().max((hi - lo).len()) };
+    let size = if b.positions.is_empty() { a.size() } else { a.size().max(b.positions.iter().copied().collect::<Aabb3>().diagonal()) };
     // Fine facets of curved faces meet at shallow angles, where the coplanar test decides
     // whether the pieces' boundaries come out consistent: try a few tolerances, and take the
     // first whose result is watertight and agrees with the complementary boolean (A − B and

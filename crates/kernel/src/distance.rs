@@ -67,12 +67,7 @@ impl<'a> DistanceShape<'a> {
 
     /// The box around the body: its mesh's, grown by the chord tolerance.
     pub fn bounds(&self) -> Aabb3 {
-        let b = self.set.bounds();
-        if b.is_empty() {
-            return b;
-        }
-        let g = Vec3::new(1.0, 1.0, 1.0) * self.chord;
-        Aabb3 { min: b.min - g, max: b.max + g }
+        self.set.bounds().inflated(self.chord)
     }
 
     /// How far the mesh may lie from the faces (mm).

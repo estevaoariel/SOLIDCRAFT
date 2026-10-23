@@ -5,6 +5,7 @@
 //! command has its geometry, so typing a number sets the value at once; Enter applies, Tab
 //! moves on, Esc cancels.
 
+use crate::ui_kit::{Container, Surface};
 use egui::{Color32, Pos2, Stroke, vec2};
 use solidcraft_engine::Sel;
 use solidcraft_engine::doc::expr::Kind as ValueKind;
@@ -588,23 +589,27 @@ pub(crate) fn value_box_with(
 ) -> Option<egui::Rect> {
     let t = Tokens::get();
     let mut field = None;
-    crate::frame::area(area).fixed_pos(at).pivot(pivot).order(egui::Order::Foreground).show(ui.ctx(), |ui| {
-        egui::Frame::popup(ui.style()).inner_margin(egui::Margin::symmetric(6, 3)).show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(egui::RichText::new(crate::i18n::tr_label(label)).color(t.text_dim).size(11.5));
-                let r = ui.add(egui::TextEdit::singleline(value).id(id).desired_width(72.0));
-                crate::params_dialog::complete(ui, &r, value);
-                if select_all {
-                    r.request_focus();
-                    let n = value.chars().count();
-                    let mut st = egui::text_edit::TextEditState::load(ui.ctx(), id).unwrap_or_default();
-                    st.cursor.set_char_range(Some(egui::text_selection::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(n))));
-                    st.store(ui.ctx(), id);
-                }
-                field = Some(r.rect);
+    Container::new(ui.ctx(), Surface::Canvas).area(area).fixed_pos(at).pivot(pivot).order(egui::Order::Foreground).show(
+        ui.ctx(),
+        |ui| {
+            Container::popup_frame(ui.style()).inner_margin(egui::Margin::symmetric(6, 3)).show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new(crate::i18n::tr_label(label)).color(t.text_dim).size(crate::theme::Tokens::get().font_caption));
+                    let r = crate::ui_kit::canvas_value_field(ui, id, value);
+                    crate::params_dialog::complete(ui, &r, value);
+                    if select_all {
+                        r.request_focus();
+                        let n = value.chars().count();
+                        let mut st = egui::text_edit::TextEditState::load(ui.ctx(), id).unwrap_or_default();
+                        st.cursor
+                            .set_char_range(Some(egui::text_selection::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(n))));
+                        st.store(ui.ctx(), id);
+                    }
+                    field = Some(r.rect);
+                });
             });
-        });
-    });
+        },
+    );
     field
 }
 
@@ -911,10 +916,9 @@ fn measure_line(app: &SolveApp, painter: &egui::Painter, proj: &Proj, r: &serde_
         painter.circle(s, 3.5, t.manipulator, Stroke::new(1.0, Color32::WHITE));
     }
     let mid = sa + (sb - sa) * 0.5 + vec2(10.0, -14.0);
-    let galley = painter.layout_no_wrap(crate::prefs::show_mm(app, d, 1), egui::FontId::proportional(12.5), t.text);
+    let galley = painter.layout_no_wrap(crate::prefs::show_mm(app, d, 1), egui::FontId::proportional(crate::theme::Tokens::get().font_label), t.text);
     let rect = egui::Rect::from_min_size(mid, galley.size() + vec2(10.0, 6.0));
-    crate::scenario::publish_handle("measure:label", rect.center());
-    crate::scenario::publish_rect("measure:label", rect);
+    crate::scenario::publish_target("measure:label", rect);
     if app.preferences.measure_axis_distances {
         measure_components(app, painter, proj, a, b, rect);
     }
@@ -953,7 +957,7 @@ fn measure_components(app: &SolveApp, painter: &egui::Painter, proj: &Proj, a: V
             (total.center(), vec2(20.0, 20.0))
         };
         let text = format!("{}: {}", axis.to_uppercase(), crate::prefs::show_mm(app, distance, 1));
-        let galley = painter.layout_no_wrap(text, egui::FontId::proportional(12.5), t.text);
+        let galley = painter.layout_no_wrap(text, egui::FontId::proportional(crate::theme::Tokens::get().font_label), t.text);
         let size = galley.size() + vec2(10.0, 6.0);
         let bounds = proj.rect.shrink(4.0);
         let clamp = |rect: egui::Rect| {
@@ -981,8 +985,7 @@ fn measure_components(app: &SolveApp, painter: &egui::Painter, proj: &Proj, a: V
         painter.rect(rect, 3.0, t.overlay, Stroke::new(1.0, color), egui::StrokeKind::Inside);
         painter.galley(rect.min + vec2(5.0, 3.0), galley, t.text);
         let handle = format!("measure:label:{axis}");
-        crate::scenario::publish_handle(&handle, rect.center());
-        crate::scenario::publish_rect(&handle, rect);
+        crate::scenario::publish_target(&handle, rect);
         occupied.push(rect);
     }
 }
@@ -1200,8 +1203,15 @@ fn draw_revolve(
         }
     }
     if to_mode {
-        crate::frame::area(egui::Id::new("sc_canvas_area")).fixed_pos(box_at).order(egui::Order::Foreground).show(ui.ctx(), |ui| {
-            egui::Frame::popup(ui.style()).inner_margin(egui::Margin::symmetric(6, 3)).show(ui, |ui| {
+        // This badge is read-only. Its placement follows the model and can overlap the
+        // command dialog, whose buttons must keep receiving clicks.
+        let area = Container::new(ui.ctx(), Surface::Canvas)
+            .area(egui::Id::new("sc_canvas_area"))
+            .fixed_pos(box_at)
+            .order(egui::Order::Foreground)
+            .interactable(false);
+        area.show(ui.ctx(), |ui| {
+            Container::popup_frame(ui.style()).inner_margin(egui::Margin::symmetric(6, 3)).show(ui, |ui| {
                 let text = if extent.curved_to {
                     "To surface".into()
                 } else if extent.sweep.is_finite() {
