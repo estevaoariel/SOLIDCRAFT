@@ -138,6 +138,38 @@ Claude Desktop (`claude_desktop_config.json`), bridged to a running app:
 }
 ```
 
+On Windows the installer puts `solidcraft-cli.exe` next to `solidcraft.exe` in
+`C:\Program Files\SolidCraft` (the portable zip has both too). Give the full path, with each
+backslash doubled in JSON. This configuration declares two servers: `solidcraft` models
+headless (no window; steadier for timings), `solidcraft-live` drives the app you have open, so
+you can watch the agent model. `--allow-path` names a folder where the agent may save and
+export; it must already exist.
+
+```json
+{
+  "mcpServers": {
+    "solidcraft": {
+      "command": "C:\\Program Files\\SolidCraft\\solidcraft-cli.exe",
+      "args": ["mcp", "--allow-path", "C:\\Users\\NAME\\SolidCraft-Agent"]
+    },
+    "solidcraft-live": {
+      "command": "C:\\Program Files\\SolidCraft\\solidcraft-cli.exe",
+      "args": ["mcp", "--connect", "127.0.0.1:7878", "--allow-path", "C:\\Users\\NAME\\SolidCraft-Agent"]
+    }
+  }
+}
+```
+
+Start the app with its control channel for `solidcraft-live`, from PowerShell:
+`& "C:\Program Files\SolidCraft\solidcraft.exe" --control 7878`, or once for every launch:
+`setx SOLIDCRAFT_CONTROL_PORT 7878`.
+
+Open `claude_desktop_config.json` with Claude Desktop's **Settings > Developer > Edit Config**
+rather than by its path: the Microsoft Store (MSIX) build of Claude Desktop can keep its data in
+its own package folder (`%LOCALAPPDATA%\Packages\…\LocalCache\Roaming\Claude`) instead of
+`%APPDATA%\Claude`, and Edit Config opens the file the app actually reads. Quit Claude Desktop
+completely (from the notification area) and start it again to load the servers.
+
 ### Agent skills
 
 [`skills/`](https://github.com/bherbruck/solidcraft/tree/main/skills) holds four [Agent Skills](https://agentskills.io) for agents that model through this server:
