@@ -1223,3 +1223,51 @@ fn extrude_cut_into_a_rounded_block_top() {
     let v = before - volume(&cut, "Body1");
     assert!((v - taken).abs() < 0.05, "took {v}, expected {taken}");
 }
+
+/// #451: a spherical shell (r 18.5 to 40, revolved on XY) cut from a block, or joined with it.
+/// Swept with its two radial lines, the shell had zero-area faces on the axis joining the outer
+/// sphere to the inner one, and a cut through the inner sphere's pole failed. As a solid with a
+/// void, the boolean took its shells one at a time: a cut through both spheres kept only the piece
+/// in the hollow, and a join failed.
+#[test]
+fn spherical_shell_cuts_and_joins_a_block_crossing_its_hollow() {
+    let r: f64 = 18.5;
+    // ∫∫ √(R² − y² − z²) dy dz over the blocks' 8 × 8 section, the inner integral in closed form,
+    // the outer by Simpson's rule.
+    let under = |big: f64| {
+        let inner = |y: f64| {
+            let a2 = big * big - y * y;
+            let f = |z: f64| 0.5 * (z * (a2 - z * z).sqrt() + a2 * (z / a2.sqrt()).asin());
+            f(4.0) - f(-4.0)
+        };
+        let n = 200;
+        let h = 8.0 / n as f64;
+        (0..n / 2).map(|i| -4.0 + 2.0 * i as f64 * h).map(|y| inner(y) + 4.0 * inner(y + h) + inner(y + 2.0 * h)).sum::<f64>() * h / 3.0
+    };
+    // From x = 8 to the inner sphere, and from the outer sphere to x = 50.
+    let (hollow, beyond) = (under(r) - 8.0 * 64.0, 50.0 * 64.0 - under(40.0));
+    let shell = 4.0 / 3.0 * std::f64::consts::PI * (40.0f64.powi(3) - r.powi(3));
+    for (x0, length, operation, want) in [
+        (-4.0, 8.0, "cut", 512.0),
+        (8.0, 12.0, "cut", hollow),
+        (8.0, 42.0, "cut", hollow + beyond),
+        (8.0, 12.0, "join", shell + hollow),
+        (8.0, 42.0, "join", shell + hollow + beyond),
+    ] {
+        let mut s = Session::default();
+        let mut run = |c: &str, p: Value| s.execute(c, &p).unwrap();
+        run("solid.box", json!({"corner": [x0, -4, -4], "length": length, "width": 8, "height": 8, "body_name": "Block"}));
+        run("sketch.create", json!({"plane": "XY", "name": "Ring"}));
+        run("sketch.line", json!({"points": [[-40, 0], [40, 0]]}));
+        run("sketch.arc.center_point", json!({"center": [0, 0], "start": [40, 0], "end": [-40, 0]}));
+        run("sketch.arc.center_point", json!({"center": [0, 0], "start": [r, 0], "end": [-r, 0]}));
+        run("sketch.finish", json!({}));
+        run("solid.revolve", json!({"sketch": "Ring", "profiles": [{"point": [0, 30]}], "axis": "l1", "operation": operation, "targets": ["Block"]}));
+        // A cut through both spheres leaves two pieces, one each side of the shell.
+        let state = s.model.state();
+        let got: f64 = state.bodies.iter().map(|b| solidcraft_kernel::measure(&b.body).unwrap().volume).sum();
+        println!("#451 {operation} of the block from x = {x0} to {}: {got:.6} mm³ in {} bodies, expected {want:.6}", x0 + length, state.bodies.len());
+        assert!((got - want).abs() < 1e-4 * want, "{operation} from x = {x0} to {}: {got} vs {want}", x0 + length);
+        assert!(state.bodies.iter().all(|b| b.body.validity().is_empty()));
+    }
+}
