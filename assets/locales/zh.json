@@ -1870,6 +1870,8 @@
   "ui.hideOrigin": "隐藏原点",
   "ui.hidePlanes": "隐藏平面",
   "ui.hideProfile": "隐藏轮廓",
+  "ui.hide_origin_by_default": "默认隐藏原点",
+  "ui.hide_origin_note": "新设计开始时原点文件夹处于隐藏状态。显示或隐藏过原点的设计会保留自己的原点设置。",
   "ui.history_back": "后退一步",
   "ui.history_below_browser": "浏览器下方",
   "ui.history_edge_hint": "双击边缘",
