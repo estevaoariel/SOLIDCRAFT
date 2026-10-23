@@ -115,7 +115,6 @@ const ELEMENTS: &[Element] = &[
         status_palette_sample(ui, crate::theme::ColorVision::Deutan);
         colour_vision_sample(ui, &Tokens::get());
         settings_autosave_timeline(ui, 5.0);
-        settings_axis_row(ui, "Push X", 0.6, [0.1, 0.2], |_| {}, |_| {}, |_| {});
         settings_mouse_mapping(ui, &[(vec!["Shift".into(), "Middle drag".into()], "Orbit".into())], |_| {});
     }),
     element!("assistant_entry", |ui, _| {
