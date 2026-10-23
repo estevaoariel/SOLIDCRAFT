@@ -3999,6 +3999,41 @@ pub(crate) fn face_sel(s: &Session, p0: Vec3) -> Option<Sel> {
     (d <= tolerance).then(|| Sel::Face { body: body.name.clone(), index, point })
 }
 
+/// Resolve a stored name on the current input body before placing its pick in the viewport.
+/// Keep the resolved index: a face point can lie on a boundary shared with another face.
+fn named_refill(s: &Session, body: Option<&str>, name: &str, point: Vec3, edge: bool) -> Option<Sel> {
+    use solidcraft_engine::doc::naming;
+
+    if name.is_empty() {
+        return None;
+    }
+    let st = s.model.state();
+    let (source, index, point) = if edge {
+        let (b, hit) = st
+            .bodies
+            .iter()
+            .filter(|b| body.is_none_or(|name| b.name == name))
+            .filter_map(|b| naming::locate_edge(b, name, point).ok().map(|hit| (b, hit)))
+            .min_by(|(_, a), (_, b)| a.point.dist(point).total_cmp(&b.point.dist(point)))?;
+        (b, hit.edge, hit.point)
+    } else if let Some((b, (index, point, _))) = body.and_then(|n| st.body(n)).and_then(|b| naming::face_on_body(b, name, point).map(|hit| (b, hit)))
+    {
+        (b, index, point)
+    } else {
+        let hit = naming::locate_face(&st, name, point)?;
+        (st.bodies.get(hit.body)?, hit.face, hit.point)
+    };
+    let (body, point) = s
+        .doc
+        .body_frames_with_source(&st)
+        .into_iter()
+        .find(|(_, definition, _, _, _)| definition == source.definition_name())
+        .map(|(world, _, _, _, frame)| (world, solidcraft_engine::doc::apply_point(&frame, point)))
+        .unwrap_or_else(|| (source.name.clone(), point));
+    s.world_state().body(&body)?;
+    Some(if edge { Sel::Edge { body, index, point } } else { Sel::Face { body, index, point } })
+}
+
 fn emboss_face_sel(s: &Session, component: u64, face: &solidcraft_engine::doc::EmbossFace, persistent: &str) -> Option<Sel> {
     let source = s.model.state();
     let body = source.body(&face.body)?;
@@ -4253,7 +4288,9 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             }
             d
         }
-        FeatureKind::Fillet { edges, radius, .. } | FeatureKind::Chamfer { edges, distance: radius, .. } => {
+        FeatureKind::Fillet { edges, radius, body, .. } | FeatureKind::Chamfer { edges, distance: radius, body, .. } => {
+            let edge_pick =
+                |i: usize, p: Vec3| f.edge_names.get(i).and_then(|name| named_refill(s, body.as_deref(), name, p, true)).or_else(|| edge_sel(s, p));
             let chamfer = matches!(f.kind, FeatureKind::Chamfer { .. });
             let mut d = start(if chamfer { "solid.chamfer" } else { "solid.fillet" })?;
             d.kind = fillet_kind(radius, chamfer);
@@ -4314,7 +4351,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                             FilletStyle::Constant | FilletStyle::Chord | FilletStyle::Curvature => {}
                         }
                         // The start was the first edge's last point: ends swapped.
-                        let first_end = edges.first().and_then(|p| edge_sel(s, p.0)).and_then(|x| match x {
+                        let first_end = edges.first().and_then(|p| edge_pick(0, p.0)).and_then(|x| match x {
                             Sel::Edge { body, index, .. } => {
                                 s.world_state().body(&body).and_then(|b| b.mesh().edges.get(index).and_then(|e| e.last().copied()))
                             }
@@ -4326,7 +4363,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                 }
             }
             if let Some(inp) = d.inputs.first_mut() {
-                inp.items = edges.iter().filter_map(|p| edge_sel(s, p.0)).collect();
+                inp.items = edges.iter().enumerate().filter_map(|(i, p)| edge_pick(i, p.0)).collect();
                 d.picked_edges = inp.items.clone();
             }
             d.chain_applied = false;
@@ -4340,7 +4377,13 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                 d.extra.insert("direction".into(), json!(direction));
             }
             if let Some(inp) = d.inputs.first_mut() {
-                inp.items = faces.iter().filter_map(|p| face_sel(s, p.0)).collect();
+                inp.items = faces
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, p)| {
+                        f.face_names.get(i).and_then(|name| named_refill(s, f.kind.face_body(), name, p.0, false)).or_else(|| face_sel(s, p.0))
+                    })
+                    .collect();
             }
             d
         }
@@ -4348,7 +4391,13 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             let mut d = start("solid.draft")?;
             d.kind = Kind::simple_restore(&f.kind)?;
             if let Some(inp) = d.inputs.get_mut(0) {
-                inp.items = faces.iter().filter_map(|p| face_sel(s, p.0)).collect();
+                inp.items = faces
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, p)| {
+                        f.face_names.get(i).and_then(|name| named_refill(s, f.kind.face_body(), name, p.0, false)).or_else(|| face_sel(s, p.0))
+                    })
+                    .collect();
             }
             if let Some(inp) = d.inputs.get_mut(1) {
                 inp.items = plane_sel(s, neutral).into_iter().collect();

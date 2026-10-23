@@ -336,3 +336,71 @@ fn remaining_dialogs_keep_kit_chrome_and_cancel_restores_preview() {
         assert_eq!(h.app.session.pending_moves, moves, "{command}: cancel restores display-only moves");
     }
 }
+
+fn resized_box_editor(command: &str, params: Value) -> (Harness, u64) {
+    let mut h = Harness::new();
+    for (id, params) in [
+        ("sketch.create", json!({"plane":"XY"})),
+        ("sketch.rectangle.two_point", json!({"p0":[0,0],"p1":[40,20]})),
+        ("sketch.dimension", json!({"entities":["l1"],"value":40})),
+        ("sketch.dimension", json!({"entities":["l2"],"value":20})),
+        ("sketch.finish", json!({})),
+        ("solid.extrude", json!({"distance":20})),
+        (command, params),
+        ("parameters.change", json!({"name":"d2","expression":"30"})),
+    ] {
+        h.app.run(id, params).unwrap();
+    }
+    let id = h.app.session.doc.features.last().unwrap().id;
+    assert!(h.app.session.model.results.iter().all(|r| r.error.is_none()));
+    h.app.edit_feature(id);
+    (h, id)
+}
+
+#[test]
+fn blend_editor_refills_named_edges_after_sketch_resize() {
+    for command in ["solid.fillet", "solid.chamfer"] {
+        let (mut h, id) = resized_box_editor(command, json!({"edges":[[40,10,20],[20,20,20],[20,0,20],[0,10,20]],"radius":4,"distance":4}));
+        let d = h.app.dialog.as_ref().unwrap();
+        let picks = &d.inputs[0].items;
+        assert_eq!(picks.len(), 4);
+        assert_eq!(&d.picked_edges, picks);
+        let s = &h.app.session;
+        let body = s.model.state().bodies.first().unwrap().clone();
+        let names = &s.doc.feature(id).unwrap().edge_names;
+        for (pick, name) in picks.iter().zip(names) {
+            let Sel::Edge { point, index, .. } = pick else { panic!("{pick:?}") };
+            let hit = solidcraft_engine::doc::naming::locate_edge(&body, name, *point).unwrap();
+            assert_eq!(*index, hit.edge);
+            assert!(hit.on_point, "{command}: {point:?} must lie on the resized edge");
+        }
+        let commands = apply_commands(&h.app, d).unwrap();
+        crate::dialogs::roll_marker(&mut h.app, None).unwrap();
+        for (command, params) in commands {
+            h.app.run(&command, params).unwrap();
+        }
+        assert_eq!(h.app.session.doc.features.last().unwrap().id, id);
+        assert!(h.app.session.model.results.iter().all(|r| r.error.is_none()));
+    }
+}
+
+#[test]
+fn face_editor_refills_named_faces_after_sketch_resize() {
+    for (command, params) in
+        [("solid.shell", json!({"faces":[[20,20,10]],"thickness":2})), ("solid.draft", json!({"faces":[[20,20,10]],"neutral":"XY","angle":3}))]
+    {
+        let (mut h, id) = resized_box_editor(command, params);
+        let d = h.app.dialog.as_ref().unwrap();
+        let picks = &d.inputs[0].items;
+        assert_eq!(picks.len(), 1, "{command}: the moved face must refill");
+        let Sel::Face { point, .. } = picks.first().unwrap() else { panic!("{picks:?}") };
+        assert!((point.y - 30.0).abs() < 1e-6, "{command}: {point:?}");
+        let commands = apply_commands(&h.app, d).unwrap();
+        crate::dialogs::roll_marker(&mut h.app, None).unwrap();
+        for (command, params) in commands {
+            h.app.run(&command, params).unwrap();
+        }
+        assert_eq!(h.app.session.doc.features.last().unwrap().id, id);
+        assert!(h.app.session.model.results.iter().all(|r| r.error.is_none()));
+    }
+}
