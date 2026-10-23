@@ -448,8 +448,8 @@ mod tests {
         assert_eq!(for_path("a.3mf").map(|f| f.id), Some("3mf"));
         assert_eq!(for_path("a.dxf").map(|f| f.id), Some("dxf-sketch"));
         assert_eq!(import_for_path("a.glb").map(|f| f.id), Some("gltf"));
-        assert_eq!(for_path("a.png"), None);
-        assert_eq!(for_path("nodot"), None);
+        assert!(for_path("a.png").is_none());
+        assert!(for_path("nodot").is_none());
     }
 
     #[test]
