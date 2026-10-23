@@ -37,7 +37,7 @@ const MAX_ITERS: usize = 500;
 /// 128 MB matrix; past that the request grows to gigabytes and an allocation failure aborts the
 /// process, which no panic guard can intercept. A component this size is reported as failed and
 /// its geometry left alone.
-const MAX_COMPONENT_VARS: usize = 4_000;
+pub const MAX_COMPONENT_VARS: usize = 4_000;
 /// Converged when every residual is below this (mm).
 const TOL: f64 = 1e-9;
 /// A solution is accepted when every residual is below this (mm).
@@ -84,6 +84,10 @@ pub struct SolveReport {
     /// analysis, and only for components of at most a few hundred variables.
     #[serde(default)]
     pub redundant: Vec<String>,
+    /// The unknowns of the largest connected group too large to solve ([`MAX_COMPONENT_VARS`]):
+    /// the solve fails without a conflicting constraint to name (#5280).
+    #[serde(default)]
+    pub oversized: Option<usize>,
 }
 
 impl SolveReport {
@@ -100,6 +104,11 @@ impl SolveReport {
     /// Why a solve failed or turned over: the constraints whose orientation the edit flips,
     /// or else `conflict` of the constraints still violated (listed, comma-separated).
     pub fn failure(&self, conflict: impl FnOnce(&str) -> String) -> String {
+        if let Some(n) = self.oversized {
+            return format!(
+                "the sketch joins {n} unknowns (point coordinates and radii) in one connected group, more than the {MAX_COMPONENT_VARS} the solver takes at once; a pattern joins all its copies: make fewer copies, or split them over several patterns or sketches"
+            );
+        }
         if self.folded.is_empty() {
             conflict(&self.failing.join(", "))
         } else {
@@ -2198,7 +2207,8 @@ fn solve_inner(
     let mut rank = 0;
     let mut redundant: Vec<String> = Vec::new();
     // A component too large to solve is a failure, not an allocation.
-    if comps.iter().any(|(_, vars, bis)| !bis.is_empty() && oversized(vars)) {
+    let too_large = comps.iter().filter(|(_, vars, bis)| !bis.is_empty() && oversized(vars)).map(|(_, vars, _)| vars.len()).max();
+    if too_large.is_some() {
         max_residual = f64::MAX;
     }
     let mut check = |r: &[f64], owner: &[usize], blocks: &[(Block, Vec<usize>)], failing: &mut Vec<String>| {
@@ -2389,6 +2399,7 @@ fn solve_inner(
         point_determined,
         curve_determined,
         redundant,
+        oversized: too_large,
     }
 }
 
