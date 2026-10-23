@@ -86,7 +86,9 @@ split_line
   remap_refs: plane.base.base.name, sketch
   remap_bodies: body
 construction_axis
+  remap_refs: def.a.plane.base.base.name, def.b.plane.base.base.name
 construction_point_planes
+  remap_refs: def.a.plane.base.base.name, def.b.plane.base.base.name, def.c.plane.base.base.name
 construction_point_along
 split_face
   sketches: [6]

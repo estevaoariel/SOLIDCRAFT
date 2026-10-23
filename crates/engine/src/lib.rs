@@ -664,6 +664,7 @@ impl Session {
     /// a body or a feature (or undid or redid such a rename) renames it in the model instead,
     /// which keeps every result and mesh (#3044).
     fn refresh_from(&mut self, previous: &Arc<Document>) {
+        self.follow_axis_point_renames(previous);
         if let Some((old, new)) = self.body_rename(previous)
             && self.model.rename_body(&self.doc, &old, &new)
         {
