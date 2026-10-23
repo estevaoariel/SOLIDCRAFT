@@ -126,7 +126,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("SKETCH", "CONSTRAINTS")
         .icon("c_coincident")
         .enabled(in_sketch)
-        .params("a, b: points, a point and a curve or sketch axis (x / y: the sketch's own axes, unless a curve has that id; an axis becomes a linked construction line on it, reported in created), or two distinct lines (joins their closest endpoints)"),
+        .params("a, b: points, a point and a curve or sketch axis (x / y: the sketch's own axes, unless a curve has that id; an axis becomes a linked construction line on it, reported in created), or two distinct lines (joins their closest endpoints), or two circles/arcs (the second lies on the first: concentric and equal, `constraints` lists both)"),
     CommandSpec::new("sketch.constraint.tangent", "Tangent", c_tangent)
         .at("SKETCH", "CONSTRAINTS")
         .icon("c_tangent")
@@ -1728,6 +1728,9 @@ fn c_coincident(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "sketch.constraint.coincident";
     // Already tied (e.g. connected when it was drawn there): nothing to add.
     let sk = s.doc.sketch(target_sketch(s, p, cmd)?)?;
+    if let Some((a, b)) = two_round(sk, p) {
+        return coincident_circles(s, p, cmd, a, b);
+    }
     let pt = |k: &str| p.get(k).and_then(Value::as_str).and_then(|r| sk.resolve_point(r));
     let line_points = coincident_line_points(sk, p, cmd)?;
     if let Some((a, b)) = line_points.or_else(|| pt("a").zip(pt("b")))
@@ -1756,6 +1759,41 @@ fn c_coincident(s: &mut Session, p: &Value) -> Result<Value> {
         let c = curve_or_axis(sk, bref)?.ok_or_else(|| bad(cmd, format!("unknown entity `{bref}`")))?;
         Ok(ConstraintKind::PointOnCurve { p: a, c })
     })
+}
+
+/// `a` and `b` both circles or arcs (two different ones).
+fn two_round(sk: &Sketch, p: &Value) -> Option<(usize, usize)> {
+    let round = |k: &str| {
+        let c = sk.curve_index(p.get(k)?.as_str()?)?;
+        matches!(sk.curves.get(c)?.kind, CurveKind::Circle { .. } | CurveKind::Arc { .. }).then_some(c)
+    };
+    let (a, b) = (round("a")?, round("b")?);
+    (a != b).then_some((a, b))
+}
+
+/// Two circles or arcs made coincident lie on each other: one centre and one radius (Concentric
+/// and Equal), the second pick moving onto the first, in one step. A half already there is
+/// not added again.
+fn coincident_circles(s: &mut Session, p: &Value, cmd: &str, a: usize, b: usize) -> Result<Value> {
+    let (ids, info) = edit(s, p, cmd, true, |sk, _| {
+        let rep = solve(&mut sk.clone());
+        let pair = |x: usize, y: usize| (x, y) == (a, b) || (x, y) == (b, a);
+        let concentric = sk.constraints.iter().any(|c| !c.driven && matches!(c.kind, ConstraintKind::Concentric { a: x, b: y } if pair(x, y)));
+        let equal = sk.constraints.iter().any(|c| !c.driven && matches!(c.kind, ConstraintKind::Equal { a: x, b: y } if pair(x, y)));
+        let mut ids = Vec::new();
+        if !concentric {
+            ids.push(add_c(sk, ConstraintKind::Concentric { a, b })?);
+        }
+        if !equal {
+            ids.push(add_c(sk, ConstraintKind::Equal { a, b })?);
+        }
+        if ids.is_empty() {
+            return Err(bad(cmd, "these circles already lie on each other"));
+        }
+        apply_in_order(sk, &rep, &[Ent::Curve(a)], Ent::Curve(b), cmd)?;
+        Ok(ids)
+    })?;
+    Ok(json!({"constraint": ids[0], "constraints": ids, "sketch": info}))
 }
 
 /// Four endpoint pairs, ordered independently of pick order when distances tie.

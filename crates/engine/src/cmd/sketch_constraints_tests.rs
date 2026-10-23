@@ -888,3 +888,38 @@ fn undoing_a_defining_dimension_removes_the_parameter_too() {
     assert_eq!(param_row(&mut s, "w")["expression"], "20");
     assert!((line_length(&s, "la") - 20.0).abs() < 1e-6);
 }
+
+/// Coincident on two circles (or arcs) lays the second on the first: one centre and one
+/// radius, in one step, and the first stays. It used to be refused ("two curves must both be
+/// straight lines").
+#[test]
+fn coincident_circles_lie_on_each_other() {
+    let mut s = new_sketch();
+    run(&mut s, "sketch.circle.center", json!({"center":[0,0],"radius":10}));
+    run(&mut s, "sketch.circle.center", json!({"center":[3,1],"radius":8}));
+    let undo = s.undo.len();
+    let r = run(&mut s, "sketch.constraint.coincident", json!({"a":"c1","b":"c2"}));
+    assert_eq!(r["constraints"].as_array().unwrap().len(), 2, "{r}");
+    assert_eq!(s.undo.len(), undo + 1);
+    let sk = sketch(&s);
+    let circle = |id: &str| {
+        let c = sk.curve_index(id).unwrap();
+        match sk.curves[c].kind {
+            solidcraft_sketch::CurveKind::Circle { c, r } => (sk.point(c).unwrap(), r),
+            _ => panic!("{id} is a circle"),
+        }
+    };
+    let ((c1, r1), (c2, r2)) = (circle("c1"), circle("c2"));
+    assert!(c1.dist(Vec2::new(0.0, 0.0)) < 1e-6 && (r1 - 10.0).abs() < 1e-6, "the first stays");
+    assert!(c2.dist(c1) < 1e-6 && (r2 - r1).abs() < 1e-6, "the second lies on it: {c2:?} r {r2}");
+    // Again: nothing to add.
+    assert!(s.execute("sketch.constraint.coincident", &json!({"a":"c1","b":"c2"})).is_err());
+    // An arc onto a circle.
+    run(&mut s, "sketch.arc.three_point", json!({"start":[20,0],"through":[25,5],"end":[30,0]}));
+    run(&mut s, "sketch.constraint.coincident", json!({"a":"c1","b":"a1"}));
+    let sk = sketch(&s);
+    let a = sk.curve_index("a1").unwrap();
+    let solidcraft_sketch::CurveKind::Arc { c, a: start, .. } = sk.curves[a].kind else { panic!("a1 is an arc") };
+    assert!(sk.point(c).unwrap().dist(Vec2::new(0.0, 0.0)) < 1e-6);
+    assert!((sk.point(start).unwrap().dist(sk.point(c).unwrap()) - 10.0).abs() < 1e-6);
+}
