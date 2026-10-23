@@ -106,6 +106,14 @@ pub fn resolve(s: &mut Session) -> joints::Solution {
     resolve_holding(s, &BTreeMap::new())
 }
 
+/// Update placements after an edit without computing a DOF report that the caller discards.
+/// Expressions and geometry-dependent couplings are refreshed just as in [`resolve`].
+pub fn place(s: &mut Session) -> joints::Solution {
+    reexpress(s);
+    recouple(s);
+    place_holding(s, &BTreeMap::new())
+}
+
 /// Work out the offsets, angles and values joints were given as expressions again (a parameter
 /// may have changed). One that can't be worked out (its parameter gone) keeps its numbers; the
 /// solve leaves that joint out and says why.
@@ -165,8 +173,22 @@ fn recouple(s: &mut Session) {
 /// Re-solve the joints, keeping the `held` values (the ones being driven, mapped to the values
 /// they move from) where loops are closed.
 pub fn resolve_holding(s: &mut Session, held: &joints::Held) -> joints::Solution {
-    let st = s.model.state();
-    let sol = joints::solve_holding(&s.doc, &st, held);
+    resolve_with_analysis(s, held, joints::Analysis::DegreesOfFreedom)
+}
+
+/// Contact and loop-search trials need placements and conflicts, not a DOF report.
+pub(super) fn place_holding(s: &mut Session, held: &joints::Held) -> joints::Solution {
+    resolve_with_analysis(s, held, joints::Analysis::Placement)
+}
+
+fn solution(s: &Session, held: &joints::Held, analysis: joints::Analysis) -> joints::Solution {
+    #[cfg(test)]
+    solve_counts::record(analysis);
+    joints::solve_holding_with_analysis(&s.doc, &s.model.state(), held, analysis)
+}
+
+fn resolve_with_analysis(s: &mut Session, held: &joints::Held, analysis: joints::Analysis) -> joints::Solution {
+    let sol = solution(s, held, analysis);
     if !sol.world.is_empty() {
         let mut next = (*s.doc).clone();
         if next.apply_joint_solution(&sol) {
@@ -175,6 +197,11 @@ pub fn resolve_holding(s: &mut Session, held: &joints::Held) -> joints::Solution
         }
     }
     sol
+}
+
+/// A quiet drive/reach does not publish DOF, so it needs only placement and constraint checks.
+fn response_analysis(p: &Value) -> joints::Analysis {
+    if bool_(p, "quiet").unwrap_or(false) { joints::Analysis::Placement } else { joints::Analysis::DegreesOfFreedom }
 }
 
 /// A solve's answer; `quiet: true` in the command's params leaves out the per-occurrence lists.
@@ -787,7 +814,7 @@ fn drive(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let before = super::motion::positions(s);
     let r = super::motion::drive_joint(s, id, q, given)?;
-    let sol = joints::solve(&s.doc, &s.model.state());
+    let sol = solution(s, &BTreeMap::new(), response_analysis(p));
     let mut out = sol_json(&sol, p);
     out["joint"] = json!(id);
     out["values"] = json!(effective_values(s, id));
@@ -852,7 +879,7 @@ fn reach(s: &mut Session, p: &Value) -> Result<Value> {
         Err(_) => joints::Reached::default(),
     };
     // Loops closed again from there, and where it ended up.
-    let sol = resolve(s);
+    let sol = if response_analysis(p) == joints::Analysis::Placement { place(s) } else { resolve(s) };
     let t = joints::occurrence_world(&s.doc, occ);
     let got = solidcraft_doc::apply_point(&t, at);
     let mut out = sol_json(&sol, p);
@@ -1439,3 +1466,25 @@ mod tests;
 #[cfg(test)]
 #[path = "joints_turn_tests.rs"]
 mod turn_tests;
+
+/// Per-thread work counts for ordinary engine regression tests; no production instrumentation.
+#[cfg(test)]
+pub(super) mod solve_counts {
+    use solidcraft_doc::joints::Analysis;
+    use std::cell::Cell;
+
+    thread_local! {
+        static COUNTS: Cell<(usize, usize)> = const { Cell::new((0, 0)) };
+    }
+
+    pub fn record(analysis: Analysis) {
+        COUNTS.with(|c| {
+            let (all, full) = c.get();
+            c.set((all + 1, full + usize::from(analysis == Analysis::DegreesOfFreedom)));
+        });
+    }
+
+    pub fn take() -> (usize, usize) {
+        COUNTS.with(|c| c.replace((0, 0)))
+    }
+}
