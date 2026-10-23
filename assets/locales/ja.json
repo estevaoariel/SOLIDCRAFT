@@ -1767,6 +1767,8 @@
   "ui.extend": "延長",
   "ui.extent_type": "範囲タイプ",
   "ui.extrude": "押し出し",
+  "ui.extrude_auto_to_object": "選択した対象まで押し出し",
+  "ui.extrude_auto_to_object_tip": "押し出しでプロファイルを選択した後、その平面外の面・頂点・平行な平面を選ぶと、範囲タイプが「オブジェクトまで」に切り替わります",
   "ui.factor": "倍率",
   "ui.feature_history": "フィーチャー履歴",
   "ui.feature_options": "フィーチャーオプション",

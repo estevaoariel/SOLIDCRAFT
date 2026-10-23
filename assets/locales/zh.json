@@ -1767,6 +1767,8 @@
   "ui.extend": "延伸",
   "ui.extent_type": "延伸类型",
   "ui.extrude": "拉伸",
+  "ui.extrude_auto_to_object": "拉伸到所选目标",
+  "ui.extrude_auto_to_object_tip": "在拉伸中选择轮廓后，选取其平面外的面、顶点或平行平面会将延伸类型切换为“到对象”",
   "ui.factor": "系数",
   "ui.feature_history": "特征历史",
   "ui.feature_options": "特征选项",

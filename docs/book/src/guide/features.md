@@ -18,6 +18,15 @@ Extruding into existing material selects **Cut**. In an empty component it selec
 choose **New Body** explicitly to keep an addition separate. Changing the default does not alter
 operations already saved in a design.
 
+**Extrude to a picked target** (Preferences › Design, off by default) lets a pick choose the
+extent. With it on and a profile selected in the solid Extrude dialog, picking a face away from
+its plane, a curved face, an off-plane vertex or a parallel plane automatically switches
+**Distance** to **To Object**. Coplanar faces still join the profile selection; non-parallel
+planes are not targets. The extent can still be chosen manually. For a new extrusion without
+start or end offsets or a From Object input, the target also sets the stored distance and
+one-sided direction, so returning to **Distance** keeps that reach. Thin Extrude keeps its
+existing picks. With the setting off, picks only add profiles, as before.
+
 A taper slopes the sides of any profile, sketch text included: lines, arcs and spline or conic
 curves move in or out together, and a flat tip shorter than the taper closes to a point. On
 spline and conic sides the slope is approximate: the moved outline is a curve of the same kind

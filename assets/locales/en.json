@@ -1767,6 +1767,8 @@
   "ui.extend": "Extend",
   "ui.extent_type": "Extent Type",
   "ui.extrude": "Extrude",
+  "ui.extrude_auto_to_object": "Extrude to a picked target",
+  "ui.extrude_auto_to_object_tip": "In Extrude, with a profile picked, picking a face, vertex or parallel plane off its plane switches the extent to To Object",
   "ui.factor": "Factor",
   "ui.feature_history": "Feature history",
   "ui.feature_options": "Feature Options",
