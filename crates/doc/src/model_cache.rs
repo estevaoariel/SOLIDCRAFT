@@ -320,6 +320,8 @@ impl SavedModel {
                 bodies: ids("bodies", model_bodies.len())?.into_iter().filter_map(|i| model_bodies.get(i).cloned()).collect(),
                 sketches: ids("sketches", sketches.len())?.into_iter().filter_map(|i| sketches.get(i).cloned()).collect(),
                 body_counter: index(s.get("body_counter"), usize::MAX)?,
+                // Not saved: evaluation takes them from the design again.
+                reserved_names: Default::default(),
                 sheets: serde_json::from_value(field("sheets")?).map_err(invalid)?,
                 construct: serde_json::from_value(field("construct")?).map_err(invalid)?,
                 threads: serde_json::from_value(field("threads")?).map_err(invalid)?,

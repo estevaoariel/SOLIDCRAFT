@@ -552,6 +552,24 @@ fn feature_ids(s: &Session, p: &Value, cmd: &str) -> Result<Vec<u64>> {
     Ok(ids)
 }
 
+/// The names the features from the first of `ids` to be suppressed on made, for those that made a
+/// body numbered by the counter (`BodyN`). Counted bodies take the next free number each time the
+/// design is computed, so once a feature that made one is suppressed, every counted body after it
+/// would move down one (`Body2` becoming `Body1`) and break what names it, such as a Move of
+/// `Body2` (#4302). Stored as their names, they stay as they were, as when a counted body is
+/// renamed (#1109). The suppressed feature keeps its own too: the counter passes the names of
+/// suppressed features by, so a body made meanwhile does not take `Body1` and lose it again when
+/// the feature is back.
+fn counted_names_from(s: &Session, ids: &[u64]) -> Vec<(u64, Vec<String>)> {
+    let made = |f: &Feature| -> Vec<String> {
+        s.model.result(f.id).map(|r| r.state.bodies.iter().filter(|b| b.feature == f.id).map(|b| b.name.clone()).collect()).unwrap_or_default()
+    };
+    let makes_counted = |f: &Feature| (0..made(f).len()).any(|i| super::browser::counted(f, i));
+    let first = s.doc.features.iter().position(|f| ids.contains(&f.id) && !f.suppressed && makes_counted(f));
+    let Some(at) = first else { return Vec::new() };
+    s.doc.features.iter().skip(at).filter(|f| makes_counted(f)).map(|f| (f.id, made(f))).collect()
+}
+
 fn suppress(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "timeline.suppress";
     let ids = feature_ids(s, p, cmd)?;
@@ -561,8 +579,14 @@ fn suppress(s: &mut Session, p: &Value) -> Result<Value> {
         // Toggle: one feature flips; several are all suppressed unless all already are.
         None => !ids.iter().all(|id| s.doc.feature(*id).is_some_and(|f| f.suppressed)),
     };
+    let keep = if want { counted_names_from(s, &ids) } else { Vec::new() };
     // One command, so one undo step however many features it changes.
     let doc = s.doc_mut();
+    for (id, made) in &keep {
+        if let Some(f) = doc.feature_mut(*id) {
+            f.body_names.clone_from(made);
+        }
+    }
     for id in &ids {
         let f = doc.feature_mut(*id).ok_or_else(|| bad(cmd, format!("no feature {id}")))?;
         f.suppressed = want;

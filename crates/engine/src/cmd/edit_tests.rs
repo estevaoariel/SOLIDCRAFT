@@ -689,6 +689,58 @@ fn suppress_takes_a_list_of_features_as_one_undo_step() {
     assert!(s.doc.find_feature("B").is_none() && s.doc.find_feature("C").is_none());
 }
 
+/// #4302: suppressing a feature that made a counted body (`Body1`) leaves the counted bodies of
+/// later features as they were: `Body2` used to become `Body1`, and a Move of `Body2` failed.
+#[test]
+fn suppressing_a_feature_keeps_later_counted_body_names() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "name": "A"}));
+    run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "corner": [20, 0, 0], "name": "B"}));
+    run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "corner": [40, 0, 0], "name": "C"}));
+    run(&mut s, "solid.move", json!({"bodies": ["Body2"], "translate": [0, 30, 0], "name": "Move"}));
+    let bodies = |s: &Session| -> Vec<(String, String)> {
+        let st = s.model.state();
+        st.bodies.iter().map(|b| (b.name.clone(), s.doc.feature(b.feature).map(|f| f.name.clone()).unwrap_or_default())).collect()
+    };
+    let named = |pairs: &[(&str, &str)]| pairs.iter().map(|(b, f)| (b.to_string(), f.to_string())).collect::<Vec<_>>();
+    let works = |s: &Session| s.doc.features.iter().all(|f| s.model.result(f.id).is_some_and(|r| r.error.is_none()));
+    let moved = |s: &Session| crate::cmd::inspect::measure_json(s.model.state().body("Body2").unwrap())["bbox"]["min"].clone();
+    assert_eq!(bodies(&s), named(&[("Body1", "A"), ("Body2", "B"), ("Body3", "C")]));
+    let at = moved(&s);
+
+    run(&mut s, "timeline.suppress", json!({"feature": "A", "suppressed": true}));
+    assert_eq!(bodies(&s), named(&[("Body2", "B"), ("Body3", "C")]));
+    assert!(works(&s), "the Move still finds Body2");
+    assert_eq!(moved(&s), at, "and still moves B's body");
+
+    // Back again: A takes its number back, the others keep theirs.
+    run(&mut s, "timeline.suppress", json!({"feature": "A", "suppressed": false}));
+    assert_eq!(bodies(&s), named(&[("Body1", "A"), ("Body2", "B"), ("Body3", "C")]));
+    assert!(works(&s));
+
+    // Several at once: the first one keeps the names of everything after it; undo restores all.
+    run(&mut s, "timeline.suppress", json!({"features": ["B", "A"], "suppressed": true}));
+    assert_eq!(bodies(&s), named(&[("Body3", "C")]));
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(bodies(&s), named(&[("Body1", "A"), ("Body2", "B"), ("Body3", "C")]));
+    assert!(works(&s));
+
+    // A body made while A is suppressed does not take A's `Body1`, so it keeps its name once A is
+    // back (it used to be `Body1`, then `Body4`).
+    run(&mut s, "timeline.suppress", json!({"feature": "A", "suppressed": true}));
+    run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "corner": [60, 0, 0], "name": "D"}));
+    assert_eq!(bodies(&s), named(&[("Body2", "B"), ("Body3", "C"), ("Body4", "D")]));
+    // Also once the design is opened again with the model its file keeps, which does not keep
+    // the names passed by: D computed again from a kept state is still `Body4`.
+    let saved = s.model.saved(&s.doc).unwrap();
+    let mut reopened = Session::opened(solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap(), Some(&saved));
+    run(&mut reopened, "timeline.edit", json!({"feature": "D", "set": {"length": "12"}}));
+    assert_eq!(bodies(&reopened), named(&[("Body2", "B"), ("Body3", "C"), ("Body4", "D")]));
+    run(&mut s, "timeline.suppress", json!({"feature": "A", "suppressed": false}));
+    assert_eq!(bodies(&s), named(&[("Body1", "A"), ("Body2", "B"), ("Body3", "C"), ("Body4", "D")]));
+    assert!(works(&s));
+}
+
 /// The value at a dotted path of a definition.
 fn dotted<'a>(def: &'a Value, path: &str) -> &'a Value {
     path.split('.').fold(def, |v, k| &v[k])

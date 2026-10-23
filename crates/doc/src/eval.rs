@@ -694,6 +694,9 @@ pub struct ModelState {
     /// Shared between states: a feature that does not change a sketch keeps it as it was.
     pub sketches: Vec<Arc<SolvedSketch>>,
     pub body_counter: usize,
+    /// The body names stored on suppressed features so far: the counter (`BodyN`) passes them
+    /// by, so a body made while a feature is suppressed keeps its name once it is back (#4302).
+    pub reserved_names: std::collections::BTreeSet<String>,
     /// Sheet metal bodies (by body name) and their flat patterns.
     pub sheets: Vec<crate::sheet::SheetBody>,
     /// Construction planes, axes and points as evaluated (by feature).
@@ -729,6 +732,7 @@ impl ModelState {
             self.sketch_keys.get(&s.feature).hash(&mut h);
         }
         self.body_counter.hash(&mut h);
+        self.reserved_names.hash(&mut h);
         for (feature, points) in &self.blend_edges {
             feature.hash(&mut h);
             for p in points {
@@ -1740,6 +1744,8 @@ impl Model {
         self.param_errors = perr;
         let mut prev_fp = 0u64;
         let mut state = self.empty.clone();
+        // The body names stored on the suppressed features so far (`ModelState::reserved_names`).
+        let mut reserved = std::collections::BTreeSet::new();
         let mut out: Vec<FeatureResult> = Vec::with_capacity(doc.features.len());
         let mut reuse = !self.no_cache;
         let mut recomputed = 0;
@@ -1762,6 +1768,9 @@ impl Model {
             let cancelled = watched.step(i);
             let fp = chain_fingerprint(doc, &vals, f, prev_fp, rolled_back, &self.step_digests, Some(&state));
             prev_fp = fp;
+            if f.suppressed && !rolled_back {
+                reserved.extend(f.body_names.iter().map(|n| n.trim()).filter(|n| !n.is_empty()).map(str::to_string));
+            }
             if reuse
                 && let Some(old) = self.results.get(i)
                 && old.id == f.id
@@ -1789,6 +1798,11 @@ impl Model {
                     state: state.clone(),
                 });
                 continue;
+            }
+            // Taken from the design each time rather than kept with a state, which a design file's
+            // model cache does not save.
+            if state.reserved_names != reserved {
+                Arc::make_mut(&mut state).reserved_names.clone_from(&reserved);
             }
             // The same feature on the same inputs: its earlier result.
             let key = cache_key(f, fp, fingerprint(0, f, &vals, false, &self.step_digests) ^ placement_digest(doc, f, Some(&state)), ctx, &state);
@@ -2188,7 +2202,7 @@ fn new_name(state: &mut ModelState, f: &Feature, k: usize) -> String {
     loop {
         state.body_counter += 1;
         let n = format!("Body{}", state.body_counter);
-        if state.body(&n).is_none() {
+        if state.body(&n).is_none() && !state.reserved_names.contains(&n) {
             return n;
         }
     }
@@ -6975,7 +6989,7 @@ pub fn world_state_reusing(doc: &Document, st: &ModelState, placed_before: &mut 
         }
         path
     };
-    let mut out = ModelState { body_counter: st.body_counter, ..Default::default() };
+    let mut out = ModelState { body_counter: st.body_counter, reserved_names: st.reserved_names.clone(), ..Default::default() };
     let placements = doc.placements();
     // A body moved in from another component keeps its place (its offset).
     let body_matrix = |b: &ModelBody, m: &crate::Mat| doc.model_body_offset(b).map(|o| crate::mat_mul(m, o)).unwrap_or(*m);
