@@ -36,10 +36,11 @@ message: save the file uncompressed first.
 
 A 3MF project saved by a slicer comes in too, also when it keeps its objects in model parts of
 their own inside the file (the 3MF Production extension): each object on the build plates becomes
-one mesh body, with all its volumes merged where the slicer placed them. Slicer-only data
-(modifier, negative and support volumes, painting, per-object settings, and names kept in the
-slicer's metadata) is not read: modifier and negative volumes come in as ordinary solid geometry,
-and objects without a name in the model itself are called Mesh1, Mesh2, …
+one mesh body, with all its volumes merged where the slicer placed them. Each body is named after
+its object: the name in the model, else the one the slicer keeps in its project settings (Bambu
+Studio's `Metadata/model_settings.config`), else Mesh1, Mesh2, … Other slicer-only data
+(modifier, negative and support volumes, painting, per-object settings) is not read: modifier and
+negative volumes come in as ordinary solid geometry.
 
 **File → Export STL…** and **File → Export 3MF…** (also on the Mesh tab under Modify as Save as
 mesh, and in the right-click menu of a body) open the same dialog with that format chosen; it saves
