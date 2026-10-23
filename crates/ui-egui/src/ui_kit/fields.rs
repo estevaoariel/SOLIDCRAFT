@@ -488,9 +488,15 @@ fn length_drag<'a>(value: &'a mut f64, units: &str, decimals: u8) -> egui::DragV
 
 /// Small model-anchored value editor. Retains its focus ID and native hit height so it does
 /// not intercept nearby canvas picks; the owner keeps completion and selection handling.
-pub(crate) fn canvas_value_field(ui: &mut Ui, id: egui::Id, value: &mut String) -> Response {
+/// With `keep_tab` Tab stays with the field (the caller acts on it) instead of moving the
+/// keyboard to the next widget.
+pub(crate) fn canvas_value_field(ui: &mut Ui, id: egui::Id, value: &mut String, keep_tab: bool) -> Response {
     let t = Tokens::get();
-    ui.add(egui::TextEdit::singleline(value).id(id).desired_width(t.space_24 * 3.0))
+    let mut edit = egui::TextEdit::singleline(value).id(id).desired_width(t.space_24 * 3.0);
+    if keep_tab {
+        edit = edit.event_filter(egui::EventFilter { tab: true, horizontal_arrows: true, ..Default::default() });
+    }
+    ui.add(edit)
 }
 
 /// Placement editor whose owner routes Enter and Tab (including rejected expressions).

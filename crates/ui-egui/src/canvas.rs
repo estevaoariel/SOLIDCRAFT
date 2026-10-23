@@ -316,6 +316,17 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui, painter: &egui::Painter, proj
         // picked bodies instead.
         let triad = crate::dialogs_move::triad(app, &d);
         let at = triad.map(|t| t.center).or_else(|| anchor(app, &d).map(|(base, _)| base));
+        // Tab and Shift+Tab in the box show the next or previous value (Y after X; #4776),
+        // keeping the keyboard in the box.
+        // egui moves the keyboard on with Tab before this runs: the box had it last frame.
+        let id = egui::Id::new("sc_canvas_value");
+        let boxed = ui.ctx().memory(|m| m.has_focus(id) || m.had_focus_last_frame(id));
+        let back = boxed && ui.input_mut(|i| i.consume_key(egui::Modifiers::SHIFT, egui::Key::Tab));
+        let tab = boxed && !back && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Tab));
+        if tab || back {
+            crate::dialogs_move::step_value_field(&mut d, if back { -1 } else { 1 });
+            d.focus = true;
+        }
         let focus = std::mem::take(&mut d.focus);
         if let Some(bs) = at.and_then(|base| proj.to_screen(base))
             && let Some((label, _, value)) = d.primary()
@@ -323,7 +334,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui, painter: &egui::Painter, proj
             // Clear of the triad: its arrows reach LEN_PX and its rings RING of that, so a box
             // beside the centre would cover the handles the user is reaching for.
             let off = if triad.is_some() { vec2(crate::gizmo::LEN_PX as f32 + 16.0, -12.0) } else { vec2(16.0, -30.0) };
-            value_box(ui, label, value, bs + off, focus || dragging);
+            value_box_with(ui, label, value, bs + off, focus || dragging, true);
         }
         app.dialog = Some(d);
         return;
@@ -567,6 +578,12 @@ fn draw(app: &SolveApp, ui: &mut egui::Ui, painter: &egui::Painter, proj: &Proj,
 /// text (e.g. "4 mm" -> "15 mm") would leave the stale, shorter selection from the pick in place,
 /// covering only part of the new text.
 fn value_box(ui: &mut egui::Ui, label: &str, value: &mut String, at: Pos2, select_all: bool) {
+    value_box_with(ui, label, value, at, select_all, false);
+}
+
+/// [`value_box`]; with `keep_tab` Tab stays in the box for the caller (the Move box steps
+/// through its values with it).
+fn value_box_with(ui: &mut egui::Ui, label: &str, value: &mut String, at: Pos2, select_all: bool, keep_tab: bool) {
     let t = Tokens::get();
     let id = egui::Id::new("sc_canvas_value");
     Container::new(ui.ctx(), Surface::Canvas).area(egui::Id::new("sc_canvas_area")).fixed_pos(at).order(egui::Order::Foreground).show(
@@ -575,7 +592,7 @@ fn value_box(ui: &mut egui::Ui, label: &str, value: &mut String, at: Pos2, selec
             Container::popup_frame(ui.style()).inner_margin(egui::Margin::symmetric(6, 3)).show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new(crate::i18n::tr_label(label)).color(t.text_dim).size(crate::theme::Tokens::get().font_caption));
-                    let r = crate::ui_kit::canvas_value_field(ui, id, value);
+                    let r = crate::ui_kit::canvas_value_field(ui, id, value, keep_tab);
                     crate::params_dialog::complete(ui, &r, value);
                     if select_all {
                         r.request_focus();

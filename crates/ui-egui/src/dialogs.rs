@@ -973,6 +973,7 @@ impl Dialog {
 
     /// The main value (shown on the canvas too): label, kind and the expression.
     pub fn primary(&mut self) -> Option<(&'static str, ValueKind, &mut String)> {
+        let move_field = crate::dialogs_move::value_field(self);
         Some(match &mut self.kind {
             Kind::Extrude { to_offset, .. } if to_object_on(&self.inputs) => ("To Offset", ValueKind::Length, to_offset),
             Kind::Extrude { distance, .. } => ("Distance", ValueKind::Length, distance),
@@ -995,12 +996,20 @@ impl Dialog {
                 }
                 ("Diameter", ValueKind::Length, diameter)
             }
-            // A move's main value follows its type: a distance along X for the ones that
-            // translate, the angle for Rotate. Point to Point is two picks with nothing to type.
-            Kind::Move { mode, x, angle, .. } => match *mode {
+            // A move's main value follows its type: a distance for the ones that translate
+            // (along the axis dragged or tabbed to last, X at first; #4776), the angle for
+            // Rotate. Point to Point is two picks with nothing to type.
+            Kind::Move { mode, x, y, z, rx, ry, rz, angle } => match *mode {
                 crate::dialogs_move::ROTATE => ("Angle", ValueKind::Angle, angle),
                 crate::dialogs_move::POINT_TO_POINT => return None,
-                _ => ("X", ValueKind::Length, x),
+                _ => match move_field {
+                    1 => ("Y", ValueKind::Length, y),
+                    2 => ("Z", ValueKind::Length, z),
+                    3 => ("X Angle", ValueKind::Angle, rx),
+                    4 => ("Y Angle", ValueKind::Angle, ry),
+                    5 => ("Z Angle", ValueKind::Angle, rz),
+                    _ => ("X", ValueKind::Length, x),
+                },
             },
             Kind::PatternRect { spacing, .. } => ("Spacing", ValueKind::Length, spacing),
             Kind::PatternCirc { angle, .. } => ("Angle", ValueKind::Angle, angle),
