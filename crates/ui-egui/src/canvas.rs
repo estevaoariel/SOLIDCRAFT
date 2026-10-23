@@ -362,7 +362,7 @@ fn along(proj: &Proj, pos: Pos2, base: Vec3, dir: Vec3) -> Option<f64> {
     Some((b * e - d) / den)
 }
 
-fn format_len(v: f64) -> String {
+pub(crate) fn format_len(v: f64) -> String {
     let s = format!("{v:.3}");
     let s = s.trim_end_matches('0').trim_end_matches('.');
     format!("{} mm", if s == "-0" { "0" } else { s })
@@ -432,7 +432,7 @@ fn draw(app: &SolveApp, ui: &mut egui::Ui, painter: &egui::Painter, proj: &Proj,
             | Kind::OffsetFaces { .. }
             | Kind::SketchModify(crate::sketch_modify_ui::Mod::Move { .. })
     );
-    let focus = std::mem::take(&mut d.focus);
+    let mut focus = std::mem::take(&mut d.focus);
     let half_height = app.cam.half_height();
     let axis = revolve_axis(app, d);
     if matches!(d.kind, Kind::Revolve { .. }) {
@@ -518,6 +518,11 @@ fn draw(app: &SolveApp, ui: &mut egui::Ui, painter: &egui::Painter, proj: &Proj,
             opts.all = false;
         }
         dir = None;
+        // A Single hole's distances from its reference edges (#37); a newly picked edge's box
+        // takes the keyboard.
+        if crate::hole_refs::canvas(app, ui, painter, proj, d) {
+            focus = false;
+        }
     }
     // A fillet with a radius spline is shaped by its handles along the edge; the arrow would sit
     // on one of them.
@@ -567,28 +572,41 @@ fn draw(app: &SolveApp, ui: &mut egui::Ui, painter: &egui::Painter, proj: &Proj,
 /// text (e.g. "4 mm" -> "15 mm") would leave the stale, shorter selection from the pick in place,
 /// covering only part of the new text.
 fn value_box(ui: &mut egui::Ui, label: &str, value: &mut String, at: Pos2, select_all: bool) {
+    value_box_with(ui, egui::Id::new("sc_canvas_area"), egui::Id::new("sc_canvas_value"), label, value, (at, egui::Align2::LEFT_TOP), select_all);
+}
+
+/// [`value_box`] under its own ids (its area's and its field's), for a value beside the main one
+/// (a hole's reference distances), with the point of the box that sits at `at`. Returns where the
+/// field is.
+pub(crate) fn value_box_with(
+    ui: &mut egui::Ui,
+    area: egui::Id,
+    id: egui::Id,
+    label: &str,
+    value: &mut String,
+    (at, pivot): (Pos2, egui::Align2),
+    select_all: bool,
+) -> Option<egui::Rect> {
     let t = Tokens::get();
-    let id = egui::Id::new("sc_canvas_value");
-    Container::new(ui.ctx(), Surface::Canvas).area(egui::Id::new("sc_canvas_area")).fixed_pos(at).order(egui::Order::Foreground).show(
-        ui.ctx(),
-        |ui| {
-            Container::popup_frame(ui.style()).inner_margin(egui::Margin::symmetric(6, 3)).show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(crate::i18n::tr_label(label)).color(t.text_dim).size(crate::theme::Tokens::get().font_caption));
-                    let r = crate::ui_kit::canvas_value_field(ui, id, value);
-                    crate::params_dialog::complete(ui, &r, value);
-                    if select_all {
-                        r.request_focus();
-                        let n = value.chars().count();
-                        let mut st = egui::text_edit::TextEditState::load(ui.ctx(), id).unwrap_or_default();
-                        st.cursor
-                            .set_char_range(Some(egui::text_selection::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(n))));
-                        st.store(ui.ctx(), id);
-                    }
-                });
+    let mut field = None;
+    Container::new(ui.ctx(), Surface::Canvas).area(area).fixed_pos(at).pivot(pivot).order(egui::Order::Foreground).show(ui.ctx(), |ui| {
+        Container::popup_frame(ui.style()).inner_margin(egui::Margin::symmetric(6, 3)).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(crate::i18n::tr_label(label)).color(t.text_dim).size(crate::theme::Tokens::get().font_caption));
+                let r = crate::ui_kit::canvas_value_field(ui, id, value);
+                crate::params_dialog::complete(ui, &r, value);
+                if select_all {
+                    r.request_focus();
+                    let n = value.chars().count();
+                    let mut st = egui::text_edit::TextEditState::load(ui.ctx(), id).unwrap_or_default();
+                    st.cursor.set_char_range(Some(egui::text_selection::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(n))));
+                    st.store(ui.ctx(), id);
+                }
+                field = Some(r.rect);
             });
-        },
-    );
+        });
+    });
+    field
 }
 
 /// How far (logical points) from an arrow's stem a press still takes the arrow.

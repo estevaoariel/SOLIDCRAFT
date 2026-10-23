@@ -1177,6 +1177,8 @@ mod hole_face_tests;
 #[cfg(test)]
 mod hole_matrix_tests;
 #[cfg(test)]
+mod hole_reference_tests;
+#[cfg(test)]
 mod large_assembly_tests;
 #[cfg(test)]
 mod measure_centre_tests;

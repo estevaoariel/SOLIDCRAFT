@@ -64,6 +64,9 @@ pub mod help;
 mod hole_direction_ui_tests;
 #[cfg(test)]
 mod hole_placement_ui_tests;
+pub(crate) mod hole_refs;
+#[cfg(test)]
+mod hole_refs_ui_tests;
 pub mod home;
 pub mod i18n;
 #[cfg(test)]

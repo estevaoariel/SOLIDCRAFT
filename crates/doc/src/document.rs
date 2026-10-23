@@ -724,6 +724,11 @@ pub enum FeatureKind {
         /// To Object: drill down to the face (or point) here instead of `depth`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         to: Option<FacePick>,
+        /// Up to two straight edges of the face (#37): the hole's centre sits at each one's
+        /// distance from its edge, measured in the face's plane, and follows the edges when the
+        /// part changes. `position` keeps where it was placed.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        references: Vec<HoleReference>,
     },
     /// A thread on a cylindrical face. Cosmetic by default (no geometry change; drawn and
     /// exported as an annotation); `modeled` cuts the real helical ISO profile into the face.
@@ -1989,6 +1994,15 @@ pub enum HoleKind {
         #[walk(angle = "Countersink angle")]
         cs_angle: Expr,
     },
+}
+
+/// A Single hole's reference edge (#37): a point on a straight edge of the hole's face, and the
+/// distance of the hole's centre from that edge's line, in the face's plane.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, solidcraft_derive::Walk)]
+pub struct HoleReference {
+    pub edge: Position,
+    #[walk(length = "Reference distance")]
+    pub distance: Expr,
 }
 
 /// Pattern layouts.

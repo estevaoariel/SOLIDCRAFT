@@ -72,6 +72,11 @@ pub(super) fn fixtures() -> Vec<(&'static str, Value)> {
         ("hole_drilled", hole(json!({"type": "drilled", "tip_angle": "hole.tip_angle"}))),
         ("hole_counterbore", hole(json!({"type": "counterbore", "cb_diameter": "hole.cb_diameter", "cb_depth": "hole.cb_depth"}))),
         ("hole_countersink", hole(json!({"type": "countersink", "cs_diameter": "hole.cs_diameter", "cs_angle": "hole.cs_angle"}))),
+        ("hole_references", {
+            let mut h = hole(json!({"type": "simple"}));
+            h["references"] = json!([{"edge": o, "distance": "hole.reference1"}, {"edge": o, "distance": "hole.reference2"}]);
+            h
+        }),
         ("thread", json!({"type": "thread", "face": o, "length": "thread.length"})),
         ("loft", json!({"type": "loft", "sections": []})),
         ("sweep", json!({"type": "sweep", "sketch": 1, "profiles": {"type": "all"}, "path_sketch": 2, "path": ["l1"]})),
@@ -262,6 +267,9 @@ pub(super) fn with_points(name: &str, mut v: Value) -> Value {
         "surface_revolve" => json!({"axis": line}),
         "hole_simple" => json!({"points": null, "to": p(4.0)}),
         "hole_drilled" | "hole_counterbore" | "hole_countersink" => json!({"to": p(4.0)}),
+        "hole_references" => {
+            json!({"references": [{"edge": p(11.0), "distance": "hole.reference1"}, {"edge": p(12.0), "distance": "hole.reference2"}]})
+        }
         "emboss" => json!({"face": {"body": "B", "at": p(5.0)}}),
         "sheet_convert" => json!({"bends": [p(6.0)]}),
         "sheet_fold" => json!({"fixed": p(7.0)}),

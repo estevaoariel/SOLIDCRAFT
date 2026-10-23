@@ -3471,6 +3471,7 @@ fn hole_spots(vals: &BTreeMap<String, Value>, st: &ModelState, f: &Feature) -> R
         _ => {
             let dir = direction.normalized().ok_or_else(|| DocError::Invalid("hole direction".into()))?;
             let at = hole_on_surface(st, single_hole_position(vals, st, position, at, points)?, dir, &[]);
+            let at = with_references(vals, st, f, at, dir)?;
             let dir = hole_dir_into_face(st, at, dir);
             return Ok((vec![hole_on_surface(st, at, dir, &[])], dir));
         }
@@ -3518,6 +3519,7 @@ fn hole_spots_raw(vals: &BTreeMap<String, Value>, st: &ModelState, f: &Feature) 
         _ => {
             let dir = direction.normalized().ok_or_else(|| DocError::Invalid("hole direction".into()))?;
             let p = single_hole_position(vals, st, position, at, points)?;
+            let p = if hole_references(f).is_empty() { p } else { with_references(vals, st, f, hole_on_surface(st, p, dir, &[]), dir)? };
             Ok((vec![p], hole_dir_into_face(st, hole_on_surface(st, p, dir, &[]), dir)))
         }
     }
@@ -3537,6 +3539,35 @@ fn single_hole_position(
     let id = sp.ids.first().ok_or_else(|| DocError::Invalid("a Single hole needs its sketch point".into()))?;
     let p = ss.sketch.points.iter().find(|p| &p.id == id).ok_or_else(|| DocError::Unknown(format!("sketch point `{id}`")))?;
     Ok(ss.plane.to_world(p.pos))
+}
+
+/// A hole's reference edges (#37); none for any other feature.
+fn hole_references(f: &Feature) -> &[crate::HoleReference] {
+    match &f.kind {
+        FeatureKind::Hole { references, .. } => references,
+        _ => &[],
+    }
+}
+
+/// Where a Single hole with reference edges (#37) is drilled: at its distances from the edges'
+/// lines, in the plane of the face at `at` (on the surface), the edges found by their names, else
+/// their points. A hole without reference edges stays at `at`.
+fn with_references(vals: &BTreeMap<String, Value>, st: &ModelState, f: &Feature, at: Vec3, dir: Vec3) -> Result<Vec3> {
+    let references = hole_references(f);
+    if references.is_empty() {
+        return Ok(at);
+    }
+    let mut distances = Vec::with_capacity(references.len());
+    for r in references {
+        distances.push(Document::eval_in(vals, &r.distance, Kind::Length)?);
+    }
+    let edges: Vec<(Vec3, Option<&str>)> = references.iter().enumerate().map(|(i, r)| (r.edge.0, f.edge_names.get(i).map(String::as_str))).collect();
+    let frame = crate::hole_reference::reference_frame(st, at, dir, &edges, false)?;
+    let centre = frame.place(at, &distances)?;
+    if !crate::hole_reference::on_reference_face(st, &frame, centre) {
+        return Err(DocError::Invalid("the reference distances put the hole's centre off its face".into()));
+    }
+    Ok(centre)
 }
 
 /// Where a hole placed by position is drilled: its `at` expressions evaluated, so it follows the

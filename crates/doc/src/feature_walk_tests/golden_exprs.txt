@@ -130,6 +130,13 @@ hole_countersink
     Countersink diameter = hole.cs_diameter (Length)
     Countersink angle = hole.cs_angle (Angle)
   expressions: hole.diameter, hole.depth, hole.cs_diameter, hole.cs_angle
+hole_references
+  inputs:
+    Diameter = hole.diameter (Length)
+    Depth = hole.depth (Length)
+    Reference distance = hole.reference1 (Length)
+    Reference distance = hole.reference2 (Length)
+  expressions: hole.diameter, hole.depth, hole.reference1, hole.reference2
 thread
   inputs:
     Length = thread.length (Length)

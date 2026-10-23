@@ -1477,8 +1477,9 @@ fn newer_options_reach_their_commands() {
     app.dialog = None;
     let top = face(&app, Vec3::new(20.0, 15.0, 20.0));
     let mut d = start(&mut app, vec![top], "solid.hole");
-    d.inputs.push(crate::selection::SelInput::new("To Object", crate::selection::FACES | crate::selection::VERTICES, false));
-    d.inputs[1].items = vec![face(&app, Vec3::new(20.0, 15.0, 0.0))];
+    let mut to = crate::selection::SelInput::new("To Object", crate::selection::FACES | crate::selection::VERTICES, false);
+    to.items = vec![face(&app, Vec3::new(20.0, 15.0, 0.0))];
+    d.inputs.push(to);
     let p = apply_commands(&app, &d).unwrap().remove(0).1;
     assert!(p["to"].is_array() && p.get("depth").is_none(), "{p}");
 }

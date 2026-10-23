@@ -7,7 +7,7 @@ it.
 
 | Panel | Features |
 |---|---|
-| Create | extrude (one side, two sides, symmetric, taper, start offset, to a distance or through all; new body, join, cut, intersect; thin walls along curves), revolve, sweep, loft, box, cylinder, sphere, torus, coil, pipe, rib, web, emboss, hole (simple, counterbore, countersink, tapped; on faces or at sketch points), thread, rectangular/circular/path patterns, mirror |
+| Create | extrude (one side, two sides, symmetric, taper, start offset, to a distance or through all; new body, join, cut, intersect; thin walls along curves), revolve, sweep, loft, box, cylinder, sphere, torus, coil, pipe, rib, web, emboss, hole (simple, counterbore, countersink, tapped; on faces, at distances from edges, or at sketch points), thread, rectangular/circular/path patterns, mirror |
 | Modify | press pull, fillet, chamfer, shell, draft, scale, combine, split body, offset face, replace face, move/copy, align, remove |
 | Construct | offset plane, plane at angle, plane along path |
 | Inspect | measure, section analysis, interference, compare bodies, curvature comb and map, zebra, draft, minimum radius, isocurves, centre of mass |
@@ -83,6 +83,15 @@ and reopening retain the chosen instances. Other curved surfaces and free-form p
 unsupported. A new Emboss without an explicit face infers a unique eligible supported cylinder;
 select the face when the target is ambiguous. Older saved features without a face retain their
 planar placement.
+
+A **Hole** with **Single** placement can also sit at distances from up to two straight edges of
+its face. After picking the face, click **Reference 1** and pick an edge, then pick a second one
+into **Reference 2**. Each edge gets a **Distance** row, measured from where you picked; the
+canvas shows each one as a dimension from the edge to the hole's centre, with a box beside it.
+Type a distance in either place and the hole moves so its centre is that far from the edge,
+measured in the face's plane. Moving the hole measures the distances again. The hole keeps its
+distances when the part changes: it follows its edges, and the distances are parameters like its
+diameter.
 
 A **Hole** with **Single** placement drills where you pick a planar face. A pick on or near a
 point of a shown sketch that lies on that face, such as a circle's centre, places the hole
@@ -195,7 +204,7 @@ still be added through `set`. The fields of the common features:
 | Chamfer | `distance`, `distance2` or `angle`, `flip`, `edges`, `body` |
 | Box | `length`, `width`, `height`, `corner`, `operation` |
 | Cylinder | `radius`, `height`, `base`, `axis`, `operation` |
-| Hole | `diameter`, `depth`, `position`, `direction`, `hole` (simple, drilled, counterbore, countersink), `thread`, `to` |
+| Hole | `diameter`, `depth`, `position`, `direction`, `hole` (simple, drilled, counterbore, countersink), `thread`, `to`, `references` (an `edge` point and a `distance` each) |
 | Shell | `thickness`, `faces`, `direction`, `body`, `tangent_chain` |
 | Draft | `angle`, `faces`, `neutral`, `pull`, `body` |
 | Offset face | `distance`, `faces`, `body` |

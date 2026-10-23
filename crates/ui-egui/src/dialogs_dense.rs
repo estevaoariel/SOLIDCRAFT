@@ -172,7 +172,12 @@ pub(super) fn rows(app: &mut SolveApp, ctx: &egui::Context, d: &mut Dialog, ui: 
         ui_kit::text(ui, tr(key), ui_kit::Text::Hint("manage"));
     }
     placement_row(d, ui);
-    input_rows(d, ui, &app.session);
+    if matches!(&d.kind, Kind::Hole { opts, .. } if !opts.multiple) {
+        // Each reference edge with its distance (#37).
+        enter |= crate::hole_refs::input_rows(d, ui, &app.session);
+    } else {
+        input_rows(d, ui, &app.session);
+    }
     match &mut d.kind {
         Kind::Material { index } => {
             let names = app.session.doc.material_names();

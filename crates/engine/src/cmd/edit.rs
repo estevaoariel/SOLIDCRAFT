@@ -983,6 +983,13 @@ fn edit_feature(s: &mut Session, p: &Value) -> Result<Value> {
             nf.edge_names = solidcraft_doc::sheet::sheet_edge_names(&s.model.state_before(id), &solidcraft_doc::plain(&points(a)));
         }
     }
+    // New reference edges for a hole (#37): the names of the edges there now.
+    if let (FeatureKind::Hole { references: a, position, .. }, FeatureKind::Hole { references: b, .. }) = (&nf.kind, &f.kind) {
+        let edges = |r: &[solidcraft_doc::HoleReference]| r.iter().map(|x| x.edge.0).collect::<Vec<_>>();
+        if edges(a) != edges(b) {
+            nf.edge_names = solidcraft_doc::hole_reference::reference_edge_names(&s.model.state_before(id), position.0, &edges(a));
+        }
+    }
     // New bend edges for a conversion: the names of the body's edges there now.
     if let (FeatureKind::SheetConvert { bends: a, body, .. }, FeatureKind::SheetConvert { bends: b, body: was, .. }) = (&nf.kind, &f.kind)
         && (a != b || body != was)
