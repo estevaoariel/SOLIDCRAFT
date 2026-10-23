@@ -1104,6 +1104,9 @@ pub struct Renderer {
     /// The target the pipelines draw into (format, depth, samples): a supersampled frame is
     /// drawn into textures of the same kind.
     target: GpuTarget,
+    /// The pass the picture is shown in (egui's): its samples and depth. Equal to [`Self::target`]
+    /// unless the scene is drawn offscreen and blitted ([`Self::window_differs`]).
+    window: GpuTarget,
     /// The device's largest 2D texture side (#869).
     max_texture: u32,
     /// Supersampling (#1288): the filter that draws the supersampled frame into the viewport.
@@ -1391,8 +1394,16 @@ pub fn gpu_view_proj(vp: [[f32; 4]; 4], reversed: bool) -> [[f32; 4]; 4] {
 }
 
 impl Renderer {
-    /// The pipelines for target `t` on `device`; `tess` evaluates planned bodies on the GPU.
+    /// The pipelines for target `t` on `device`; `tess` evaluates planned bodies on the GPU. The
+    /// frame is drawn into `t` and shown in a pass of the same kind (one target).
     pub fn new(device: &wgpu::Device, t: GpuTarget, tess: Option<crate::TessGpu>) -> Self {
+        Self::with_window_target(device, t, t, tess)
+    }
+
+    /// The pipelines for a frame drawn into `t` (the scene target) and shown in a pass of `window`'s
+    /// kind. When the two differ (a 1× window pass with no depth, say, and a multisampled scene
+    /// target), the scene is always drawn offscreen and blitted into the window's pass.
+    pub fn with_window_target(device: &wgpu::Device, t: GpuTarget, window: GpuTarget, tess: Option<crate::TessGpu>) -> Self {
         let source = format!("{SHADER}\n{}", pbr::SOURCE);
         let module =
             device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("sc_viewport"), source: wgpu::ShaderSource::Wgsl(source.into()) });
@@ -1427,6 +1438,16 @@ impl Renderer {
                 format,
                 depth_write_enabled: Some(write),
                 depth_compare: Some(depth_compare(reversed, compare)),
+                stencil: Default::default(),
+                bias: Default::default(),
+            })
+        };
+        // The pass the picture is shown in, which may have no depth and one sample.
+        let window_depth = |compare: wgpu::CompareFunction| -> Option<wgpu::DepthStencilState> {
+            window.depth.map(|format| wgpu::DepthStencilState {
+                format,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(depth_compare(window.reversed_depth(), compare)),
                 stencil: Default::default(),
                 bias: Default::default(),
             })
@@ -1702,12 +1723,12 @@ impl Renderer {
                 cache: None,
             })
         };
-        let pass_depth = depth(wgpu::CompareFunction::Always, false);
-        let (ss_blit, copy_blit) = (blit("fs", t.samples.max(1), pass_depth.clone()), blit("fs_copy", t.samples.max(1), pass_depth));
+        let pass_depth = window_depth(wgpu::CompareFunction::Always);
+        let (ss_blit, copy_blit) = (blit("fs", window.samples.max(1), pass_depth.clone()), blit("fs_copy", window.samples.max(1), pass_depth));
         // Into the cached picture's own texture: no depth, one sample.
         let ss_filter = blit("fs", 1, None);
         let oit = oit::Pipelines::new(device, &module, &layout, t.format, t.depth, t.samples);
-        let depth_reset = t.depth.filter(|_| reversed).map(|format| {
+        let depth_reset = window.depth.filter(|_| window.reversed_depth()).map(|format| {
             let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("sc_depth_reset"),
                 source: wgpu::ShaderSource::Wgsl(DEPTH_RESET_SHADER.into()),
@@ -1729,11 +1750,11 @@ impl Renderer {
                     stencil: Default::default(),
                     bias: Default::default(),
                 }),
-                multisample: wgpu::MultisampleState { count: t.samples.max(1), mask: !0, alpha_to_coverage_enabled: false },
+                multisample: wgpu::MultisampleState { count: window.samples.max(1), mask: !0, alpha_to_coverage_enabled: false },
                 fragment: Some(wgpu::FragmentState {
                     module: &module,
                     entry_point: Some("fs"),
-                    targets: &[Some(wgpu::ColorTargetState { format: t.format, blend: None, write_mask: wgpu::ColorWrites::empty() })],
+                    targets: &[Some(wgpu::ColorTargetState { format: window.format, blend: None, write_mask: wgpu::ColorWrites::empty() })],
                     compilation_options: Default::default(),
                 }),
                 multiview_mask: None,
@@ -1744,6 +1765,7 @@ impl Renderer {
             ao,
             depth_reset,
             target: t,
+            window,
             max_texture: device.limits().max_texture_dimension_2d,
             ss_blit,
             ss_filter,
@@ -1942,8 +1964,8 @@ pub fn hangs_on_gpu_tessellation(backend: wgpu::Backend, name: &str) -> bool {
 /// Whether [`Renderer::prepare`] may blit the picture it drew last instead of drawing the frame
 /// again: the content is the same and that picture is a texture frame (the direct path has none
 /// to blit).
-fn can_reuse(product: bool, ss_ready: bool, cached: Option<u64>, key: u64) -> bool {
-    !product && ss_ready && cached == Some(key)
+fn can_reuse(ss_ready: bool, cached: Option<u64>, key: u64) -> bool {
+    ss_ready && cached == Some(key)
 }
 
 /// Everything the drawn picture depends on: the scene keys and camera, the viewport's size, the
@@ -1991,6 +2013,12 @@ fn frame_key(cb: &Frame) -> u64 {
 }
 
 impl Renderer {
+    /// The scene can't be drawn straight into the window's pass (a different sample count, depth
+    /// or format): it is drawn offscreen and blitted.
+    fn window_differs(&self) -> bool {
+        self.target.samples != self.window.samples || self.target.depth != self.window.depth || self.target.format != self.window.format
+    }
+
     /// Before the frame's render pass: upload the scenes that changed (planned bodies not yet on
     /// the GPU are evaluated by dispatches recorded into `encoder`), the uniform, the images and
     /// the accessibility map, and draw the frame supersampled when it asks for that. A frame whose
@@ -2000,7 +2028,7 @@ impl Renderer {
         let res = self;
         let cb = frame;
         let key = frame_key(cb);
-        if can_reuse(cb.product, res.ss_ready && res.ss.is_some(), res.ss_key, key) {
+        if can_reuse(res.ss_ready && res.ss.is_some(), res.ss_key, key) {
             // A still frame shows the picture as it is; the first one filters it down once.
             if res.ss_scaled && res.cached.is_none() {
                 res.cache_picture(device, encoder, cb.size_px);
@@ -2009,10 +2037,13 @@ impl Renderer {
         }
         res.cached = None;
         if cb.product {
-            res.ss_key = None;
             res.product.take(device, cb.key, &cb.slot, None);
             res.product.sort_glass(queue, cb.back);
             queue.write_buffer(&res.uniform, 0, &uniform_bytes(cb, cb.size_px[0], cb.size_px[1], res.linear_out, res.target.reversed_depth()));
+            // The product picture goes through the window's pass too: offscreen when the targets
+            // differ or it is drawn smaller, else straight into the window's pass.
+            res.ss_ready = (res.window_differs() || cb.ssaa != 1.0) && res.supersample(device, encoder, cb, false);
+            res.ss_key = res.ss_ready.then_some(key);
             return;
         }
         res.model.take(device, cb.key, &cb.slot, res.tess.as_ref().map(|t| (t, &mut *encoder)));
@@ -2083,7 +2114,7 @@ impl Renderer {
                 res.quads.push((img.id, b));
             }
         }
-        res.ss_ready = (cb.ssaa != 1.0 || see_through) && res.supersample(device, encoder, cb, see_through);
+        res.ss_ready = (cb.ssaa != 1.0 || see_through || res.window_differs()) && res.supersample(device, encoder, cb, see_through);
         res.ss_key = res.ss_ready.then_some(key);
     }
 
@@ -2345,7 +2376,9 @@ impl Renderer {
                 .then(|| [(w.round() as u32).clamp(1, self.max_texture.max(1)), (h.round() as u32).clamp(1, self.max_texture.max(1))])
         };
         let scaled = if cb.ssaa != 1.0 { supersampled_size(cb.size_px, cb.ssaa, self.max_texture, self.target.samples) } else { None };
-        let Some(size) = scaled.or_else(|| if see_through { own() } else { None }) else {
+        // See-through surfaces (order-independent transparency) and a window pass of another kind
+        // (samples, depth) need a frame of their own, even at the viewport's own size.
+        let Some(size) = scaled.or_else(|| if see_through || self.window_differs() { own() } else { None }) else {
             self.ss = None;
             return false;
         };
@@ -2698,13 +2731,12 @@ mod tests {
         ] {
             assert_ne!(base, changed, "{what} must draw again");
         }
-        // The comparison a frame makes: a product frame never blits the viewport's picture, and
-        // only a frame drawn into a texture has one to blit.
-        assert!(super::can_reuse(false, true, Some(base), base));
-        assert!(!super::can_reuse(false, true, Some(base), base + 1));
-        assert!(!super::can_reuse(false, false, Some(base), base));
-        assert!(!super::can_reuse(false, true, None, base));
-        assert!(!super::can_reuse(true, true, Some(base), base));
+        // The comparison a frame makes: only a frame drawn into a texture has a picture to blit,
+        // and only the picture with the same content is shown again.
+        assert!(super::can_reuse(true, Some(base), base));
+        assert!(!super::can_reuse(true, Some(base), base + 1));
+        assert!(!super::can_reuse(false, Some(base), base));
+        assert!(!super::can_reuse(true, None, base));
     }
 
     /// Derivatives and implicit-lod sampling run only in uniform control flow: browsers' WGSL
@@ -2911,7 +2943,7 @@ mod glass_tests {
     }
 
     /// Render `frame` through `r` into a fresh 64 × 64 target and read the pixels back.
-    fn render_frame(r: &mut Renderer, device: &wgpu::Device, queue: &wgpu::Queue, frame: &Frame) -> Vec<u8> {
+    fn render_frame(r: &mut Renderer, device: &wgpu::Device, queue: &wgpu::Queue, frame: &Frame, with_depth: bool) -> Vec<u8> {
         const SIZE: u32 = 64;
         let depth = crate::depth_format(device, true);
         let format = wgpu::TextureFormat::Rgba8Unorm;
@@ -2928,8 +2960,9 @@ mod glass_tests {
             })
         };
         let color = texture(format, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC);
-        let depth_tex = texture(depth, wgpu::TextureUsages::RENDER_ATTACHMENT);
-        let (color_view, depth_view) = (color.create_view(&Default::default()), depth_tex.create_view(&Default::default()));
+        let color_view = color.create_view(&Default::default());
+        let depth_tex = with_depth.then(|| texture(depth, wgpu::TextureUsages::RENDER_ATTACHMENT));
+        let depth_view = depth_tex.as_ref().map(|t| t.create_view(&Default::default()));
         let mut encoder = device.create_command_encoder(&Default::default());
         r.prepare(device, queue, &mut encoder, frame);
         {
@@ -2942,8 +2975,8 @@ mod glass_tests {
                         resolve_target: None,
                         ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::WHITE), store: wgpu::StoreOp::Store },
                     })],
-                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                        view: &depth_view,
+                    depth_stencil_attachment: depth_view.as_ref().map(|view| wgpu::RenderPassDepthStencilAttachment {
+                        view,
                         depth_ops: Some(wgpu::Operations {
                             load: wgpu::LoadOp::Clear(far_depth(reversed_depth(Some(depth)))),
                             store: wgpu::StoreOp::Store,
@@ -2979,22 +3012,11 @@ mod glass_tests {
         read.slice(..).get_mapped_range().map(|b| b.to_vec()).unwrap_or_default()
     }
 
-    /// A still view shows the picture it drew last: a reused frame (whose filtered picture is
-    /// cached once) draws the same pixels as the frame before it, and changing the camera draws
-    /// again rather than keeping the cached picture.
-    #[test]
-    fn a_still_frame_blits_the_cached_picture() {
+    /// A frame showing `scene` at a fixed view, `ssaa` times the viewport's pixels each way.
+    fn test_frame(scene: GpuScene, ssaa: f32) -> Frame {
         const SIZE: u32 = 64;
-        let Some((_, device, queue)) = crate::open_headless().ok() else { return };
-        let depth = crate::depth_format(&device, true);
-        let format = wgpu::TextureFormat::Rgba8Unorm;
-        let mut r = Renderer::new(&device, GpuTarget { format, depth: Some(depth), samples: 1, tess: false }, None);
-        let mut scene = GpuScene::default();
-        scene.tri([-5.0, -5.0, 0.0], [0.0, 0.0, 1.0], [255, 0, 0, 255]);
-        scene.tri([5.0, -5.0, 0.0], [0.0, 0.0, 1.0], [255, 0, 0, 255]);
-        scene.tri([0.0, 5.0, 0.0], [0.0, 0.0, 1.0], [255, 0, 0, 255]);
         let none = || Arc::new(Mutex::new(None));
-        let mut frame = Frame {
+        Frame {
             product: false,
             key: 1,
             slot: Arc::new(Mutex::new(Some(scene))),
@@ -3017,20 +3039,60 @@ mod glass_tests {
             outline: false,
             eye: [0.0, 0.0, 100.0, 0.0],
             ao_radius: 0.0,
-            // Supersampled: the picture is drawn into a texture, so it can be cached.
-            ssaa: 2.0,
-        };
-        let first = render_frame(&mut r, &device, &queue, &frame);
+            ssaa,
+        }
+    }
+
+    /// A frame of opaque triangles at the fixed view.
+    fn test_scene() -> GpuScene {
+        let mut scene = GpuScene::default();
+        scene.tri([-5.0, -5.0, 0.0], [0.0, 0.0, 1.0], [255, 0, 0, 255]);
+        scene.tri([5.0, -5.0, 0.0], [0.0, 0.0, 1.0], [255, 0, 0, 255]);
+        scene.tri([0.0, 5.0, 0.0], [0.0, 0.0, 1.0], [255, 0, 0, 255]);
+        scene
+    }
+
+    /// A still view shows the picture it drew last: a reused frame (whose filtered picture is
+    /// cached once) draws the same pixels as the frame before it, and changing the camera draws
+    /// again rather than keeping the cached picture.
+    #[test]
+    fn a_still_frame_blits_the_cached_picture() {
+        let Some((_, device, queue)) = crate::open_headless().ok() else { return };
+        let depth = crate::depth_format(&device, true);
+        let format = wgpu::TextureFormat::Rgba8Unorm;
+        let mut r = Renderer::new(&device, GpuTarget { format, depth: Some(depth), samples: 1, tess: false }, None);
+        // Supersampled: the picture is drawn into a texture, so it can be cached.
+        let mut frame = test_frame(test_scene(), 2.0);
+        let first = render_frame(&mut r, &device, &queue, &frame, true);
         assert!(r.ss_ready && r.ss_scaled, "the first frame is drawn supersampled");
-        let again = render_frame(&mut r, &device, &queue, &frame);
+        let again = render_frame(&mut r, &device, &queue, &frame, true);
         assert!(r.cached.is_some(), "the still frame's filtered picture is cached");
         // The cached picture goes through one more 8-bit texture than the direct filter.
         assert!(first.iter().zip(&again).all(|(a, b)| a.abs_diff(*b) <= 1), "a reused frame draws the same picture");
         // A moved camera is a new picture: the cache is dropped and the scene drawn again.
         frame.view_proj[3][0] += 0.5;
-        let moved = render_frame(&mut r, &device, &queue, &frame);
+        let moved = render_frame(&mut r, &device, &queue, &frame, true);
         assert!(r.cached.is_none(), "a changed view cannot show the cached picture");
         assert_ne!(first, moved, "the changed view is drawn");
+    }
+
+    /// A window pass of another kind (one sample, no depth) shows the same picture: the scene is
+    /// drawn offscreen with its own depth and MSAA, then blitted into the window's pass.
+    #[test]
+    fn a_split_window_target_blits_the_offscreen_scene() {
+        let Some((_, device, queue)) = crate::open_headless().ok() else { return };
+        let depth = crate::depth_format(&device, true);
+        let format = wgpu::TextureFormat::Rgba8Unorm;
+        let scene_target = GpuTarget { format, depth: Some(depth), samples: 1, tess: false };
+        let window_target = GpuTarget { format, depth: None, samples: 1, tess: false };
+        let mut direct = Renderer::new(&device, scene_target, None);
+        let mut split = Renderer::with_window_target(&device, scene_target, window_target, None);
+        // Each renderer takes the scene out of its slot: a frame of its own for each.
+        let drawn = render_frame(&mut direct, &device, &queue, &test_frame(test_scene(), 1.0), true);
+        let shown = render_frame(&mut split, &device, &queue, &test_frame(test_scene(), 1.0), false);
+        assert!(split.ss_ready, "the split frame is drawn offscreen");
+        let max = drawn.iter().zip(&shown).map(|(a, b)| a.abs_diff(*b)).max().unwrap_or(0);
+        assert!(max <= 1, "the blitted picture matches the direct one (max difference {max})");
     }
 
     /// Two see-through squares, one at z = 5 (near) and one at z = -5, in `near` and `far`
