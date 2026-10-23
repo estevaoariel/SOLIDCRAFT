@@ -1,5 +1,5 @@
-//! MODIFY dialogs: Trim, Delete Passes, Leads and Links, Replace Tool,
-//! Move Entry Positions.
+//! MODIFY dialogs: Trim, Delete Passes, Leads and Links, Replace Tool, Move Entry.
+//! Document writes go through manufacture.modifications.set; not companion HTTP or GPL CAM.
 
 use egui::RichText;
 use serde_json::json;
@@ -53,15 +53,54 @@ impl ModifyDialogState {
 }
 
 pub fn open(app: &mut SolveApp, kind: ModifyDialogKind) {
+    crate::manufacture_workspace::ensure_setup(app);
     let setup = app.manufacture_workspace.active_setup.clone();
     let op_index = app.manufacture_workspace.selected_op.unwrap_or(0);
+    clear_other(app);
     app.manufacture_workspace.modify_dialog = Some(ModifyDialogState::new(kind, &setup, op_index));
-    app.manufacture_workspace.tab = crate::manufacture_workspace::MfgTab::Operations;
+    app.manufacture_workspace.tab = crate::manufacture_workspace::MfgTab::Modify;
 }
 
-pub fn show_dialog(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
+/// Return false when `id` is a modify command this panel handles.
+pub fn open_from_command(app: &mut SolveApp, id: &str) -> bool {
+    let kind = match id {
+        "manufacture.modify.trim" => ModifyDialogKind::Trim,
+        "manufacture.modify.delete_passes" => ModifyDialogKind::DeletePasses,
+        "manufacture.modify.leads_links" => ModifyDialogKind::LeadsAndLinks,
+        "manufacture.modify.replace_tool" => ModifyDialogKind::ReplaceTool,
+        "manufacture.modify.move_entry" => ModifyDialogKind::MoveEntryPositions,
+        _ => return true,
+    };
+    open(app, kind);
+    false
+}
+
+fn clear_other(app: &mut SolveApp) {
+    app.manufacture_workspace.tool_library_dialog = None;
+    app.manufacture_workspace.edit_tool_dialog = None;
+    app.manufacture_workspace.manage_stub_dialog = None;
+    app.manufacture_workspace.setup_dialog = None;
+    app.manufacture_workspace.drill_dialog = None;
+    app.manufacture_workspace.contour_dialog = None;
+    app.manufacture_workspace.twod_dialog = None;
+    app.manufacture_workspace.threed_dialog = None;
+    app.manufacture_workspace.hole_rec_dialog = None;
+    app.manufacture_workspace.multiaxis_dialog = None;
+    app.manufacture_workspace.turning_dialog = None;
+    app.manufacture_workspace.part_handling_dialog = None;
+    app.manufacture_workspace.inspection_dialog = None;
+    app.manufacture_workspace.manual_inspection_dialog = None;
+    app.manufacture_workspace.fabrication_dialog = None;
+    app.manufacture_workspace.nest_dialog = None;
+    app.manufacture_workspace.additive_dialog = None;
+    app.manufacture_workspace.from_gcode_dialog = None;
+    app.manufacture_workspace.modify_dialog = None;
+}
+
+pub fn show_dialogs(app: &mut SolveApp, ui: &mut egui::Ui) {
+    let _ = ui;
     let Some(state) = app.manufacture_workspace.modify_dialog.clone() else {
-        return false;
+        return;
     };
 
     let setup_name = state.draft.header().setup.clone();
@@ -69,20 +108,12 @@ pub fn show_dialog(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
     let op_count = app.session.doc.manufacture.setups.get(&setup_name).map(|s| s.operations.len()).unwrap_or(0);
     let setup_names: Vec<String> = app.session.doc.manufacture.setups.keys().cloned().collect();
 
-    let mut open = true;
-    let mut commit = false;
-    let mut cancel = false;
     let mut draft = state.draft.clone();
     let mut leads_tab = state.leads_tab;
     let title = format!("{} : TOOLPATH", state.kind_title());
 
-    crate::frame::window(ui.ctx(), title, crate::frame::Width::Normal)
-        .id(egui::Id::new("mfg_modify_dialog"))
-        .open(&mut open)
-        .collapsible(false)
-        .resizable(true)
-        .default_width(360.0)
-        .show(ui.ctx(), |ui| {
+    let (closed, action) =
+        crate::ui_kit::Window::new(egui::Id::new("mfg_modify_dialog"), "settings", &title).fields().cards(1.5).show(ui.ctx(), true, |ui| {
             target_header(ui, &mut draft, &setup_names, op_count);
             ui.separator();
             egui::ScrollArea::vertical().max_height(440.0).show(ui, |ui| match &mut draft {
@@ -97,32 +128,21 @@ pub fn show_dialog(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
             ui.separator();
             ui.label("Notes");
             ui.text_edit_multiline(&mut draft.header_mut().notes);
-            ui.separator();
-            ui.horizontal(|ui| {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("OK").clicked() {
-                        commit = true;
-                    }
-                    if ui.button("Cancel").clicked() {
-                        cancel = true;
-                    }
-                });
-            });
         });
-
-    if !open || cancel {
+    let commit = action == crate::ui_kit::Action::Ok;
+    let cancel = closed || action == crate::ui_kit::Action::Cancel;
+    if cancel {
         app.manufacture_workspace.modify_dialog = None;
-        return false;
+        return;
     }
     if commit && save(app, draft.clone()) {
         app.manufacture_workspace.modify_dialog = None;
-        return false;
+        return;
     }
     if let Some(d) = &mut app.manufacture_workspace.modify_dialog {
         d.draft = draft;
         d.leads_tab = leads_tab;
     }
-    true
 }
 
 impl ModifyDialogKind {
@@ -419,7 +439,7 @@ fn move_entry_body(ui: &mut egui::Ui, m: &mut MoveEntryModification) {
 
 fn save(app: &mut SolveApp, draft: ToolpathModification) -> bool {
     match serde_json::to_value(&draft) {
-        Ok(v) => match app.run("manufacture.containers.add", json!({"toolpath_modification": v})) {
+        Ok(v) => match app.run("manufacture.modifications.set", json!({"add": v})) {
             Ok(_) => {
                 app.manufacture_workspace.revision = u64::MAX;
                 app.manufacture_workspace.last_issues = app.session.doc.manufacture.issues();

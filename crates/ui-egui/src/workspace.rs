@@ -355,6 +355,18 @@ pub const SECTIONS: &[Section] = &[
     },
     Section {
         tab: "MANUFACTURE",
+        panel: "MODIFY",
+        promoted: 4,
+        ids: &[
+            "manufacture.modify.trim",
+            "manufacture.modify.delete_passes",
+            "manufacture.modify.leads_links",
+            "manufacture.modify.replace_tool",
+            "manufacture.modify.move_entry",
+        ],
+    },
+    Section {
+        tab: "MANUFACTURE",
         panel: "INSPECT",
         promoted: 2,
         ids: &[
@@ -428,6 +440,11 @@ pub const RIBBON_LABELS: &[(&str, &str)] = &[
     ("manufacture.inspection.record", "Record"),
     ("manufacture.inspection.surface", "Surface"),
     ("manufacture.inspection.wcs", "Probe WCS"),
+    ("manufacture.modify.delete_passes", "Del Passes"),
+    ("manufacture.modify.leads_links", "Leads/Links"),
+    ("manufacture.modify.move_entry", "Move Entry"),
+    ("manufacture.modify.replace_tool", "Replace Tool"),
+    ("manufacture.modify.trim", "Trim"),
     ("manufacture.multiaxis.adv_swarf", "Adv. Swarf"),
     ("manufacture.multiaxis.contour", "MA Contour"),
     ("manufacture.multiaxis.finish", "MA Finish"),

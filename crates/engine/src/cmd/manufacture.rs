@@ -4,7 +4,7 @@
 
 use serde::Deserialize;
 use serde_json::{Value, json};
-use solidcraft_manufacture::{ManufactureSettings, MfgSetup};
+use solidcraft_manufacture::{ManufactureSettings, MfgSetup, ToolpathModification};
 
 use super::CommandSpec;
 use crate::params::bad;
@@ -308,6 +308,40 @@ pub static COMMANDS: &[CommandSpec] = &[
         .doc_only()
         .at("MANUFACTURE", "ADDITIVE")
         .params("Simulates the Additive toolpath on the active Manufacture setup without a companion runtime."),
+    CommandSpec::new("manufacture.modify.trim", "Trim", twod_open)
+        .icon("settings")
+        .noundo()
+        .doc_only()
+        .at("MANUFACTURE", "MODIFY")
+        .params("Opens Trim on the active Manufacture setup. Document writes go through manufacture.modifications.set."),
+    CommandSpec::new("manufacture.modify.delete_passes", "Del Passes", twod_open)
+        .icon("settings")
+        .noundo()
+        .doc_only()
+        .at("MANUFACTURE", "MODIFY")
+        .params("Opens Delete Passes on the active Manufacture setup. Document writes go through manufacture.modifications.set."),
+    CommandSpec::new("manufacture.modify.leads_links", "Leads/Links", twod_open)
+        .icon("settings")
+        .noundo()
+        .doc_only()
+        .at("MANUFACTURE", "MODIFY")
+        .params("Opens Leads and Links on the active Manufacture setup. Document writes go through manufacture.modifications.set."),
+    CommandSpec::new("manufacture.modify.replace_tool", "Replace Tool", twod_open)
+        .icon("settings")
+        .noundo()
+        .doc_only()
+        .at("MANUFACTURE", "MODIFY")
+        .params("Opens Replace Tool on the active Manufacture setup. Document writes go through manufacture.modifications.set."),
+    CommandSpec::new("manufacture.modify.move_entry", "Move Entry", twod_open)
+        .icon("settings")
+        .noundo()
+        .doc_only()
+        .at("MANUFACTURE", "MODIFY")
+        .params("Opens Move Entry Positions on the active Manufacture setup. Document writes go through manufacture.modifications.set."),
+    CommandSpec::new("manufacture.modifications.set", "Save Toolpath Modification", set_modifications)
+        .icon("settings")
+        .doc_only()
+        .params("add: a toolpath modification object. Appends to manufacture.toolpath_modifications, validates atomically, one undo step."),
 ];
 
 // ── Settings get ───────────────────────────────────────────────────────────────
@@ -390,6 +424,23 @@ fn tool_library(_s: &mut Session, _params: &Value) -> Result<Value> {
 
 fn twod_open(_s: &mut Session, _params: &Value) -> Result<Value> {
     Ok(json!({"opened": true}))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SetModifications {
+    add: ToolpathModification,
+}
+
+fn set_modifications(s: &mut Session, params: &Value) -> Result<Value> {
+    let cmd = "manufacture.modifications.set";
+    let req: SetModifications = serde_json::from_value(params.clone()).map_err(|e| bad(cmd, e.to_string()))?;
+    let mut new_manufacture = s.doc.manufacture.clone();
+    new_manufacture.toolpath_modifications.push(req.add);
+    new_manufacture.validate().map_err(|e| bad(cmd, e.to_string()))?;
+    let count = new_manufacture.toolpath_modifications.len();
+    s.doc_mut().manufacture = new_manufacture;
+    Ok(json!({"count": count}))
 }
 
 #[cfg(test)]
@@ -601,6 +652,24 @@ mod tests {
             let r = s.execute(id, &json!({})).unwrap();
             assert_eq!(r["opened"], true, "{id}");
             assert!(s.doc.manufacture.setups.is_empty(), "{id}");
+        }
+    }
+
+    #[test]
+    fn modify_commands_are_display_only() {
+        const IDS: &[&str] = &[
+            "manufacture.modify.trim",
+            "manufacture.modify.delete_passes",
+            "manufacture.modify.leads_links",
+            "manufacture.modify.replace_tool",
+            "manufacture.modify.move_entry",
+        ];
+        for id in IDS {
+            let mut s = Session::default();
+            let r = s.execute(id, &json!({})).unwrap();
+            assert_eq!(r["opened"], true, "{id}");
+            assert!(s.doc.manufacture.setups.is_empty(), "{id}");
+            assert!(s.doc.manufacture.toolpath_modifications.is_empty(), "{id}");
         }
     }
 }

@@ -130,6 +130,7 @@ fn clear_other(app: &mut SolveApp) {
     app.manufacture_workspace.nest_dialog = None;
     app.manufacture_workspace.additive_dialog = None;
     app.manufacture_workspace.from_gcode_dialog = None;
+    app.manufacture_workspace.modify_dialog = None;
 }
 
 pub fn show_dialogs(app: &mut SolveApp, ui: &mut egui::Ui) {
