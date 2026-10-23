@@ -452,7 +452,12 @@ fn run_shape(app: &mut SolveApp, t: &Tool) -> Result<Vec<String>, String> {
             let width = crate::sketch_dims::locked_value(app, t, "Width").unwrap_or_else(|| (2.0 * dir.cross(p[2].0 - p[0].0).abs()).max(1e-3));
             json!({"p0": xy(&p[0]), "p1": xy(&p[1]), "width": width})
         }
-        "sketch.point" => json!({"point": xy(&p[0])}),
+        // A midpoint or on-curve snap goes as itself, so the point is held there (#4691); a
+        // snap to an existing point goes as its place, where `connect` joins them.
+        "sketch.point" => match &p[0].1 {
+            Some(id) if ["mid:", "on:", "vertex:"].iter().any(|k| id.starts_with(k)) => json!({"point": id}),
+            _ => json!({"point": xy(&p[0])}),
+        },
         _ => return Err(format!("drawing {} is not supported", t.cmd)),
     };
     let result = draw(app, t, params)?;
