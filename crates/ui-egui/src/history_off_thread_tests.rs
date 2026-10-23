@@ -177,10 +177,11 @@ fn an_agent_design_change_computes_off_the_window_thread() {
     h.frames(1);
     assert!(h.app.agent_computing().is_some_and(|(_, label)| !label.is_empty()), "the window says the agent's command computes");
     assert!(view.try_recv().is_ok_and(|v| v["ok"] == true), "ui.* answered while it computes");
-    let seen = inspect.try_recv().expect("inspection answered while it computes");
-    assert_eq!(seen["result"]["timeline"].as_array().map(Vec::len), Some(features), "the design as it was: {seen}");
     assert!(boss.try_recv().is_err(), "the next design change waits its turn");
     assert_eq!(h.app.session.doc.features.len(), features, "nothing applied yet");
+    // The inspection reads a copy of the design as it was when asked, off the window thread.
+    let seen = reply_to(&mut h, &inspect);
+    assert_eq!(seen["result"]["timeline"].as_array().map(Vec::len), Some(features), "the design as it was: {seen}");
     let r = reply_to(&mut h, &hole);
     assert_eq!(r["ok"], true, "{r}");
     let r = reply_to(&mut h, &boss);
@@ -283,6 +284,63 @@ fn an_agent_export_runs_on_a_copy() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// #4604: measuring the whole design (an inspection measures every body) reads a copy off the
+/// window thread, preference or not: on a large assembly it took a minute, the window answered
+/// nothing meanwhile and was closed as not responding. The window answers `ui.*` while it
+/// measures, and the measure comes back as when it runs here.
+#[test]
+fn a_measure_reads_a_copy_off_the_window_thread_preference_or_not() {
+    let (mut h, tx) = agent_harness();
+    h.app.preferences.agent_off_thread = false;
+    let here = h.app.run("inspect.measure", json!({})).unwrap();
+    let log = h.app.session.log.len();
+    let measure = ask(&tx, "engine.execute", json!({"command": "inspect.measure", "params": {}}));
+    let inspect = ask(&tx, "document.inspect", json!({"measure": true}));
+    let command = ask(&tx, "command", json!({"command": "document.inspect", "params": {"measure": true}}));
+    let view = ask(&tx, "ui.inspect", json!({}));
+    h.frames(1);
+    assert!(view.try_recv().is_ok_and(|v| v["ok"] == true), "ui.* answered meanwhile");
+    assert_eq!(h.app.control_answering.len(), 3, "all three read a copy");
+    let r = reply_to(&mut h, &measure);
+    assert_eq!(r["result"]["total"], here["total"], "{r}");
+    for reply in [inspect, command] {
+        let r = reply_to(&mut h, &reply);
+        assert_eq!(r["ok"], true, "{r}");
+        assert!(r["result"]["timeline"].is_array(), "{r}");
+    }
+    assert!(h.app.control_answering.is_empty());
+    assert_eq!(h.app.session.log.len(), log, "a reading leaves no echo: {:?}", h.app.session.log);
+}
+
+/// A clearance or interference check of every pair of bodies reads a copy off the window thread
+/// too: on an assembly of 150 bodies it computed for minutes with the window not responding. The
+/// answers are the ones running it here gives.
+#[test]
+fn a_clearance_check_reads_a_copy_off_the_window_thread() {
+    let (mut h, tx) = agent_harness();
+    h.app.preferences.agent_off_thread = false;
+    // The answers but their timing.
+    let untimed = |mut v: serde_json::Value| {
+        if let Some(o) = v.as_object_mut() {
+            o.remove("ms");
+        }
+        v
+    };
+    let clearance_here = untimed(h.app.run("inspect.clearance", json!({})).unwrap());
+    let interference_here = untimed(h.app.run("inspect.interference", json!({})).unwrap());
+    let clearance = ask(&tx, "engine.execute", json!({"command": "inspect.clearance", "params": {}}));
+    let interference = ask(&tx, "engine.execute", json!({"command": "inspect.interference", "params": {}}));
+    let view = ask(&tx, "ui.inspect", json!({}));
+    h.frames(1);
+    assert!(view.try_recv().is_ok_and(|v| v["ok"] == true), "ui.* answered meanwhile");
+    assert_eq!(h.app.control_answering.len(), 2, "both read a copy");
+    let r = reply_to(&mut h, &clearance);
+    assert_eq!(untimed(r["result"].clone()), clearance_here, "{r}");
+    let r = reply_to(&mut h, &interference);
+    assert_eq!(untimed(r["result"].clone()), interference_here, "{r}");
+    assert!(h.app.control_answering.is_empty());
+}
+
 /// With the preference off (Preferences > AI, the default) an agent's design change runs on the
 /// window thread, as before: answered in the frame it arrives.
 #[test]
@@ -320,9 +378,9 @@ fn the_window_answers_while_the_agent_cursor_acts_out_a_design_change() {
     h.frames(1);
     assert!(h.app.agent.busy());
     assert!(view.try_recv().is_ok_and(|v| v["ok"] == true), "ui.* answered while the pointer acts out the command");
-    assert!(inspect.try_recv().is_ok_and(|v| v["ok"] == true), "inspection answered too");
     assert!(boss.try_recv().is_err(), "the next design change waits its turn");
     assert_eq!(h.app.session.doc.features.len(), features, "nothing applied yet");
+    assert!(reply_to(&mut h, &inspect)["ok"] == true, "inspection answered too, from a copy");
     let r = reply_to(&mut h, &hole);
     assert_eq!(r["ok"], true, "{r}");
     let r = reply_to(&mut h, &boss);
