@@ -27,6 +27,8 @@ Detailed comparisons, primary-source citations, exact versions, and probe limits
 
 SolidCraft-specific code remains responsible for project layout, version compatibility, destination selection, capture-before-upload, durable acknowledgement, conflict copies, and reconciliation after an uncertain upload. General API or retry libraries do not decide those rules.
 
+See [drawing and collaboration integration](cloud-collaboration.md) for compatibility with separate drawing files (#3890) and the existing seams for later collaborative work. Collaboration is not part of this implementation.
+
 ### Authentication protocols
 
 If OAuth is added for a host, use `oauth2` rather than implementing authorization-code/PKCE, device polling, or token-refresh protocols. An isolated `oauth2 = { version = "=5.0.0", default-features = false, features = ["reqwest"] }` probe compiled real PKCE and device-authorization builders on both native and `wasm32-unknown-unknown`. The probe executed no authorization requests. The crate offers custom HTTP clients as well as reqwest. [Published OAuth2 API](https://docs.rs/oauth2/5.0.0/oauth2/)
