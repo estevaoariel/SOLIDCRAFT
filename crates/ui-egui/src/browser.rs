@@ -864,7 +864,7 @@ fn browser_header(app: &mut SolveApp, ui: &mut egui::Ui, collapsible: bool) {
 }
 
 fn prepare_model(app: &mut SolveApp) {
-    if app.tree.model.as_ref().is_none_or(|model| !model.matches(&app.session)) {
+    if !app.tree.model.as_mut().is_some_and(|model| model.follow_moves(&app.session)) {
         app.tree.model = Some(model::Model::new(&app.session));
     }
 }

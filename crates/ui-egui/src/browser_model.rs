@@ -20,6 +20,8 @@ pub(super) struct Model {
     pub features: HashMap<u64, Vec<usize>>,
     pub children: HashMap<u64, Vec<u64>>,
     placements: HashMap<Vec<u64>, Option<Arc<OccurrencePlacement>>>,
+    /// Every placement has been resolved into `placements`, in one pass.
+    filled: bool,
     /// Each placed body's placement path, by the body's world name (built on first use).
     body_paths: Option<HashMap<String, Vec<u64>>>,
 }
@@ -59,44 +61,72 @@ impl Model {
             features,
             children,
             placements: HashMap::new(),
+            filled: false,
             body_paths: None,
         }
     }
 
     pub fn matches(&self, session: &Session) -> bool {
-        Arc::ptr_eq(&self.doc, &session.doc) && Arc::ptr_eq(&self.state, &session.model.state()) && self.pending_moves == session.pending_moves
+        self.same_design(session) && self.pending_moves == session.pending_moves
+    }
+
+    fn same_design(&self, session: &Session) -> bool {
+        Arc::ptr_eq(&self.doc, &session.doc) && Arc::ptr_eq(&self.state, &session.model.state())
+    }
+
+    /// Follow the session's uncaptured moves when only they changed (a drag): placements, which
+    /// hold where each one is, are resolved again; the tree and which placement holds each body
+    /// stay. Rebuilding those walked every placement of a large assembly on every step of a drag
+    /// (#3720). False when the design or the model changed (make a new model then).
+    pub fn follow_moves(&mut self, session: &Session) -> bool {
+        if !self.same_design(session) {
+            return false;
+        }
+        if self.pending_moves != session.pending_moves {
+            self.pending_moves = session.pending_moves.clone();
+            self.placements.clear();
+            self.filled = false;
+        }
+        true
+    }
+
+    /// Has every placement been walked for [`Model::body_path`] (tests: a drag keeps it).
+    #[cfg(test)]
+    pub fn walked(&self) -> bool {
+        self.body_paths.is_some()
     }
 
     pub fn placement(&mut self, session: &Session, path: &[u64]) -> Option<Arc<OccurrencePlacement>> {
+        if !self.filled {
+            self.fill(session);
+        }
         self.placements.entry(path.to_vec()).or_insert_with(|| session.occurrence_placement(path).ok().map(Arc::new)).clone()
     }
 
-    /// The placement a placed body (by its world name) belongs to, as the browser's occurrence
-    /// rows nest; `None` for a body of the top-level design. Every placement is walked once per
-    /// model, as deep and as far as the browser draws them.
-    pub fn body_path(&mut self, session: &Session, body: &str) -> Option<Vec<u64>> {
-        if self.body_paths.is_none() {
-            let mut paths: HashMap<String, Vec<u64>> = HashMap::new();
-            let mut stack: Vec<Vec<u64>> = self.children.get(&0).into_iter().flatten().map(|o| vec![*o]).collect();
-            let mut walked = 0;
-            while let Some(path) = stack.pop() {
-                walked += 1;
-                if walked > 100_000 {
-                    break;
-                }
-                let Some(placement) = self.placement(session, &path) else { continue };
+    /// Resolve every placement in one pass over the design, as deep and as far as the browser
+    /// draws them (and the first time, which placement holds each body): the rows and the
+    /// highlights ask for most of them, and each resolved on its own read the whole design again.
+    fn fill(&mut self, session: &Session) {
+        self.filled = true;
+        let mut paths = self.body_paths.is_none().then(HashMap::<String, Vec<u64>>::new);
+        for placement in session.occurrence_placements(100_000) {
+            if let Some(paths) = paths.as_mut() {
                 for b in &placement.bodies {
-                    paths.entry(b.world.clone()).or_insert_with(|| path.clone());
-                }
-                if path.len() < 64 {
-                    for child in self.children.get(&placement.component).into_iter().flatten() {
-                        let mut next = path.clone();
-                        next.push(*child);
-                        stack.push(next);
-                    }
+                    paths.entry(b.world.clone()).or_insert_with(|| placement.path.clone());
                 }
             }
-            self.body_paths = Some(paths);
+            self.placements.entry(placement.path.clone()).or_insert_with(|| Some(Arc::new(placement)));
+        }
+        if paths.is_some() {
+            self.body_paths = paths;
+        }
+    }
+
+    /// The placement a placed body (by its world name) belongs to, as the browser's occurrence
+    /// rows nest; `None` for a body of the top-level design.
+    pub fn body_path(&mut self, session: &Session, body: &str) -> Option<Vec<u64>> {
+        if self.body_paths.is_none() {
+            self.fill(session);
         }
         self.body_paths.as_ref()?.get(body).cloned()
     }

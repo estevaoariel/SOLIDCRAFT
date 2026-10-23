@@ -6960,111 +6960,203 @@ fn placed_key(b: &ModelBody, m: &crate::Mat) -> (usize, [u64; 16]) {
 /// [`world_state`], reusing the bodies `placed` holds from an earlier call and leaving it holding
 /// this call's.
 pub fn world_state_reusing(doc: &Document, st: &ModelState, placed_before: &mut PlacedBodies) -> ModelState {
+    world_state_laid_out(doc, st, &BTreeMap::new(), placed_before).0
+}
+
+/// Where the bodies of a world state came from: the placements it was made with, and for each of
+/// its bodies, the index of its placement and of the model body it places. With it, a world whose
+/// placements only moved is made again by placing the moved ones' bodies alone
+/// ([`world_state_moved`]).
+#[derive(Clone, Debug, Default)]
+pub struct WorldLayout {
+    placements: Vec<(u64, Vec<u64>, crate::Mat)>,
+    bodies: Vec<(usize, usize)>,
+}
+
+/// One body to place: the model body, where it goes, its world name and its component.
+type PlaceJob<'a> = (&'a ModelBody, crate::Mat, String, u64);
+
+/// [`world_state_reusing`] with `moves` (by occurrence id) in place of those occurrences' own
+/// transforms (moves not captured yet, as a drag leaves them), and the layout of what it placed.
+pub fn world_state_laid_out(
+    doc: &Document,
+    st: &ModelState,
+    moves: &BTreeMap<u64, crate::Mat>,
+    placed_before: &mut PlacedBodies,
+) -> (ModelState, WorldLayout) {
     if doc.occurrences.is_empty() {
-        return st.clone();
+        return (st.clone(), WorldLayout::default());
     }
     let mut placed_now = PlacedBodies::default();
-    let comp_of_feature = |id: u64| doc.feature(id).map(|f| f.component).unwrap_or(0);
-    let first_path = |comp: u64| -> Vec<u64> {
-        let mut path = Vec::new();
-        let mut c = comp;
-        for _ in 0..1000 {
-            if c == 0 {
-                break;
-            }
-            let Some(o) = doc.occurrence_of(c) else { break };
-            path.insert(0, o.id);
-            c = o.parent;
-        }
-        path
-    };
-    let mut out = ModelState { body_counter: st.body_counter, ..Default::default() };
-    let placements = doc.placements();
-    // A body moved in from another component keeps its place (its offset).
-    let body_matrix = |b: &ModelBody, m: &crate::Mat| doc.model_body_offset(b).map(|o| crate::mat_mul(m, o)).unwrap_or(*m);
-    // Every body placed elsewhere than its definition, placed on all cores: a large assembly
-    // places hundreds of parts, each a B-rep transform.
-    let mut jobs = Vec::new();
-    for (comp, path, m) in &placements {
-        for b in st.bodies.iter().filter(|b| doc.model_body_component(b) == *comp) {
-            let bm = body_matrix(b, m);
-            if !crate::is_identity(&bm) {
-                jobs.push((b, bm, doc.world_body_name(st, &b.name, *comp, path)));
-            }
+    // What placing reads from the whole design, gathered once: looked up again for every body
+    // of every placement, it held every change to a large assembly for seconds (#3720).
+    let owned = doc.body_indices_by_component(st);
+    let mut names = crate::WorldNames::new(doc, st);
+    let placements = doc.placements_with(moves);
+    // Every body of every placement, in order.
+    let mut jobs: Vec<PlaceJob<'_>> = Vec::new();
+    let mut bodies = Vec::new();
+    for (i, (comp, path, m)) in placements.iter().enumerate() {
+        for &k in owned.get(comp).into_iter().flatten() {
+            let Some(b) = st.bodies.get(k) else { continue };
+            jobs.push((b, body_matrix(doc, b, m), names.name(&b.name, *comp, path), *comp));
+            bodies.push((i, k));
         }
     }
-    let mut moved = kernel::map_on_threads(&jobs, 16, |(b, bm, name)| placed_before.placed(b, bm, name.clone())).into_iter().zip(&jobs);
-    for (comp, path, m) in placements {
-        let primary = path == first_path(comp);
-        let ident = crate::is_identity(&m);
-        for b in st.bodies.iter().filter(|b| doc.model_body_component(b) == comp) {
-            let bm = body_matrix(b, &m);
-            // Identical geometry also shares its display mesh cell with the definition.
-            // A changed placement keeps a distinct mesh, at that placement's coordinates.
-            let mut placed = if crate::is_identity(&bm) {
-                let mut placed = b.clone();
-                placed.name = doc.world_body_name(st, &b.name, comp, &path);
+    let placed = place_bodies(&jobs, placed_before);
+    let mut out = ModelState { body_counter: st.body_counter, ..Default::default() };
+    for ((b, bm, _, comp), placed) in jobs.iter().zip(placed) {
+        if !crate::is_identity(bm) {
+            placed_now.by_source.insert(placed_key(b, bm), ((*b).clone(), placed.clone()));
+        }
+        out.bodies.push(world_body(placed, b, bm, *comp));
+    }
+    place_annotations(doc, st, &placements, &mut out);
+    *placed_before = placed_now;
+    (out, WorldLayout { placements, bodies })
+}
+
+/// The world state of `st` with uncaptured `moves`, from `before`, the world made with `layout`
+/// before only the moves of the occurrences in `changed` changed: the bodies of the placements
+/// under those occurrences are placed again, every other body is kept as `before` holds it. A
+/// drag moves one part of a large assembly; placing every body again held every step of it.
+/// `None` when the design's placements no longer match the layout (place everything then).
+pub fn world_state_moved(
+    doc: &Document,
+    st: &ModelState,
+    moves: &BTreeMap<u64, crate::Mat>,
+    before: &ModelState,
+    layout: &WorldLayout,
+    changed: &std::collections::BTreeSet<u64>,
+    placed: &mut PlacedBodies,
+) -> Option<(ModelState, WorldLayout)> {
+    let placements = doc.placements_with(moves);
+    if placements.len() != layout.placements.len()
+        || before.bodies.len() != layout.bodies.len()
+        || placements.iter().zip(&layout.placements).any(|(a, b)| a.0 != b.0 || a.1 != b.1)
+    {
+        return None;
+    }
+    let affected: Vec<bool> = placements.iter().map(|(_, path, _)| path.iter().any(|id| changed.contains(id))).collect();
+    // The bodies of the moved placements: where each is in the world, and where it was.
+    let mut at = Vec::new();
+    let mut jobs: Vec<PlaceJob<'_>> = Vec::new();
+    for (w, &(i, k)) in layout.bodies.iter().enumerate() {
+        if !affected.get(i).copied().unwrap_or(false) {
+            continue;
+        }
+        let (b, (comp, _, m), (_, _, was), old) = (st.bodies.get(k)?, placements.get(i)?, layout.placements.get(i)?, before.bodies.get(w)?);
+        jobs.push((b, body_matrix(doc, b, m), old.name.clone(), *comp));
+        at.push((w, body_matrix(doc, b, was)));
+    }
+    let made = place_bodies(&jobs, placed);
+    let mut out = ModelState { body_counter: st.body_counter, bodies: before.bodies.clone(), ..Default::default() };
+    for (((b, bm, _, comp), body), (w, was)) in jobs.iter().zip(made).zip(at) {
+        // The reuse table follows the world: the body where it was is no longer placed there.
+        if !crate::is_identity(&was) {
+            placed.by_source.remove(&placed_key(b, &was));
+        }
+        if !crate::is_identity(bm) {
+            placed.by_source.insert(placed_key(b, bm), ((*b).clone(), body.clone()));
+        }
+        if let Some(slot) = out.bodies.get_mut(w) {
+            *slot = world_body(body, b, bm, *comp);
+        }
+    }
+    place_annotations(doc, st, &placements, &mut out);
+    Some((out, WorldLayout { placements, bodies: layout.bodies.clone() }))
+}
+
+/// A body moved in from another component keeps its place (its offset).
+fn body_matrix(doc: &Document, b: &ModelBody, m: &crate::Mat) -> crate::Mat {
+    doc.model_body_offset(b).map(|o| crate::mat_mul(m, o)).unwrap_or(*m)
+}
+
+/// Each job's body placed, in order: in place, the model body renamed; elsewhere, from `reuse`
+/// when it placed the same body there before, else transformed (on all cores: a large assembly
+/// places hundreds of parts, each a B-rep transform).
+fn place_bodies(jobs: &[PlaceJob<'_>], reuse: &PlacedBodies) -> Vec<ModelBody> {
+    let moved: Vec<&PlaceJob<'_>> = jobs.iter().filter(|(_, bm, _, _)| !crate::is_identity(bm)).collect();
+    let mut made = kernel::map_on_threads(&moved, 16, |(b, bm, name, _)| reuse.placed(b, bm, name.clone())).into_iter();
+    jobs.iter()
+        .map(|(b, bm, name, _)| {
+            if crate::is_identity(bm) {
+                // Identical geometry also shares its display mesh cell with the definition.
+                let mut placed = (*b).clone();
+                placed.name = name.clone();
                 placed
             } else {
-                // The same order as the jobs: this body's, made above (again here if it failed).
-                let placed = match moved.next() {
-                    Some((Some(placed), _)) => placed,
-                    Some((None, (_, _, name))) => placed_before.placed(b, &bm, name.clone()),
-                    None => placed_before.placed(b, &bm, doc.world_body_name(st, &b.name, comp, &path)),
-                };
-                placed_now.by_source.insert(placed_key(b, &bm), (b.clone(), placed.clone()));
-                placed
-            };
-            // World states keep their previous display-only evaluation-key semantics.
-            placed.key = 0;
-            // With the model body's own frame, so its place is told apart from the placement's.
-            placed.source_key = b.geometry_key().unwrap_or(0);
-            placed.source_name = Some(b.definition_name().to_string());
-            placed.source_transform = crate::mat_mul(&bm, &b.source_transform);
-            placed.component = comp;
-            placed.transferred = b.transferred;
-            placed.imported = b.imported.clone();
-            // Placement preserves topology: face ownership remains that of the
-            // source model, including modifiers on component instances.
-            placed.names = crate::naming::NameCell::same(b);
-            out.bodies.push(placed);
+                // A changed placement keeps a distinct mesh, at that placement's coordinates; the
+                // same order as `moved`: this body's, made above (again here if it failed).
+                match made.next() {
+                    Some(Some(placed)) => placed,
+                    _ => reuse.placed(b, bm, name.clone()),
+                }
+            }
+        })
+        .collect()
+}
+
+/// `placed` (model body `b` placed by `bm` in component `comp`) as a world state holds it.
+fn world_body(mut placed: ModelBody, b: &ModelBody, bm: &crate::Mat, comp: u64) -> ModelBody {
+    // World states keep their previous display-only evaluation-key semantics.
+    placed.key = 0;
+    // With the model body's own frame, so its place is told apart from the placement's.
+    placed.source_key = b.geometry_key().unwrap_or(0);
+    placed.source_name = Some(b.definition_name().to_string());
+    placed.source_transform = crate::mat_mul(bm, &b.source_transform);
+    placed.component = comp;
+    placed.transferred = b.transferred;
+    placed.imported = b.imported.clone();
+    // Placement preserves topology: face ownership remains that of the
+    // source model, including modifiers on component instances.
+    placed.names = crate::naming::NameCell::same(b);
+    placed
+}
+
+/// Sketches and threads, at each component's first placement (shown once, where it is authored).
+fn place_annotations(doc: &Document, st: &ModelState, placements: &[(u64, Vec<u64>, crate::Mat)], out: &mut ModelState) {
+    if st.sketches.is_empty() && st.threads.is_empty() {
+        return;
+    }
+    let feature_components: std::collections::HashMap<u64, u64> = doc.features.iter().rev().map(|f| (f.id, f.component)).collect();
+    let comp_of_feature = |id: u64| feature_components.get(&id).copied().unwrap_or(0);
+    let mut first_paths: std::collections::HashMap<u64, Vec<u64>> = std::collections::HashMap::new();
+    for (comp, path, m) in placements {
+        if *path != *first_paths.entry(*comp).or_insert_with(|| doc.first_path(*comp)) {
+            continue;
         }
-        if primary {
-            for s in st.sketches.iter().filter(|s| comp_of_feature(s.feature) == comp) {
-                if ident {
-                    // In place: shared as it is.
-                    out.sketches.push(s.clone());
-                    continue;
-                }
-                let mut s2 = SolvedSketch::clone(s);
-                if !ident {
-                    let p = &s.plane;
-                    if let Some(np) = Plane::new(crate::apply_point(&m, p.origin), crate::apply_vector(&m, p.x), crate::apply_vector(&m, p.y)) {
-                        s2.plane = np;
-                    }
-                }
-                for wire in &mut s2.sketch.wires {
-                    if wire.space == solidcraft_sketch::WireSpace::Component {
-                        map_wire(wire, &m);
-                    }
-                }
-                out.sketches.push(Arc::new(s2));
+        let ident = crate::is_identity(m);
+        for s in st.sketches.iter().filter(|s| comp_of_feature(s.feature) == *comp) {
+            if ident {
+                // In place: shared as it is.
+                out.sketches.push(s.clone());
+                continue;
             }
-            for t in st
-                .threads
-                .iter()
-                .filter(|t| st.body(&t.body).map(|body| doc.model_body_component(body)).unwrap_or_else(|| comp_of_feature(t.feature)) == comp)
-            {
-                let mut t2 = t.clone();
-                let frame = st.body(&t.body).and_then(|body| doc.model_body_offset(body)).map(|offset| crate::mat_mul(&m, offset)).unwrap_or(m);
-                t2.axis_point = crate::apply_point(&frame, t.axis_point);
-                t2.axis = crate::apply_vector(&frame, *t.axis).unit().unwrap_or(t.axis);
-                out.threads.push(t2);
+            let mut s2 = SolvedSketch::clone(s);
+            let p = &s.plane;
+            if let Some(np) = Plane::new(crate::apply_point(m, p.origin), crate::apply_vector(m, p.x), crate::apply_vector(m, p.y)) {
+                s2.plane = np;
             }
+            for wire in &mut s2.sketch.wires {
+                if wire.space == solidcraft_sketch::WireSpace::Component {
+                    map_wire(wire, m);
+                }
+            }
+            out.sketches.push(Arc::new(s2));
+        }
+        for t in st
+            .threads
+            .iter()
+            .filter(|t| st.body(&t.body).map(|body| doc.model_body_component(body)).unwrap_or_else(|| comp_of_feature(t.feature)) == *comp)
+        {
+            let mut t2 = t.clone();
+            let frame = st.body(&t.body).and_then(|body| doc.model_body_offset(body)).map(|offset| crate::mat_mul(m, offset)).unwrap_or(*m);
+            t2.axis_point = crate::apply_point(&frame, t.axis_point);
+            t2.axis = crate::apply_vector(&frame, *t.axis).unit().unwrap_or(t.axis);
+            out.threads.push(t2);
         }
     }
-    *placed_before = placed_now;
-    out
 }
 
 #[cfg(test)]
@@ -7145,6 +7237,50 @@ mod world_placement_cache_tests {
         let again = world_state(&doc, &state);
         assert!(Arc::ptr_eq(&original_mesh, &again.body("Block").unwrap().mesh()));
         assert!(Arc::ptr_eq(&names, &crate::naming::face_names(again.body(&second_name).unwrap())));
+    }
+
+    /// A drag places only the bodies under the moved occurrence again (#3720), and the world it
+    /// makes is the one placing every body with the same moves makes: names, places, meshes.
+    #[test]
+    fn a_drag_places_only_the_moved_bodies_and_matches_placing_them_all() {
+        let mut doc = Document::new("drag");
+        let sub = doc.add_component(Some("Sub"), 0).unwrap();
+        let part = doc.add_component(Some("Part"), sub).unwrap();
+        let other = doc.add_component(Some("Other"), 0).unwrap();
+        doc.body_components.insert("Block".into(), part);
+        doc.body_components.insert("Peg".into(), other);
+        let second = doc.add_occurrence(part, sub, crate::rigid(Vec3::new(10., 0., 0.), Vec3::ZERO, Vec3::Z, 0.3)).unwrap();
+        let sub_occurrence = doc.occurrence_of(sub).unwrap().id;
+        let mut state = ModelState::default();
+        state.bodies.push(ModelBody::new("Block".into(), kernel::box_solid(Vec3::ZERO, Vec3::new(2., 3., 4.)).unwrap(), 1));
+        state.bodies.push(ModelBody::new("Peg".into(), kernel::box_solid(Vec3::ZERO, Vec3::new(1., 1., 5.)).unwrap(), 2));
+        let step = crate::rigid(Vec3::new(3., -4., 1.), Vec3::ZERO, Vec3::X, 0.2);
+        // The whole sub-assembly (both Blocks), then one of its placements alone.
+        for moved in [sub_occurrence, second] {
+            let mut reuse = PlacedBodies::default();
+            let (before, layout) = world_state_laid_out(&doc, &state, &BTreeMap::new(), &mut reuse);
+            assert_eq!(before.bodies.len(), 3);
+            let moves = BTreeMap::from([(moved, crate::mat_mul(&step, &doc.occurrences.iter().find(|o| o.id == moved).unwrap().transform))]);
+            let changed = std::collections::BTreeSet::from([moved]);
+            let (dragged, _) = world_state_moved(&doc, &state, &moves, &before, &layout, &changed, &mut reuse).unwrap();
+            let (full, _) = world_state_laid_out(&doc, &state, &moves, &mut PlacedBodies::default());
+            assert_eq!(dragged.bodies.len(), full.bodies.len());
+            for (d, f) in dragged.bodies.iter().zip(&full.bodies) {
+                assert_eq!((&d.name, &d.source_name, d.component), (&f.name, &f.source_name, f.component));
+                assert_eq!(d.source_transform, f.source_transform);
+                let (dm, fm) = (d.mesh(), f.mesh());
+                assert_eq!(dm.positions.len(), fm.positions.len());
+                assert!(dm.positions.iter().zip(&fm.positions).all(|(a, b)| a.dist(*b) < 1e-9));
+            }
+            // The Peg is not under the moved occurrence: kept as it was, mesh and all.
+            let (peg_before, peg_after) = (before.body("Peg").unwrap(), dragged.body("Peg").unwrap());
+            assert!(Arc::ptr_eq(&peg_before.mesh(), &peg_after.mesh()));
+            // Moving one Block leaves the other where it was.
+            if moved == second {
+                let first = before.bodies.iter().position(|b| b.name == "Block").unwrap();
+                assert_eq!(before.bodies[first].source_transform, dragged.bodies[first].source_transform);
+            }
+        }
     }
 }
 

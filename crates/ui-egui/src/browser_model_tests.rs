@@ -81,3 +81,23 @@ fn body_index_and_placements_follow_geometry_undo_and_document_identity() {
     assert!(super::model_children(&h.app, 0).is_empty());
     assert!(super::entries(&h.app, component, "bodies").is_empty());
 }
+
+#[test]
+fn a_drag_keeps_where_each_body_is_and_moves_its_placement() {
+    // Which placement holds each body does not change while a placement is dragged (#3720):
+    // the walk over every placement is kept, the placement's place follows the move.
+    let (mut h, _, occurrence) = fixture();
+    super::prepare_model(&mut h.app);
+    let path = h.app.tree.model.as_mut().unwrap().body_path(&h.app.session, "Body1");
+    assert_eq!(path, Some(vec![occurrence]));
+    h.app.run("occurrence.move", json!({"occurrence":occurrence,"translate":[20,0,0],"capture":false})).unwrap();
+    super::prepare_model(&mut h.app);
+    assert!(h.app.tree.model.as_ref().unwrap().walked(), "a drag step walked every placement again");
+    let moved = super::model_placement(&mut h.app, &[occurrence]).unwrap();
+    assert!((solidcraft_engine::doc::apply_point(&moved.world, solidcraft_engine::geom::Vec3::ZERO).x - 20.0).abs() < 1e-9);
+    assert_eq!(h.app.tree.model.as_mut().unwrap().body_path(&h.app.session, "Body1"), Some(vec![occurrence]));
+    // A change to the design starts over.
+    h.app.run("component.capture_position", json!({})).unwrap();
+    super::prepare_model(&mut h.app);
+    assert!(!h.app.tree.model.as_ref().unwrap().walked());
+}

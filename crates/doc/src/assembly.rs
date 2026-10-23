@@ -13,6 +13,75 @@ use solidcraft_geom::{Plane, Vec3};
 
 use crate::{DocError, Document, FeatureKind, PlaneRef, Result};
 
+/// [`Document::world_body_name`] for many bodies of one state: what a name reads from the whole
+/// design (occurrences by id and by name, whether any name is reserved, the state's body names,
+/// first placements) is gathered once, not again for every body of every placement (#3720).
+pub struct WorldNames<'a> {
+    doc: &'a Document,
+    by_id: std::collections::HashMap<u64, &'a Occurrence>,
+    by_name: std::collections::HashMap<&'a str, Vec<&'a Occurrence>>,
+    bodies: std::collections::HashSet<&'a str>,
+    /// Slash and reserved-marker names could alias concatenated labels or fallback keys.
+    reserved: bool,
+    first: std::collections::HashMap<u64, Vec<u64>>,
+}
+
+impl<'a> WorldNames<'a> {
+    pub fn new(doc: &'a Document, st: &'a crate::ModelState) -> Self {
+        let mut by_id = std::collections::HashMap::with_capacity(doc.occurrences.len());
+        let mut by_name: std::collections::HashMap<&str, Vec<&Occurrence>> = std::collections::HashMap::new();
+        for o in &doc.occurrences {
+            by_id.entry(o.id).or_insert(o);
+            by_name.entry(o.name.as_str()).or_default().push(o);
+        }
+        let reserved =
+            doc.occurrences.iter().any(|o| o.name.contains('/') || o.name.contains("@occ[")) || st.bodies.iter().any(|b| b.name.contains("@occ["));
+        WorldNames {
+            doc,
+            by_id,
+            by_name,
+            bodies: st.bodies.iter().map(|b| b.name.as_str()).collect(),
+            reserved,
+            first: std::collections::HashMap::new(),
+        }
+    }
+
+    /// The world name of body `source` of `component` placed at `path`. Source names retain
+    /// priority; ambiguous labels use full IDs. Resolves label ambiguity with bounded dynamic
+    /// counts instead of expanding all placements.
+    pub fn name(&mut self, source: &str, component: u64, path: &[u64]) -> String {
+        let doc = self.doc;
+        if path == self.first.entry(component).or_insert_with(|| doc.first_path(component)).as_slice() {
+            return source.to_string();
+        }
+        let names: Vec<&str> = path.iter().filter_map(|id| self.by_id.get(id)).map(|o| o.name.as_str()).collect();
+        let label = names.join("/");
+        let candidate = format!("{source} ({label})");
+        let mut counts = std::collections::BTreeMap::from([(0, 1usize)]);
+        for name in &names {
+            let mut next = std::collections::BTreeMap::<u64, usize>::new();
+            for o in self.by_name.get(name).into_iter().flatten() {
+                if let Some(count) = counts.get(&o.parent) {
+                    let n = next.entry(o.component).or_default();
+                    *n = (*n + count).min(2);
+                }
+            }
+            counts = next;
+        }
+        let ambiguous = counts.get(&component).copied().unwrap_or(0) > 1;
+        if !ambiguous && !self.reserved && !self.bodies.contains(candidate.as_str()) {
+            return candidate;
+        }
+        let ids = path.iter().map(u64::to_string).collect::<Vec<_>>().join("/");
+        let encoded = serde_json::to_string(source).unwrap_or_else(|_| source.to_string());
+        let mut key = format!("{encoded}@occ[{ids}]");
+        while self.bodies.contains(key.as_str()) {
+            key.push('#');
+        }
+        key
+    }
+}
+
 /// Column-major 4×4 affine transform (`m[col][row]`).
 pub type Mat = [[f64; 4]; 4];
 
@@ -262,6 +331,18 @@ impl Document {
     /// Every placement of each component: (component, occurrence path ids, world transform).
     /// A branch stops past [`MAX_PLACEMENT_DEPTH`] levels, the walk past [`MAX_PLACEMENTS`] placements.
     pub fn placements(&self) -> Vec<(u64, Vec<u64>, Mat)> {
+        self.placements_with(&std::collections::BTreeMap::new())
+    }
+
+    /// [`Document::placements`] with `moves` (by occurrence id) in place of those occurrences'
+    /// own transforms: moves not captured yet, as a drag leaves them.
+    pub fn placements_with(&self, moves: &std::collections::BTreeMap<u64, Mat>) -> Vec<(u64, Vec<u64>, Mat)> {
+        // Each component's occurrences, in the design's order, found once rather than by a scan
+        // of every occurrence for every placement.
+        let mut children: std::collections::HashMap<u64, Vec<&Occurrence>> = std::collections::HashMap::new();
+        for o in &self.occurrences {
+            children.entry(o.parent).or_default().push(o);
+        }
         let mut out = vec![(0, Vec::new(), IDENTITY)];
         let mut stack: Vec<(u64, Vec<u64>, Mat)> = vec![(0, Vec::new(), IDENTITY)];
         while let Some((comp, path, m)) = stack.pop() {
@@ -272,10 +353,10 @@ impl Document {
             if path.len() > MAX_PLACEMENT_DEPTH {
                 continue;
             }
-            for o in self.occurrences.iter().filter(|o| o.parent == comp) {
+            for o in children.get(&comp).into_iter().flatten() {
                 let mut p = path.clone();
                 p.push(o.id);
-                let w = mat_mul(&m, &o.transform);
+                let w = mat_mul(&m, moves.get(&o.id).unwrap_or(&o.transform));
                 out.push((o.component, p.clone(), w));
                 stack.push((o.component, p, w));
             }
@@ -293,9 +374,11 @@ impl Document {
     /// Body frames with explicit definition names; callers must not infer them from labels.
     pub fn body_frames_with_source(&self, st: &crate::ModelState) -> Vec<(String, String, u64, Vec<u64>, Mat)> {
         let mut out = Vec::new();
+        let owned = self.bodies_by_component(st);
+        let mut names = WorldNames::new(self, st);
         for (comp, path, m) in self.placements() {
-            for b in st.bodies.iter().filter(|b| self.model_body_component(b) == comp) {
-                let name = self.world_body_name(st, &b.name, comp, &path);
+            for b in owned.get(&comp).into_iter().flatten() {
+                let name = names.name(&b.name, comp, &path);
                 let w = match self.model_body_offset(b) {
                     Some(o) => mat_mul(&m, o),
                     None => m,
@@ -309,37 +392,28 @@ impl Document {
     /// Computed placement name. Source names retain priority; ambiguous labels use full IDs.
     /// Resolves label ambiguity with bounded dynamic counts instead of expanding all placements.
     pub fn world_body_name(&self, st: &crate::ModelState, source: &str, component: u64, path: &[u64]) -> String {
-        if path == self.first_path(component) {
-            return source.to_string();
+        WorldNames::new(self, st).name(source, component, path)
+    }
+
+    /// The bodies of `st` by the component that owns them ([`Document::model_body_component`]),
+    /// each in the state's order, with the timeline looked up once rather than once per body.
+    pub fn bodies_by_component<'a>(&self, st: &'a crate::ModelState) -> std::collections::HashMap<u64, Vec<&'a crate::ModelBody>> {
+        self.body_indices_by_component(st).into_iter().map(|(c, bodies)| (c, bodies.into_iter().filter_map(|i| st.bodies.get(i)).collect())).collect()
+    }
+
+    /// [`Document::bodies_by_component`], each body by its index in `st.bodies`.
+    pub fn body_indices_by_component(&self, st: &crate::ModelState) -> std::collections::HashMap<u64, Vec<usize>> {
+        let features: std::collections::HashMap<u64, u64> = self.features.iter().rev().map(|f| (f.id, f.component)).collect();
+        let mut out: std::collections::HashMap<u64, Vec<usize>> = std::collections::HashMap::new();
+        for (i, b) in st.bodies.iter().enumerate() {
+            let component = if b.transferred || b.source_name.is_some() {
+                b.component
+            } else {
+                self.body_components.get(&b.name).copied().unwrap_or_else(|| features.get(&b.feature).copied().unwrap_or(0))
+            };
+            out.entry(component).or_default().push(i);
         }
-        let names: Vec<&str> = path.iter().filter_map(|id| self.occurrences.iter().find(|o| o.id == *id)).map(|o| o.name.as_str()).collect();
-        let label = names.join("/");
-        let candidate = format!("{source} ({label})");
-        let mut counts = std::collections::BTreeMap::from([(0, 1usize)]);
-        for name in &names {
-            let mut next = std::collections::BTreeMap::<u64, usize>::new();
-            for o in self.occurrences.iter().filter(|o| o.name == *name) {
-                if let Some(count) = counts.get(&o.parent) {
-                    let n = next.entry(o.component).or_default();
-                    *n = (*n + count).min(2);
-                }
-            }
-            counts = next;
-        }
-        let ambiguous = counts.get(&component).copied().unwrap_or(0) > 1;
-        // Slash and reserved-marker names could alias concatenated labels or fallback keys.
-        let reserved =
-            self.occurrences.iter().any(|o| o.name.contains('/') || o.name.contains("@occ[")) || st.bodies.iter().any(|b| b.name.contains("@occ["));
-        if !ambiguous && !reserved && st.body(&candidate).is_none() {
-            return candidate;
-        }
-        let ids = path.iter().map(u64::to_string).collect::<Vec<_>>().join("/");
-        let encoded = serde_json::to_string(source).unwrap_or_else(|_| source.to_string());
-        let mut key = format!("{encoded}@occ[{ids}]");
-        while st.body(&key).is_some() {
-            key.push('#');
-        }
-        key
+        out
     }
 
     /// The occurrence path of a component's first placement.

@@ -221,15 +221,21 @@ struct WorldCache {
     active_component: u64,
     active_occurrence_path: Option<Vec<u64>>,
     world: Arc<solidcraft_doc::ModelState>,
+    /// Where `world`'s bodies came from, so a drag places only the moved ones again.
+    layout: Arc<solidcraft_doc::WorldLayout>,
     /// The moved components' bodies as placed for `world`, reused by the next world state.
     placed: Arc<std::sync::Mutex<solidcraft_doc::PlacedBodies>>,
 }
 
 impl WorldCache {
     fn matches(&self, session: &Session, model: &Arc<solidcraft_doc::ModelState>) -> bool {
+        self.matches_but_moves(session, model) && self.pending_moves == session.pending_moves
+    }
+
+    /// The same design, model and active placement; the uncaptured moves may differ.
+    fn matches_but_moves(&self, session: &Session, model: &Arc<solidcraft_doc::ModelState>) -> bool {
         Arc::ptr_eq(&self.doc, &session.doc)
             && Arc::ptr_eq(&self.model, model)
-            && self.pending_moves == session.pending_moves
             && self.active_component == session.active_component
             && self.active_occurrence_path == session.active_occurrence_path
     }
@@ -580,23 +586,27 @@ impl Session {
         {
             return cached.world.clone();
         }
+        let last = self.world_cache.lock().ok().and_then(|c| c.clone());
         // The bodies the last world state placed: unchanged ones are not transformed and meshed
         // again (a design built command by command changed one body at a time).
-        let placed = self.world_cache.lock().ok().and_then(|c| c.as_ref().map(|c| c.placed.clone())).unwrap_or_default();
+        let placed = last.as_ref().map(|c| c.placed.clone()).unwrap_or_default();
         // Taken out while placing, so a scratch copy of the session sharing it never waits.
         let mut reuse = placed.lock().map(|mut p| std::mem::take(&mut *p)).unwrap_or_default();
-        let mut w = {
-            if self.pending_moves.is_empty() {
-                solidcraft_doc::world_state_reusing(&self.doc, &st, &mut reuse)
-            } else {
-                let mut d = (*self.doc).clone();
-                for o in &mut d.occurrences {
-                    if let Some(m) = self.pending_moves.get(&o.id) {
-                        o.transform = *m;
-                    }
-                }
-                solidcraft_doc::world_state_reusing(&d, &st, &mut reuse)
-            }
+        // Only uncaptured moves changed since (a drag): the moved placements' bodies alone are
+        // placed again.
+        let moved = last.as_ref().filter(|c| c.matches_but_moves(self, &st)).and_then(|c| {
+            let changed: std::collections::BTreeSet<u64> = c
+                .pending_moves
+                .iter()
+                .chain(&self.pending_moves)
+                .filter(|(id, m)| c.pending_moves.get(id) != Some(m) || self.pending_moves.get(id) != Some(m))
+                .map(|(id, _)| *id)
+                .collect();
+            solidcraft_doc::world_state_moved(&self.doc, &st, &self.pending_moves, &c.world, &c.layout, &changed, &mut reuse)
+        });
+        let (mut w, layout) = match moved {
+            Some(moved) => moved,
+            None => solidcraft_doc::world_state_laid_out(&self.doc, &st, &self.pending_moves, &mut reuse),
         };
         if let Ok(mut p) = placed.lock() {
             *p = reuse;
@@ -635,6 +645,7 @@ impl Session {
                 active_component: self.active_component,
                 active_occurrence_path: self.active_occurrence_path.clone(),
                 world: w.clone(),
+                layout: Arc::new(layout),
                 placed,
             });
         }
