@@ -12,6 +12,7 @@ pub enum MfgTab {
     #[default]
     Setup,
     Tools,
+    TwoD,
 }
 
 /// Manufacture process family for a new setup.
@@ -40,6 +41,8 @@ pub struct State {
     pub tool_library_dialog: Option<crate::manufacture_tools::ToolLibraryState>,
     pub edit_tool_dialog: Option<crate::manufacture_tools::EditToolState>,
     pub manage_stub_dialog: Option<crate::manufacture_tools::ManageStubState>,
+    pub selected_op: Option<usize>,
+    pub twod_dialog: Option<crate::manufacture_2d::TwodDialogState>,
 }
 
 pub fn active(app: &SolveApp) -> bool {
@@ -80,6 +83,7 @@ pub fn close_floating_dialogs(app: &mut SolveApp) {
     app.manufacture_workspace.tool_library_dialog = None;
     app.manufacture_workspace.edit_tool_dialog = None;
     app.manufacture_workspace.manage_stub_dialog = None;
+    app.manufacture_workspace.twod_dialog = None;
     app.ui.pick_bodies = false;
 }
 
@@ -121,6 +125,7 @@ pub fn start_hook(app: &mut SolveApp, id: &str) -> bool {
             crate::manufacture_tools::open_edit_tool(app, None);
             false
         }
+        id if id.starts_with("manufacture.2d.") => crate::manufacture_2d::open_from_command(app, id),
         _ => true,
     }
 }
@@ -148,6 +153,7 @@ pub fn tick(app: &mut SolveApp, ctx: &egui::Context) {
 pub fn panel(app: &mut SolveApp, ui: &mut egui::Ui) {
     crate::manufacture_setup::show_dialogs(app, ui);
     crate::manufacture_tools::show_dialogs(app, ui);
+    crate::manufacture_2d::show_dialogs(app, ui);
 }
 
 pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {

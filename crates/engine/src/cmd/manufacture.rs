@@ -32,6 +32,66 @@ pub static COMMANDS: &[CommandSpec] = &[
         .doc_only()
         .at("MANUFACTURE", "MANAGE")
         .params("Opens the document tool library for the active Manufacture setup."),
+    CommandSpec::new("manufacture.2d.face", "Face", twod_open)
+        .icon("settings")
+        .noundo()
+        .doc_only()
+        .at("MANUFACTURE", "2D")
+        .params("Opens a 2D Face operation on the active Manufacture setup. Document writes go through manufacture.settings.set."),
+    CommandSpec::new("manufacture.2d.adaptive", "Adaptive", twod_open)
+        .icon("settings")
+        .noundo()
+        .doc_only()
+        .at("MANUFACTURE", "2D")
+        .params("Opens a 2D Adaptive operation on the active Manufacture setup. Document writes go through manufacture.settings.set."),
+    CommandSpec::new("manufacture.2d.pocket", "Pocket", twod_open)
+        .icon("settings")
+        .noundo()
+        .doc_only()
+        .at("MANUFACTURE", "2D")
+        .params("Opens a 2D Pocket operation on the active Manufacture setup. Document writes go through manufacture.settings.set."),
+    CommandSpec::new("manufacture.2d.slot", "Slot", twod_open)
+        .icon("settings")
+        .noundo()
+        .doc_only()
+        .at("MANUFACTURE", "2D")
+        .params("Opens a 2D Slot operation on the active Manufacture setup. Document writes go through manufacture.settings.set."),
+    CommandSpec::new("manufacture.2d.trace", "Trace", twod_open)
+        .icon("settings")
+        .noundo()
+        .doc_only()
+        .at("MANUFACTURE", "2D")
+        .params("Opens a 2D Trace operation on the active Manufacture setup. Document writes go through manufacture.settings.set."),
+    CommandSpec::new("manufacture.2d.thread", "Thread", twod_open)
+        .icon("settings")
+        .noundo()
+        .doc_only()
+        .at("MANUFACTURE", "2D")
+        .params("Opens a 2D Thread operation on the active Manufacture setup. Document writes go through manufacture.settings.set."),
+    CommandSpec::new("manufacture.2d.bore", "Bore", twod_open)
+        .icon("settings")
+        .noundo()
+        .doc_only()
+        .at("MANUFACTURE", "2D")
+        .params("Opens a 2D Bore operation on the active Manufacture setup. Document writes go through manufacture.settings.set."),
+    CommandSpec::new("manufacture.2d.circular", "Circular", twod_open)
+        .icon("settings")
+        .noundo()
+        .doc_only()
+        .at("MANUFACTURE", "2D")
+        .params("Opens a 2D Circular operation on the active Manufacture setup. Document writes go through manufacture.settings.set."),
+    CommandSpec::new("manufacture.2d.engrave", "Engrave", twod_open)
+        .icon("settings")
+        .noundo()
+        .doc_only()
+        .at("MANUFACTURE", "2D")
+        .params("Opens a 2D Engrave operation on the active Manufacture setup. Document writes go through manufacture.settings.set."),
+    CommandSpec::new("manufacture.2d.chamfer", "Chamfer", twod_open)
+        .icon("settings")
+        .noundo()
+        .doc_only()
+        .at("MANUFACTURE", "2D")
+        .params("Opens a 2D Chamfer operation on the active Manufacture setup. Document writes go through manufacture.settings.set."),
 ];
 
 // ── Settings get ───────────────────────────────────────────────────────────────
@@ -112,6 +172,10 @@ fn tool_library(_s: &mut Session, _params: &Value) -> Result<Value> {
     Ok(json!({"opened": true}))
 }
 
+fn twod_open(_s: &mut Session, _params: &Value) -> Result<Value> {
+    Ok(json!({"opened": true}))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -173,5 +237,27 @@ mod tests {
         let r = s.execute("manufacture.tools.library", &json!({})).unwrap();
         assert_eq!(r["opened"], true);
         assert!(s.doc.manufacture.setups.is_empty());
+    }
+
+    #[test]
+    fn twod_commands_are_display_only() {
+        const IDS: &[&str] = &[
+            "manufacture.2d.face",
+            "manufacture.2d.adaptive",
+            "manufacture.2d.pocket",
+            "manufacture.2d.slot",
+            "manufacture.2d.trace",
+            "manufacture.2d.thread",
+            "manufacture.2d.bore",
+            "manufacture.2d.circular",
+            "manufacture.2d.engrave",
+            "manufacture.2d.chamfer",
+        ];
+        for id in IDS {
+            let mut s = Session::default();
+            let r = s.execute(id, &json!({})).unwrap();
+            assert_eq!(r["opened"], true, "{id}");
+            assert!(s.doc.manufacture.setups.is_empty(), "{id}");
+        }
     }
 }
