@@ -57,7 +57,15 @@ mod convert {
     pub(super) fn policy() -> DecodePolicy {
         DecodePolicy {
             mode: DecodeMode::Salvage,
-            limits: ResourceLimits { max_input_bytes: crate::MAX_STEP_BYTES as u64, ..ResourceLimits::service() },
+            // Service caps on size, with room for the work a large assembly's decode takes and
+            // for the collections of a detailed part (a part with thousands of faces holds more
+            // than the service profile's million items).
+            limits: ResourceLimits {
+                max_input_bytes: crate::MAX_STEP_BYTES as u64,
+                max_work_units: 2_000_000_000,
+                max_collection_items: 8_000_000,
+                ..ResourceLimits::service()
+            },
         }
     }
 

@@ -100,13 +100,26 @@ fn hostile_native_cad_never_panics() {
     }
 }
 
-/// cadmpeg decodes under its tight `service` caps, with our STEP size limit on the input.
+/// cadmpeg decodes under its tight `service` caps, with our STEP size limit on the input and
+/// room for the work a large assembly takes (2·10⁹ units, half its desktop profile's) and the
+/// collections of a detailed part (8·10⁶ items, half its desktop profile's).
 #[test]
 fn decoding_is_capped() {
     let limits = convert::policy().limits;
     let service = cadmpeg_core::decode::ResourceLimits::service();
+    let desktop = cadmpeg_core::decode::ResourceLimits::desktop();
     assert_eq!(limits.max_input_bytes, crate::MAX_STEP_BYTES as u64);
-    assert_eq!(cadmpeg_core::decode::ResourceLimits { max_input_bytes: service.max_input_bytes, ..limits }, service);
+    assert_eq!(limits.max_work_units, 2_000_000_000);
+    assert!(limits.max_work_units < desktop.max_work_units);
+    assert_eq!(limits.max_collection_items, 8_000_000);
+    assert!(limits.max_collection_items < desktop.max_collection_items);
+    let same = cadmpeg_core::decode::ResourceLimits {
+        max_input_bytes: service.max_input_bytes,
+        max_work_units: service.max_work_units,
+        max_collection_items: service.max_collection_items,
+        ..limits
+    };
+    assert_eq!(same, service);
 }
 
 /// A FreeCAD archive whose Document.xml inflates past the per-entry cap (a ZIP bomb, 300 MB of
