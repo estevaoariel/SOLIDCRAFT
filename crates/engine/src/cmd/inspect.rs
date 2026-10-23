@@ -44,7 +44,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .doc_only()
         .params("→ the built-in materials, then the design's own (user: true, with their look)"),
     CommandSpec::new("engine.commands", "List Commands", commands).icon("list").noundo(),
-    CommandSpec::new("engine.describe", "Describe Command", crate::checked!("engine.describe", DESCRIBE_CONTRACT, describe))
+    CommandSpec::new("engine.describe", "Describe Command", crate::checked!("engine.describe", describe))
         .icon("list")
         .noundo()
         .doc_only()
