@@ -260,6 +260,9 @@ pub struct GpuScene {
     /// Translucent triangles (alpha from the colour), drawn after the opaque ones without
     /// writing depth.
     pub trans: Vec<u8>,
+    /// Ground-plane shadow: alpha-blended after opaque geometry, without writing depth.
+    /// It does not require order-independent transparency.
+    pub shadow: Vec<u8>,
     /// See-through bodies and faces (appearance opacity below 1), closed and outward-wound:
     /// their far sides are drawn first, then their near sides, so they read like glass.
     pub glass: Vec<u8>,
@@ -349,6 +352,13 @@ impl GpuScene {
             self.tris.extend_from_slice(&v.to_le_bytes());
         }
         self.tris.extend_from_slice(&c);
+    }
+    /// A vertex of the ground-plane shadow (see [`GpuScene::shadow`]).
+    pub fn shadow_tri(&mut self, p: [f32; 3], c: [u8; 4]) {
+        for v in p.iter().chain(&[0.0; 3]) {
+            self.shadow.extend_from_slice(&v.to_le_bytes());
+        }
+        self.shadow.extend_from_slice(&c);
     }
     pub fn trans_tri(&mut self, p: [f32; 3], n: [f32; 3], c: [u8; 4]) {
         for v in p.iter().chain(&n) {
@@ -803,6 +813,7 @@ struct Batches {
     tris: Option<Batch>,
     pbr: Option<Batch>,
     trans: Option<Batch>,
+    shadow: Option<Batch>,
     glass: Option<Batch>,
     /// The glass triangles as built, and the view direction they were last sorted for.
     glass_cpu: Vec<u8>,
@@ -861,6 +872,7 @@ impl Batches {
             self.tris = joined(blocks.iter().map(|b| &b.tris), upload(device, "sc_tris", &sc.tris, TRI_SIZE));
             self.pbr = upload(device, "sc_pbr", &sc.pbr, PBR_SIZE);
             self.trans = joined(blocks.iter().map(|b| &b.trans), upload(device, "sc_trans", &sc.trans, TRI_SIZE));
+            self.shadow = upload(device, "sc_shadow", &sc.shadow, TRI_SIZE);
             self.glass = upload_with(device, "sc_glass", &sc.glass, TRI_SIZE, wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST);
             self.glass_cpu = sc.glass;
             self.glass_sorted_for = None;
@@ -2128,6 +2140,7 @@ impl Renderer {
             }
         }
         tris(pass, &res.ghost, &pv.ghost);
+        tris(pass, &res.trans, &m.shadow);
         if phase == Phase::BeforeSeeThrough {
             return;
         }
@@ -2551,6 +2564,40 @@ mod tests {
 mod glass_tests {
     use super::*;
 
+    #[test]
+    fn ground_shadow_does_not_require_order_independent_transparency() {
+        let batch = || Some(Batch { parts: Vec::new(), chunk: TRI_SIZE * 6 });
+        let mut batches = Batches { shadow: batch(), ..Default::default() };
+        assert!(!batches.see_through());
+        batches.glass = batch();
+        assert!(batches.see_through(), "glass still requires transparency with a shadow");
+        batches.glass = None;
+        batches.trans = batch();
+        assert!(batches.see_through(), "faded bodies still require transparency with a shadow");
+    }
+
+    #[test]
+    fn ground_shadow_blends_and_stays_behind_opaque_geometry() {
+        let mut scene = GpuScene::default();
+        let square = [[-5.0, -5.0, -5.0], [5.0, -5.0, -5.0], [5.0, 5.0, -5.0], [-5.0, -5.0, -5.0], [5.0, 5.0, -5.0], [-5.0, 5.0, -5.0]];
+        for p in square {
+            scene.shadow_tri(p, [0, 0, 0, 128]);
+        }
+        for samples in [1, 4] {
+            let Some(shadow) = middle_pixel_with_samples(scene.clone(), true, samples) else {
+                eprintln!("skipping: no GPU adapter");
+                return;
+            };
+            assert!(shadow[..3].iter().all(|c| (125..=129).contains(c)), "{samples}× alpha-blended shadow: {shadow:?}");
+            let mut occluded = scene.clone();
+            for mut p in square {
+                p[2] = 5.0;
+                occluded.tri(p, [0.0; 3], [0, 255, 0, 255]);
+            }
+            assert_eq!(middle_pixel_with_samples(occluded, true, samples), Some([0, 255, 0, 255]), "opaque geometry hides the ground shadow");
+        }
+    }
+
     /// A large import's triangles once went into one buffer past the device's limit (524 MB
     /// against 256 MB) and the app crashed (#883): they are split into whole triangles.
     #[test]
@@ -2571,11 +2618,15 @@ mod glass_tests {
     /// with order-independent transparency (`oit`) or with the see-through triangles sorted.
     /// `None` without a GPU adapter.
     fn middle_pixel(scene: GpuScene, oit: bool) -> Option<[u8; 4]> {
+        middle_pixel_with_samples(scene, oit, 1)
+    }
+
+    fn middle_pixel_with_samples(scene: GpuScene, oit: bool, samples: u32) -> Option<[u8; 4]> {
         const SIZE: u32 = 64;
         let (_, device, queue) = crate::open_headless().ok()?;
         let depth = crate::depth_format(&device, true);
         let format = wgpu::TextureFormat::Rgba8Unorm;
-        let mut r = Renderer::new(&device, GpuTarget { format, depth: Some(depth), samples: 1, tess: false }, None);
+        let mut r = Renderer::new(&device, GpuTarget { format, depth: Some(depth), samples, tess: false }, None);
         assert!(r.oit.is_some(), "this device does order-independent transparency");
         if !oit {
             r.oit = None;
@@ -2606,31 +2657,35 @@ mod glass_tests {
             ao_radius: 0.0,
             ssaa: 1.0,
         };
-        let texture = |format, usage| {
+        let texture = |format, usage, sample_count| {
             device.create_texture(&wgpu::TextureDescriptor {
                 label: None,
                 size: wgpu::Extent3d { width: SIZE, height: SIZE, depth_or_array_layers: 1 },
                 mip_level_count: 1,
-                sample_count: 1,
+                sample_count,
                 dimension: wgpu::TextureDimension::D2,
                 format,
                 usage,
                 view_formats: &[],
             })
         };
-        let color = texture(format, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC);
-        let depth_tex = texture(depth, wgpu::TextureUsages::RENDER_ATTACHMENT);
+        let color = texture(format, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC, 1);
+        let msaa = (samples > 1).then(|| texture(format, wgpu::TextureUsages::RENDER_ATTACHMENT, samples).create_view(&Default::default()));
+        let depth_tex = texture(depth, wgpu::TextureUsages::RENDER_ATTACHMENT, samples);
         let (color_view, depth_view) = (color.create_view(&Default::default()), depth_tex.create_view(&Default::default()));
         let mut encoder = device.create_command_encoder(&Default::default());
         r.prepare(&device, &queue, &mut encoder, &frame);
+        if !r.model.see_through() {
+            assert!(r.ss.is_none(), "opaque geometry and the ground shadow use the direct path");
+        }
         {
             let mut pass = encoder
                 .begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: None,
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &color_view,
+                        view: msaa.as_ref().unwrap_or(&color_view),
                         depth_slice: None,
-                        resolve_target: None,
+                        resolve_target: msaa.as_ref().map(|_| &color_view),
                         ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::WHITE), store: wgpu::StoreOp::Store },
                     })],
                     depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
