@@ -14,6 +14,7 @@ pub enum MfgTab {
     Tools,
     TwoD,
     Contour,
+    Drill,
 }
 
 /// Manufacture process family for a new setup.
@@ -45,6 +46,7 @@ pub struct State {
     pub selected_op: Option<usize>,
     pub twod_dialog: Option<crate::manufacture_2d::TwodDialogState>,
     pub contour_dialog: Option<crate::manufacture_contour::ContourDialogState>,
+    pub drill_dialog: Option<crate::manufacture_drill::DrillDialogState>,
 }
 
 pub fn active(app: &SolveApp) -> bool {
@@ -87,6 +89,7 @@ pub fn close_floating_dialogs(app: &mut SolveApp) {
     app.manufacture_workspace.manage_stub_dialog = None;
     app.manufacture_workspace.twod_dialog = None;
     app.manufacture_workspace.contour_dialog = None;
+    app.manufacture_workspace.drill_dialog = None;
     app.ui.pick_bodies = false;
 }
 
@@ -132,6 +135,10 @@ pub fn start_hook(app: &mut SolveApp, id: &str) -> bool {
             crate::manufacture_contour::open_new(app);
             false
         }
+        "manufacture.drill" => {
+            crate::manufacture_drill::open_new(app);
+            false
+        }
         id if id.starts_with("manufacture.2d.") => crate::manufacture_2d::open_from_command(app, id),
         _ => true,
     }
@@ -162,6 +169,7 @@ pub fn panel(app: &mut SolveApp, ui: &mut egui::Ui) {
     crate::manufacture_tools::show_dialogs(app, ui);
     crate::manufacture_2d::show_dialogs(app, ui);
     crate::manufacture_contour::show_dialogs(app, ui);
+    crate::manufacture_drill::show_dialogs(app, ui);
 }
 
 pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {

@@ -32,6 +32,12 @@ pub static COMMANDS: &[CommandSpec] = &[
         .doc_only()
         .at("MANUFACTURE", "MANAGE")
         .params("Opens the document tool library for the active Manufacture setup."),
+    CommandSpec::new("manufacture.drill", "Drill", twod_open)
+        .icon("settings")
+        .noundo()
+        .doc_only()
+        .at("MANUFACTURE", "DRILLING")
+        .params("Opens a Drill operation on the active Manufacture setup. Document writes go through manufacture.settings.set."),
     CommandSpec::new("manufacture.2d.contour", "Contour", twod_open)
         .icon("settings")
         .noundo()
@@ -241,6 +247,14 @@ mod tests {
     fn tool_library_is_display_only() {
         let mut s = Session::default();
         let r = s.execute("manufacture.tools.library", &json!({})).unwrap();
+        assert_eq!(r["opened"], true);
+        assert!(s.doc.manufacture.setups.is_empty());
+    }
+
+    #[test]
+    fn drill_is_display_only() {
+        let mut s = Session::default();
+        let r = s.execute("manufacture.drill", &json!({})).unwrap();
         assert_eq!(r["opened"], true);
         assert!(s.doc.manufacture.setups.is_empty());
     }
