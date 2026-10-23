@@ -623,4 +623,14 @@ fn circular_pattern_expressions_validate_inputs_and_keep_numeric_compatibility()
     assert!(!s.doc.to_json().contains("\"expressions\""));
     let reopened = solidcraft_doc::format::read(&legacy).unwrap();
     assert_eq!(reopened.sketch(1).unwrap().patterns[0].instances.len(), 2);
+    // A design with plain numbers saves back unchanged and evaluates to the same copies.
+    assert_eq!(reopened.to_json(), legacy);
+    let before = sketch(&s);
+    let mut s = Session { doc: reopened.into(), ..Default::default() };
+    s.refresh();
+    let state = s.world_state();
+    let after = &state.sketch(1).unwrap().sketch;
+    for (a, b) in before.points.iter().zip(&after.points) {
+        assert!(a.id == b.id && a.pos.dist(b.pos) < 1e-9, "{} moved", a.id);
+    }
 }
