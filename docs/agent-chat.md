@@ -290,3 +290,36 @@ cargo build --release -p solidcraft-ui-egui --example acp_test_agent
 Then add it under Preferences → AI → **Add agent… → Custom command** with the path of
 `target/release/examples/acp_test_agent`. Put "save" in your message to see an Allow / Deny card,
 or "ask" to see the agent ask its own permission.
+
+## Benchmarking the Assistant
+
+`solidcraft-cli bench-assistant` runs the eleven tasks of the
+[standard model test (v1, #4851)](https://github.com/tangency-labs/solidcraft/issues/4851) against a
+desktop app that is already running with a control port, and checks each result on the design
+itself. Use it to see how well a local model drives SolidCraft before you post its results.
+
+```sh
+solidcraft --control 9271
+# In another terminal:
+solidcraft-cli bench-assistant --connect 127.0.0.1:9271 \
+  --base-url http://localhost:11434/v1 --model qwen2.5:7b \
+  --json results.json --markdown results.md
+```
+
+Each task replaces the open design with a new one, so save your work first. The command adds the
+endpoint as an API agent named "bench", starts a new chat with All permissions for every task,
+sends the prompt once, and waits for the turn to end. It runs only the setup the test prescribes
+(the box some tasks start from) and does none of the modelling itself. When it finishes it stops
+the agent and puts your permission setting back.
+
+- The control token comes from `--token`, `SOLIDCRAFT_CONTROL_TOKEN`, or the app's
+  [token file](control-protocol.md#token), in that order.
+- `--tasks 1,2,5` runs only those tasks, `--repeat N` runs the test N times, and `--timeout-s`
+  (default 300) is each turn's deadline; a turn that runs past it is stopped and fails as "timeout".
+- A failed task gets one of the issue's failure categories ("wrote the call as text", "wrong or
+  unknown command", "wrong arguments", "the endpoint refused tools", "an empty reply", "only
+  talked", "gave up after errors", or "hit the request limit"), or "wrong result" when the calls
+  worked but the design is not what the task asks for.
+- `--markdown` writes the issue's comment template filled in; add the quantization, download
+  size, and runtime before you post it. `--json` keeps each task's failed rules, conversation, and
+  design before and after. Both files are rewritten after every task.
