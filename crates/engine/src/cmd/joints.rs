@@ -407,7 +407,13 @@ fn origin_by_name(s: &Session, v: &Value, what: &str, name: &str, cmd: &str) -> 
         return Err(bad(cmd, "a face name is 1…512 characters"));
     }
     let st = s.model.state();
-    let (component, pick) = joints::named_face_spot(&s.doc, &st, str_(v, "body"), name).map_err(|why| bad(cmd, why))?;
+    let (component, pick) = joints::named_face_spot(&s.doc, &st, str_(v, "body"), name).map_err(|why| {
+        if s.doc.assembly.origins.iter().any(|o| o.name == name) {
+            bad(cmd, format!("`{name}` is a joint origin: pass it as the whole origin, not as a `{what}` name"))
+        } else {
+            bad(cmd, why)
+        }
+    })?;
     let occurrence = match v.get("occurrence") {
         Some(o) => occurrence_id(s, Some(o), cmd)?,
         None if component == 0 => 0,
