@@ -689,13 +689,12 @@ fn sharing(old: &ModelBody, after: &ModelState) -> (Vec<std::sync::Arc<Mesh>>, f
     (shared.iter().map(|b| b.mesh()).collect(), tol)
 }
 
-/// How many times a ghost triangle is split, each time into four, to find where it leaves the
-/// new surface.
-const GHOST_SPLITS: u32 = 6;
+/// How many times a ghost triangle is halved to find where it leaves the new surface.
+const GHOST_SPLITS: u32 = 12;
 
 /// A ghost triangle on the new surface is split down to this share of the old body's size
 /// before it is left out, so that a hole the change made inside it is found.
-const GHOST_PIECE: f64 = 1.0 / 32.0;
+const GHOST_PIECE: f64 = 1.0 / 16.0;
 
 /// A ghost vertex: its position and normal.
 type GhostVertex = (Vec3, Vec3);
@@ -718,11 +717,25 @@ fn ghost(old: &Mesh, new: &[&Mesh], tol: f64) -> Vec<[GhostVertex; 3]> {
     let clear = 1.5 * tol;
     let index = if tol > 0.0 { SurfaceIndex::of(new, 2.0 * clear) } else { None };
     let Some(index) = index else { return tris.map(|(t, _)| t).collect() };
-    let near: Vec<f64> = old.positions.iter().map(|p| index.distance(*p)).collect();
+    // A face the change doesn't touch is triangulated as before: its triangles are kept surface,
+    // found without measuring (a modeled thread beside a fillet has a hundred thousand).
+    let key = |t: [Vec3; 3]| {
+        let mut k = t.map(|p| [p.x.to_bits(), p.y.to_bits(), p.z.to_bits()]);
+        k.sort_unstable();
+        k
+    };
+    let unchanged: std::collections::HashSet<_> = new.iter().flat_map(|m| m.triangles.iter().filter_map(|t| m.tri(t))).map(key).collect();
+    let mut near: Vec<Option<f64>> = vec![None; old.positions.len()];
     let piece = old.bounds().diagonal() * GHOST_PIECE;
-    let mut clip = GhostClip { index: &index, clear, piece, out: Vec::new() };
+    let mut clip = GhostClip { index: &index, clear, piece, fine: 4.0 * clear, out: Vec::new() };
     for (t, k) in tris {
-        let d = k.map(|k| near.get(k as usize).copied().unwrap_or(0.0));
+        if unchanged.contains(&key(t.map(|(p, _)| p))) {
+            continue;
+        }
+        let d = k.map(|k| {
+            let at = old.positions.get(k as usize).copied().unwrap_or_default();
+            near.get_mut(k as usize).map_or(0.0, |d| *d.get_or_insert_with(|| index.distance(at)))
+        });
         clip.split(t, d, GHOST_SPLITS);
     }
     clip.out
@@ -735,12 +748,15 @@ struct GhostClip<'a> {
     clear: f64,
     /// See [`GHOST_PIECE`].
     piece: f64,
+    /// A triangle that crosses where the ghost ends is halved until no side is longer, then cut.
+    fine: f64,
     out: Vec<[GhostVertex; 3]>,
 }
 
 impl GhostClip<'_> {
     /// Keeps triangle `t`, whose corners lie `d` from the new mesh, or the part of it that is
-    /// removed material.
+    /// removed material. A triangle that can't be decided is halved across its longest side, so
+    /// a long thin one (a strip of a cylinder's wall) is cut along its length only.
     fn split(&mut self, t: [GhostVertex; 3], d: [f64; 3], splits: u32) {
         let [a, b, c] = t;
         let mid = |(p, n): GhostVertex, (q, m): GhostVertex| ((p + q) / 2.0, (n + m) / 2.0);
@@ -748,18 +764,23 @@ impl GhostClip<'_> {
         let dm = m.map(|(p, _)| self.index.distance(p));
         let centre = self.index.distance((a.0 + b.0 + c.0) / 3.0);
         let samples = || d.iter().chain(&dm).chain([&centre]);
-        let long = [(a, b), (b, c), (c, a)].iter().any(|(p, q)| p.0.dist(q.0) > self.piece);
+        let sides = [a.0.dist(b.0), b.0.dist(c.0), c.0.dist(a.0)];
+        let longest = sides.iter().copied().fold(0.0, f64::max);
         if samples().all(|d| *d >= self.clear) {
             self.out.push(t);
-        } else if samples().all(|d| *d < self.clear) && !long {
+        } else if samples().all(|d| *d < self.clear) && longest <= self.piece {
             // On the new surface: nothing removed here.
-        } else if splits > 0 {
-            let [ab, bc, ca] = m;
-            let [dab, dbc, dca] = dm;
-            self.split([a, ab, ca], [d[0], dab, dca], splits - 1);
-            self.split([ab, b, bc], [dab, d[1], dbc], splits - 1);
-            self.split([ca, bc, c], [dca, dbc, d[2]], splits - 1);
-            self.split([ab, bc, ca], [dab, dbc, dca], splits - 1);
+        } else if splits > 0 && longest > self.fine {
+            // Rotate so the longest side is the first (a to b), then halve it.
+            let (t, d, dm) = match sides.iter().position(|s| *s >= longest).unwrap_or(0) {
+                1 => ([b, c, a], [d[1], d[2], d[0]], dm[1]),
+                2 => ([c, a, b], [d[2], d[0], d[1]], dm[2]),
+                _ => (t, d, dm[0]),
+            };
+            let [a, b, c] = t;
+            let ab = mid(a, b);
+            self.split([a, ab, c], [d[0], dm, d[2]], splits - 1);
+            self.split([ab, b, c], [dm, d[1], d[2]], splits - 1);
         } else {
             self.cut(t, d);
         }
@@ -855,7 +876,9 @@ impl SurfaceIndex {
         let tris: Vec<[Vec3; 3]> = meshes.iter().flat_map(|m| m.triangles.iter().filter_map(|t| m.tri(t))).collect();
         let lo = [bb.min.x - tol, bb.min.y - tol, bb.min.z - tol];
         let ext = [bb.max.x - bb.min.x + 2.0 * tol, bb.max.y - bb.min.y + 2.0 * tol, bb.max.z - bb.min.z + 2.0 * tol];
-        let mut res = ((tris.len() as f64).cbrt().round() as usize).clamp(1, 48);
+        // Four cells per cube root of the triangle count along each axis: few triangles to test
+        // per point, as the ghost asks for many points.
+        let mut res = ((tris.len() as f64).cbrt() * 4.0).round().clamp(1.0, 128.0) as usize;
         loop {
             let cell = [ext[0] / res as f64, ext[1] / res as f64, ext[2] / res as f64];
             let mut index = SurfaceIndex { tris: Vec::new(), tol, lo, cell, res, cells: vec![Vec::new(); res * res * res] };
