@@ -274,6 +274,39 @@ fn a_control_import_passes_up_and_names_on() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// #4676: a control-channel import's `matrix` and `name` reach the command, as they do when it
+/// runs in a session: the part lands where the matrix puts it, under the name given.
+#[test]
+fn a_control_import_passes_its_matrix_and_name_on() {
+    let dir = scratch("import-matrix");
+    let path = dir.join("plate.step").to_string_lossy().to_string();
+    let mut src = Session::default();
+    src.execute("solid.box", &json!({"length": 60, "width": 40, "height": 5})).unwrap();
+    src.execute("file.export", &json!({"path": path})).unwrap();
+    let params = json!({"path": path, "matrix": [1, 0, 0, 100, 0, 1, 0, 0, 0, 0, 1, 0], "name": "Bracket"});
+    let mut w = Win::new();
+    let (tx, rx) = std::sync::mpsc::channel();
+    w.app.control_rx = Some(rx);
+    let (req, reply_rx) = crate::control::ControlRequest::new("engine.execute", json!({"command": "file.insert_step", "params": params.clone()}));
+    tx.send(req).unwrap();
+    let mut reply = None;
+    for _ in 0..100_000 {
+        w.frame(vec![]);
+        reply = reply_rx.try_recv().ok();
+        if reply.is_some() {
+            break;
+        }
+    }
+    let reply = reply.expect("the import was answered");
+    assert_eq!(reply["ok"], true, "{reply}");
+    let mut sync = Session::default();
+    assert_eq!(reply["result"], sync.execute("file.insert_step", &params).unwrap(), "the window's reply is the session's");
+    let b = solidcraft_engine::view::bounds(&w.app.session);
+    assert!((b.min.x - 100.0).abs() < 1e-6 && (b.max.x - 160.0).abs() < 1e-6, "moved by the matrix: {b:?}");
+    assert!(w.app.session.doc.components.iter().any(|c| c.name == "Bracket"), "named as asked");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// An opened design is in the window before its bodies are meshed: the view draws the bodies
 /// meshed so far (never meshing one itself), framed from their outlines, until all are.
 #[test]

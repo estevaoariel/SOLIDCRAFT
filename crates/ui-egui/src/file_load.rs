@@ -43,8 +43,8 @@ pub struct Request {
     pub reply: Option<Sender<ControlResponse>>,
     /// The folders that caller's agent may use: the worker reads the file inside them.
     pub scope: Option<solidcraft_engine::io::vfs::PathScope>,
-    /// What that caller asked of a STEP import besides its path (`up`, `names`): the command
-    /// gets them as given.
+    /// What that caller asked of an open or import besides its path (`up`, `names`, `matrix`,
+    /// `name`, ...): the command gets them as given and checks them as it does run directly.
     pub options: serde_json::Map<String, Value>,
 }
 
@@ -64,7 +64,7 @@ impl Request {
     fn command(&self) -> (&'static str, Value) {
         match &self.kind {
             Kind::Open => ("doc.open", self.params()),
-            Kind::Insert if solidcraft_engine::io::is_mesh_path(&self.path) => ("file.insert_mesh", json!({"path": self.path})),
+            Kind::Insert if solidcraft_engine::io::is_mesh_path(&self.path) => ("file.insert_mesh", self.params()),
             Kind::Insert => ("file.insert_step", self.params()),
             Kind::Recover { id, dir } => ("doc.recover", json!({"id": id, "dir": dir})),
             Kind::ExportDxf => ("file.export_view_dxf", Value::Object(self.options.clone())),
@@ -277,11 +277,13 @@ pub fn control(app: &mut SolveApp, req: crate::control::ControlRequest) -> Optio
             return None;
         }
     };
-    let options = if kind == Kind::ExportDxf {
-        params.and_then(Value::as_object).cloned().unwrap_or_default()
-    } else {
-        ["up", "names"].iter().filter_map(|k| Some((k.to_string(), params?.get(*k).filter(|v| !v.is_null())?.clone()))).collect()
-    };
+    // Everything but the path, as given: taking only `up` and `names` dropped an import's
+    // `matrix` and `name`, so it landed at the origin with nothing said (#4676).
+    let mut options = params.and_then(Value::as_object).cloned().unwrap_or_default();
+    if kind != Kind::ExportDxf {
+        options.remove("path");
+        options.retain(|_, v| !v.is_null());
+    }
     let _ = begin_request(app, Request { path: path.into(), kind, reply: Some(req.reply.clone()), scope, options });
     None
 }
