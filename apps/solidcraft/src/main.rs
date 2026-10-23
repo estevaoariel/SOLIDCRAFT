@@ -187,6 +187,8 @@ fn services(cc: &eframe::CreationContext<'_>) -> Services {
                         io::DESIGN_EXT,
                         io::LEGACY_DESIGN_EXT,
                         "json",
+                        io::SHARED_DESIGN_EXT,
+                        "ZIP",
                         "step",
                         "stp",
                         "STEP",
@@ -211,7 +213,10 @@ fn services(cc: &eframe::CreationContext<'_>) -> Services {
                         "GLTF",
                     ],
                 )
-                .add_filter("SolidCraft design (container or JSON)", &[io::DESIGN_EXT, io::LEGACY_DESIGN_EXT, "json"])
+                .add_filter(
+                    "SolidCraft design (container, JSON or shared .zip)",
+                    &[io::DESIGN_EXT, io::LEGACY_DESIGN_EXT, "json", io::SHARED_DESIGN_EXT, "ZIP"],
+                )
                 .add_filter("STEP", &["step", "stp", "STEP", "STP"])
                 .add_filter("IGES", &["igs", "iges", "IGS", "IGES"])
                 .add_filter("FreeCAD and Rhino", &["FCStd", "fcstd", "3dm", "3DM"])
