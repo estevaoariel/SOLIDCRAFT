@@ -106,9 +106,37 @@ pub fn commands_for(app: &SolveApp, key: &str) -> Vec<&'static str> {
     command_specs().into_iter().filter(|c| effective(app, c.id).as_deref() == Some(key)).map(|c| c.id).collect()
 }
 
-/// The enabled command a key press runs, if any.
+/// Where a command's shortcut works: in a sketch (the SKETCH tab's tools), in the model (the
+/// other tabs), or everywhere (commands on no tab: undo, views, files).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Scope {
+    Sketch,
+    Model,
+    Everywhere,
+}
+
+fn scope(id: &str) -> Scope {
+    match solidcraft_engine::find_command(id).map(|c| c.tab) {
+        Some("SKETCH") => Scope::Sketch,
+        Some("") | None => Scope::Everywhere,
+        Some(_) => Scope::Model,
+    }
+}
+
+/// Whether two commands can't share a key: a sketch tool and a model command can (#4163), each
+/// running where it belongs; anything else can't.
+fn clash(a: &str, b: &str) -> bool {
+    let (x, y) = (scope(a), scope(b));
+    x == y || x == Scope::Everywhere || y == Scope::Everywhere
+}
+
+/// The enabled command a key press runs, if any: one of the mode the view is in (a sketch tool
+/// while a sketch is open, a model command otherwise) before any other.
 pub fn command_for(app: &SolveApp, key: &str) -> Option<&'static str> {
-    commands_for(app, key).into_iter().find(|id| solidcraft_engine::find_command(id).is_some_and(|c| c.info(&app.session).enabled))
+    let here = if app.session.active_sketch.is_some() { Scope::Sketch } else { Scope::Model };
+    let enabled: Vec<&'static str> =
+        commands_for(app, key).into_iter().filter(|id| solidcraft_engine::find_command(id).is_some_and(|c| c.info(&app.session).enabled)).collect();
+    enabled.iter().find(|id| scope(id) == here).or(enabled.first()).copied()
 }
 
 /// Run a shortcut key: its enabled command; outside a sketch, a sketch tool's key opens Create
@@ -137,14 +165,15 @@ fn sketch_tool_for(app: &SolveApp, key: &str) -> Option<&'static str> {
 }
 
 /// Bind `key` to a command (`""` clears it). Refused for reserved keys, and when other commands
-/// use the key unless `replace` (they lose it).
+/// use the key unless `replace` (they lose it). A sketch tool and a model command may share a
+/// key: each runs in its own mode.
 pub fn bind(app: &mut SolveApp, id: &str, key: &str, replace: bool) -> Result<(), String> {
     let spec = solidcraft_engine::find_command(id).ok_or_else(|| format!("no command `{id}`"))?;
     if RESERVED.contains(&key) {
         return Err(format!("{key} is used by SolidCraft itself"));
     }
     if !key.is_empty() {
-        let others: Vec<&'static str> = commands_for(app, key).into_iter().filter(|o| *o != id).collect();
+        let others: Vec<&'static str> = commands_for(app, key).into_iter().filter(|o| *o != id && clash(o, id)).collect();
         if !others.is_empty() && !replace {
             let names: Vec<&str> = others.iter().filter_map(|o| solidcraft_engine::find_command(o).map(|c| c.label)).collect();
             return Err(format!("{key} is already used by {}", names.join(", ")));
@@ -408,6 +437,42 @@ mod tests {
         reset(&mut b, None);
         assert_eq!(effective(&b, "solid.move").as_deref(), Some("M"));
         assert_eq!(key_name(egui::Key::K, egui::Modifiers { ctrl: true, shift: true, ..Default::default() }), "Ctrl+Shift+K");
+    }
+
+    /// #4163: one key for a model command and a sketch tool. Binding it to both is allowed (a
+    /// second model command still clashes); outside a sketch it runs the model command, in a
+    /// sketch the tool.
+    #[test]
+    fn a_sketch_tool_and_a_model_command_share_a_key() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.home.open = false;
+        bind(&mut h.app, "sketch.create", "Shift+S", false).unwrap();
+        bind(&mut h.app, "sketch.point", "Shift+S", false).unwrap();
+        assert_eq!(effective(&h.app, "sketch.create").as_deref(), Some("Shift+S"), "the model command keeps it");
+        let e = bind(&mut h.app, "solid.revolve", "Shift+S", false).unwrap_err();
+        assert!(e.contains("already used by"), "{e}");
+        assert!(bind(&mut h.app, "sketch.line", "Shift+S", false).is_err(), "two sketch tools still clash");
+        assert_eq!(command_for(&h.app, "Shift+S"), Some("sketch.create"));
+        h.app.run("sketch.create", json!({"plane": "XY"})).unwrap();
+        h.frames(2);
+        assert_eq!(command_for(&h.app, "Shift+S"), Some("sketch.point"), "in a sketch the tool runs");
+        h.step(&json!({"key": "S", "shift": true})).unwrap();
+        h.frames(1);
+        assert_eq!(h.app.tool.as_ref().map(|t| t.cmd.to_string()).as_deref(), Some("sketch.point"));
+        assert!(h.app.dialog.is_none(), "no second Create Sketch");
+    }
+
+    /// A command on no tab (undo, views) can't share its key with anything.
+    #[test]
+    fn commands_used_everywhere_share_no_key() {
+        let mut a = app();
+        let everywhere = command_specs().into_iter().find(|c| c.tab.is_empty()).unwrap();
+        bind(&mut a, everywhere.id, "Shift+Q", false).unwrap();
+        assert!(bind(&mut a, "sketch.point", "Shift+Q", false).is_err(), "{}", everywhere.id);
+        assert!(bind(&mut a, "solid.revolve", "Shift+Q", false).is_err(), "{}", everywhere.id);
+        // And the other way round.
+        bind(&mut a, "sketch.point", "Shift+W", false).unwrap();
+        assert!(bind(&mut a, everywhere.id, "Shift+W", false).is_err(), "{}", everywhere.id);
     }
 
     /// #3045: Shift+R starts the last tool again (here a sketch's Line after Escape put it
