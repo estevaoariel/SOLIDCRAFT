@@ -99,6 +99,7 @@ fn apply(s: &mut Session, p: &Value) -> Result<Value> {
                 _ => skip("the origin planes can't be deleted".into()),
             },
             Sel::Axis { .. } => skip("the origin axes can't be deleted".into()),
+            Sel::SketchMidpoint { .. } => skip("a midpoint belongs to its sketch edge".into()),
             Sel::Body { name } => bodies.push(name.clone()),
             Sel::Face { body, point, .. } => match faces.iter_mut().find(|(b, _)| b == body) {
                 Some((_, ps)) => ps.push(*point),

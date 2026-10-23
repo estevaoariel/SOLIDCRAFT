@@ -116,6 +116,10 @@ pub enum Sel {
     SketchPoint {
         id: String,
     },
+    /// The associative midpoint of a line in the active sketch. Selection alone creates no geometry.
+    SketchMidpoint {
+        id: String,
+    },
     /// Geometry of a different sketch, retained for projection preselection.
     ExternalSketchCurve {
         sketch: u64,

@@ -75,8 +75,8 @@ pub(crate) fn glyph_icon(name: &str) -> Option<&'static str> {
 }
 pub(crate) fn glyph_letter(name: &str) -> &'static str {
     match name {
-        "Horizontal" => "H",
-        "Vertical" => "V",
+        "Horizontal" => "-",
+        "Vertical" => "|",
         _ => "?",
     }
 }
