@@ -50,7 +50,10 @@ pub use dims::{DimFrame, DimLayout, chain_centres, default_text, dim_frame, dim_
 pub use ends::{END_TOL, EndReport, EndTouch, UntiedEnd, loose_ends};
 pub use fonts::{DEFAULT_FONT_FAMILY, FontData, families_in, find_style_in, font_data, font_data_styled, installed_families, set_font_file_check};
 pub use freeform_offset::{FreeformOffset, OFFSET_TOLERANCE};
-pub use link::{Link, LinkGeom, LinkKind, LinkSource, MAX_LINK_ENTITIES, SKETCH_AXIS_HALF, TextExprs, sketch_axis_geom};
+pub use link::{
+    Link, LinkGeom, LinkKind, LinkPlacement, LinkSource, LinkUpdate, MAX_LINK_ENTITIES, MAX_LINK_OMIT, MAX_PLACEMENT_PATH, SKETCH_AXIS_HALF,
+    TextExprs, sketch_axis_geom,
+};
 pub use model::{
     Constraint, ConstraintKind, Curve, CurveKind, MAX_CONSTRAINTS, MAX_COORD, MAX_CURVES, MAX_POINTS, PointExprs, SPoint, Sketch, SketchError,
     SketchView,

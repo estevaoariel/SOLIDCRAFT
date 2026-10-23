@@ -975,7 +975,9 @@ fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui, names: bool) {
         }
         slots.push(VerticalSlot { y: ui.cursor().top(), position: index, group: group_id, indent_group });
         let indent = group_id.map(|id| (group_depth(&groups, id) + 1) as f32 * 14.0).unwrap_or(0.0);
-        let has_patterns = matches!(kind, TimelineKind::Sketch) && crate::sketch_pattern_tree::has_patterns(app, *id);
+        // Its patterns and projections fold under a sketch.
+        let has_patterns = matches!(kind, TimelineKind::Sketch)
+            && (crate::sketch_pattern_tree::has_patterns(app, *id) || crate::sketch_link_tree::has_links(app, *id));
         let pattern_key = format!("timeline/sketch/{id}/patterns");
         let patterns_open = crate::browser::is_open(app, &pattern_key, true);
         let style = if names { crate::ui_kit::HistoryStyle::Names } else { crate::ui_kit::HistoryStyle::Icons };
@@ -1092,6 +1094,7 @@ fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui, names: bool) {
         if names && has_patterns && patterns_open {
             let depth = group_id.map_or(1, |group| group_depth(&groups, group) + 2);
             crate::sketch_pattern_tree::rows(app, ui, *id, depth, "timeline", None, false);
+            crate::sketch_link_tree::rows(app, ui, *id, depth, "timeline", false);
         }
         previous_visible_group = group_id;
     }

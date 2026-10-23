@@ -147,11 +147,14 @@ pub fn hint(id: &str) -> String {
         "sketch.circle.center" => "Circle: click the centre, then a point on the circle".into(),
         "sketch.arc.three_point" => "Arc: click start, end, then a point on the arc".into(),
         "sketch.arc.center_point" => "Arc: click centre and start, then click end or type a signed sweep".into(),
-        "sketch.dimension" => "Dimension: pick one or two entities and type the value (or click to place it first); Enter applies".into(),
+        "sketch.dimension" => {
+            "Dimension: pick one or two entities (model edges and vertices are projected) and type the value (or click to place it first); Enter applies".into()
+        }
         "sketch.constraint.horizontal_vertical" => "Horizontal/Vertical: pick a line or two points; hold Shift to pick a line midpoint".into(),
         "sketch.slot.center_to_center" | "sketch.slot.overall" => "Slot: click both ends, then the width".into(),
         "sketch.constraint.midpoint" => "MidPoint: pick a point and a line, or two lines to centre the second on the first".into(),
-        _ if id.starts_with("sketch.constraint.") => "Constraint: pick the sketch entities".into(),
+        "sketch.constraint.fix" => "Fix: pick the sketch entities to fix in place".into(),
+        _ if id.starts_with("sketch.constraint.") => "Constraint: pick sketch entities; a model edge or vertex is projected into the sketch".into(),
         _ => crate::sketch_tools::hint(id).unwrap_or_else(|| "Click in the sketch".into()),
     }
 }
@@ -262,11 +265,14 @@ pub fn on_click(app: &mut SolveApp, proj: &Proj, pos: Pos2, shift: bool) {
             // Symmetry's third pick may be an origin axis lying along the sketch's own x or y
             // (#1075); the command names those `x` / `y`.
             let axis_ok = tool.cmd == "sketch.constraint.symmetry" && tool.picks.len() == 2;
-            if let Some(id) = hits.iter().find_map(|h| match h {
-                Hit::SketchPoint { id, .. } | Hit::SketchCurve { id, .. } => Some(id.clone()),
+            let axis = hits.iter().find_map(|h| match h {
                 Hit::Axis { name } if axis_ok => sketch_axis_of(app, name).map(str::to_string),
                 _ => None,
-            }) {
+            });
+            // Fix has nothing to do on projected geometry: it is fixed already.
+            let projects = tool.cmd != "sketch.constraint.fix";
+            let own = active_entity(app, &hits).map(|(id, _)| id);
+            if let Some(id) = own.or(axis).or_else(|| if projects { project_pick(app, &hits).map(|(id, _)| id) } else { None }) {
                 tool.picks.push(id);
             }
             if tool.picks.len() >= n {
@@ -274,16 +280,21 @@ pub fn on_click(app: &mut SolveApp, proj: &Proj, pos: Pos2, shift: bool) {
                 tool.picks.clear();
             }
         }
-        Kind::Ext => crate::sketch_tools::on_click(app, &mut tool, proj, pos),
+        Kind::Ext => {
+            crate::sketch_tools::on_click(app, &mut tool, proj, pos);
+            if crate::sketch_tools::take_ended() {
+                return;
+            }
+        }
         Kind::Dimension => {
             let hits = pick(app, proj, pos);
-            let hit = hits.iter().find_map(|h| match h {
-                Hit::SketchPoint { id, .. } => Some((id.clone(), false)),
-                Hit::SketchCurve { id, .. } => Some((id.clone(), true)),
-                _ => None,
-            });
+            let typed = crate::dim_view::live();
+            // A model edge or vertex (or another sketch's curve) joins as its projection, but a
+            // click that only places the text of a dimension being typed projects nothing.
+            let joins = typed.is_none_or(|typed| !typed) && tool.picks.len() < 2;
+            let hit = active_entity(app, &hits).or_else(|| if joins { project_pick(app, &hits) } else { None });
             let fresh = |tool: &Tool, id: &String| !tool.picks.contains(id) && tool.picks.len() < 2;
-            if let Some(typed) = crate::dim_view::live() {
+            if let Some(typed) = typed {
                 match hit {
                     // Before anything is typed, another entity joins the dimension, as in the
                     // place-first flow (a distance, an angle between lines).
@@ -564,6 +575,40 @@ fn sketch_axis_of(app: &SolveApp, name: &str) -> Option<&'static str> {
     }
 }
 
+/// The active sketch's point (`false`) or curve (`true`) under the cursor. Other sketches'
+/// entities are not this sketch's: they are projected first ([`project_pick`]).
+fn active_entity(app: &SolveApp, hits: &[Hit]) -> Option<(String, bool)> {
+    let active = app.session.active_sketch?;
+    hits.iter().find_map(|h| match h {
+        Hit::SketchPoint { sketch, id, .. } if *sketch == active => Some((id.clone(), false)),
+        Hit::SketchCurve { sketch, id, .. } if *sketch == active => Some((id.clone(), true)),
+        _ => None,
+    })
+}
+
+/// A model vertex or edge, or another sketch's curve, under the cursor, projected into the
+/// active sketch so a constraint or dimension can use it: the projected point (`false`) or
+/// curve (`true`). The status line tells what was projected (or why it could not be).
+fn project_pick(app: &mut SolveApp, hits: &[Hit]) -> Option<(String, bool)> {
+    let active = app.session.active_sketch?;
+    let (r, what) = hits.iter().find_map(|h| match h {
+        Hit::Vertex { body, point } => Some((json!({"vertex": [point.x, point.y, point.z], "body": body}), "vertex")),
+        Hit::Edge { body, mid, .. } => Some((json!({"edge": [mid.x, mid.y, mid.z], "body": body}), "edge")),
+        Hit::SketchCurve { sketch, id, .. } if *sketch != active => Some((json!({"sketch": sketch, "curve": id}), "curve")),
+        _ => None,
+    })?;
+    let v = app.run("sketch.project", json!({"refs": [r]})).ok()?;
+    let link = v["links"].get(0)?;
+    let first = |k: &str| link[k].get(0).and_then(Value::as_str).map(str::to_string);
+    // A vertex projects to a point, and so does an edge seen end-on.
+    let curve = if what == "vertex" { None } else { first("curves") };
+    let picked = curve.map(|c| (c, true)).or_else(|| first("points").map(|p| (p, false)));
+    if picked.is_some() {
+        app.set_status(format!("Projected the {what} into the sketch"), false);
+    }
+    picked
+}
+
 fn run_pick(app: &mut SolveApp, t: &Tool) {
     let k = &t.picks;
     let params = match t.cmd {
@@ -574,7 +619,12 @@ fn run_pick(app: &mut SolveApp, t: &Tool) {
         "sketch.constraint.symmetry" => json!({"a": k[0], "b": k[1], "line": k[2]}),
         _ => json!({"a": k[0], "b": k[1]}),
     };
-    let _ = app.run(t.cmd, params);
+    // A command that changed nothing says why (Fix on projected geometry).
+    if let Ok(v) = app.run(t.cmd, params)
+        && let Some(note) = v["result"]["note"].as_str()
+    {
+        app.set_status(note, false);
+    }
 }
 
 /// Right click / Esc: end the current chain (line) or cancel the tool.

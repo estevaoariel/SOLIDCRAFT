@@ -142,6 +142,7 @@ fn insert(s: &mut Session, p: &Value, cmd: &str, svg: bool) -> Result<Value> {
                 &mut sk,
                 LinkKind::Text,
                 LinkSource::Text { text, at, height, angle, font: None, style: Default::default(), exprs: Default::default() },
+                None,
             )
             .is_ok()
             {

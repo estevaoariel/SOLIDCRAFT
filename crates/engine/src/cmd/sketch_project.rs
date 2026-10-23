@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use solidcraft_doc::project::resolve;
 use solidcraft_doc::{Document, FeatureKind};
 use solidcraft_geom::{Plane, Vec3};
-use solidcraft_sketch::{ConstraintKind, LinkKind, LinkSource, Sketch};
+use solidcraft_sketch::{ConstraintKind, LinkKind, LinkPlacement, LinkSource, Sketch};
 
 use super::{CommandSpec, in_sketch};
 use crate::params::{bad, bool_, str_, vec3};
@@ -15,7 +15,7 @@ use crate::{EngineError, Result, Session};
 
 macro_rules! refs_doc {
     () => {
-        "refs: [{edge: [x,y,z], body?} | {face: [x,y,z], body?} (its edge loops) | {body: name} (silhouette) | {vertex: [x,y,z], body?} | {sketch, curve} | {sketch, point} | \"origin\" | {axis: X|Y|Z} | {plane: XY|XZ|YZ|name}]"
+        "refs: [{edge: [x,y,z], body?} | {face: [x,y,z], body?} (its edge loops) | {body: name} (silhouette) | {vertex: [x,y,z], body?} | {sketch, curve} | {sketch, point} | \"origin\" | {axis: X|Y|Z} | {plane: XY|XZ|YZ|name}]; to project a copy other than a component's first placement, give the model ref path: [occurrence ids from the root] or name the copy's body (body: \"Block (Part:2)\"), otherwise the point is looked for at the first placement"
     };
 }
 
@@ -68,7 +68,7 @@ fn source(s: &Session, v: &Value, cmd: &str) -> Result<LinkSource> {
         return match name.to_ascii_lowercase().as_str() {
             "origin" => Ok(LinkSource::Origin),
             "x" | "y" | "z" => Ok(LinkSource::Axis { name: name.to_ascii_uppercase() }),
-            _ if s.model.state().body(name).is_some() => Ok(LinkSource::Body { body: name.to_string() }),
+            _ if s.model.state().body(name).is_some() || world_body(s, name, None).is_some() => Ok(LinkSource::Body { body: name.to_string() }),
             _ => Err(bad(cmd, format!("unknown reference `{name}`"))),
         };
     }
@@ -116,6 +116,172 @@ fn source(s: &Session, v: &Value, cmd: &str) -> Result<LinkSource> {
         return Ok(LinkSource::Origin);
     }
     Err(bad(cmd, format!("cannot project {v}")))
+}
+
+/// A body as the world shows it, by its world name ("Body1", "Body1 (A:2)"), or by its own name
+/// at the occurrence `path`: its own name, its component, its occurrence path and the transform
+/// from its frame to the world (with uncaptured moves, as the viewport shows it).
+struct WorldBody {
+    own: String,
+    component: u64,
+    path: Vec<u64>,
+    frame: solidcraft_doc::Mat,
+}
+
+fn world_body(s: &Session, name: &str, path: Option<&[u64]>) -> Option<WorldBody> {
+    let state = s.model.state();
+    if path.is_none() && s.doc.occurrences.is_empty() {
+        return None;
+    }
+    s.placed_document()
+        .body_frames_with_source(&state)
+        .into_iter()
+        .find(|(world, own, _, at, _)| match path {
+            Some(path) => at == path && (world == name || own == name),
+            None => world == name,
+        })
+        .map(|(_, own, component, path, frame)| WorldBody { own, component, path, frame })
+}
+
+/// An occurrence path parameter: 0..64 occurrence ids from the root.
+fn path_param(v: &Value, cmd: &str) -> Result<Vec<u64>> {
+    let path: Vec<u64> = v
+        .as_array()
+        .filter(|a| a.len() <= solidcraft_sketch::MAX_PLACEMENT_PATH)
+        .and_then(|a| a.iter().map(Value::as_u64).collect())
+        .ok_or_else(|| bad(cmd, "`path` must list up to 64 occurrence ids"))?;
+    LinkPlacement { source: path.clone(), ..Default::default() }.validate().map_err(|e| bad(cmd, e.to_string()))?;
+    Ok(path)
+}
+
+/// The face a sketch is attached to, if any.
+fn attachment(doc: &Document, id: u64) -> Option<&solidcraft_doc::FaceAnchor> {
+    doc.feature(id).and_then(|feature| match &feature.kind {
+        FeatureKind::Sketch { plane, .. } => super::sketch::face::anchor(plane),
+        _ => None,
+    })
+}
+
+/// The placement of sketch `id`'s component that links from other components are made in:
+/// the one the sketch's links already use, else its attached face's, else the active
+/// placement when its component is active, else its first placement (empty for the root).
+pub(super) fn author_path(s: &Session, doc: &Document, id: u64, sk: &Sketch) -> Result<Vec<u64>> {
+    let comp = doc.feature(id).map(|f| f.component).unwrap_or(0);
+    let mut used = sk.links.iter().filter_map(|l| l.placement.as_ref().map(|p| &p.author));
+    if let Some(first) = used.next() {
+        if used.any(|other| other != first) {
+            return Err(EngineError::Other("the sketch's links were made in different placements of its component".into()));
+        }
+        return Ok(first.clone());
+    }
+    if comp == 0 {
+        return Ok(Vec::new());
+    }
+    if let Some(anchor) = attachment(doc, id).filter(|a| !a.author_path.is_empty()) {
+        return Ok(anchor.author_path.clone());
+    }
+    if comp == s.active_component
+        && let Some(path) = &s.active_occurrence_path
+        && s.occurrence_placement(path).is_ok_and(|p| p.component == comp)
+    {
+        return Ok(path.clone());
+    }
+    Ok(doc.first_path(comp))
+}
+
+/// What a reference picked for sketch `id` reads: the source, and for geometry of another
+/// component the exact placement it is read from (its `path`, or the instance its world body
+/// name names: "Body1 (A:2)"), with picked points moved into that body's own frame. Geometry
+/// of the sketch's own component at its own placement is an ordinary link. Another placement
+/// of the sketch's own component, or a part inside one, is refused: the sketch would shape
+/// every copy of the part from one copy's position.
+pub(super) fn pick(s: &Session, doc: &Document, id: u64, sk: &Sketch, v: &Value, cmd: &str) -> Result<(LinkSource, Option<LinkPlacement>)> {
+    let explicit = v.get("path").map(|p| path_param(p, cmd)).transpose()?;
+    let mut src = source(s, v, cmd)?;
+    let receiver = doc.feature(id).map(|f| f.component).unwrap_or(0);
+    let refuse_inside = |path: &[u64], author: &[u64]| -> Result<()> {
+        let inside = path.iter().any(|o| doc.occurrences.iter().any(|x| x.id == *o && x.component == receiver));
+        if inside && !path.starts_with(author) {
+            return Err(bad(cmd, "a sketch cannot read geometry inside another placement of its own component"));
+        }
+        Ok(())
+    };
+    match &mut src {
+        LinkSource::Edge { body, at } | LinkSource::Face { body, at } | LinkSource::Vertex { body, at } => {
+            let Some(found) = world_body(s, body, explicit.as_deref()) else {
+                return match explicit {
+                    Some(_) => Err(bad(cmd, format!("no body `{body}` at that placement"))),
+                    None => Ok((src, None)),
+                };
+            };
+            let author = author_path(s, doc, id, sk)?;
+            *body = found.own.clone();
+            if found.component == receiver {
+                return if found.path == author {
+                    Ok((src, None))
+                } else {
+                    Err(bad(cmd, "a sketch cannot read another placement of its own component"))
+                };
+            }
+            refuse_inside(&found.path, &author)?;
+            // The pick is in the sketch's frame (as `frames` put it there): into the body's own.
+            let placed = s.placed_document();
+            let sketch_frame = if receiver == s.active_component { s.active_component_frame() } else { placed.component_transform(receiver) };
+            let inverse = solidcraft_doc::mat_inverse(&found.frame).ok_or_else(|| bad(cmd, "the body's placement is singular"))?;
+            let picked = if crate::frames::placed(s) { solidcraft_doc::apply_point(&sketch_frame, *at) } else { *at };
+            *at = solidcraft_doc::apply_point(&inverse, picked);
+            Ok((src, Some(LinkPlacement { source: found.path, author, seen: None })))
+        }
+        LinkSource::Body { body } => {
+            let Some(found) = world_body(s, body, explicit.as_deref()) else {
+                return match explicit {
+                    Some(_) => Err(bad(cmd, format!("no body `{body}` at that placement"))),
+                    None => Ok((src, None)),
+                };
+            };
+            let author = author_path(s, doc, id, sk)?;
+            *body = found.own.clone();
+            if found.component == receiver {
+                return if found.path == author {
+                    Ok((src, None))
+                } else {
+                    Err(bad(cmd, "a sketch cannot read another placement of its own component"))
+                };
+            }
+            refuse_inside(&found.path, &author)?;
+            Ok((src, Some(LinkPlacement { source: found.path, author, seen: None })))
+        }
+        LinkSource::SketchCurve { sketch, .. } | LinkSource::SketchPoint { sketch, .. } => {
+            let comp = doc.feature(*sketch).map(|f| f.component).unwrap_or(0);
+            let author = author_path(s, doc, id, sk)?;
+            if comp == receiver {
+                return match explicit {
+                    Some(path) if path != author => Err(bad(cmd, "a sketch cannot read another placement of its own component")),
+                    _ => Ok((src, None)),
+                };
+            }
+            let path = match explicit {
+                Some(path) if doc.path_placement(&path).is_some_and(|(c, _)| c == comp) => path,
+                Some(_) => return Err(bad(cmd, "`path` is not a placement of that sketch's component")),
+                None => {
+                    let mut all = doc.placements().into_iter().filter(|(c, ..)| *c == comp).map(|(_, path, _)| path);
+                    match (all.next(), all.next()) {
+                        (Some(path), None) => path,
+                        (Some(_), Some(_)) => {
+                            return Err(bad(cmd, "that sketch's component is placed more than once: give the placement's `path`"));
+                        }
+                        (None, _) => return Err(bad(cmd, "that sketch's component is not placed")),
+                    }
+                }
+            };
+            refuse_inside(&path, &author)?;
+            Ok((src, Some(LinkPlacement { source: path, author, seen: None })))
+        }
+        _ => match explicit {
+            Some(_) => Err(bad(cmd, "`path` applies to body and sketch references")),
+            None => Ok((src, None)),
+        },
+    }
 }
 
 /// The plane of a sketch feature, resolved against `st`: the model before the sketch as its
@@ -178,24 +344,22 @@ pub(super) fn refresh(s: &Session, doc: &Document, id: u64, sk: &mut Sketch) -> 
     if sk.links.is_empty() {
         return Vec::new();
     }
+    // Links to an exact placement read the captured placements, as evaluation does; the rest
+    // read the model where the viewport shows it, uncaptured moves too.
+    let captured = doc;
     let doc = placed_candidate(s, doc);
     let (vals, _) = doc.param_values();
     // A text's outlines are rebuilt from its numbers: the ones its expressions give come first
     // (an expression that cannot be evaluated leaves the text as it was).
     let _ = doc.apply_text_values(&vals, sk);
-    let st = s.model.state_before(id);
-    let attachment = doc.feature(id).and_then(|feature| match &feature.kind {
-        solidcraft_doc::FeatureKind::Sketch { plane, .. } => super::sketch::face::anchor(plane),
-        _ => None,
-    });
-    let Ok(st) = state_for_sketch(s, &doc, id, &st) else {
+    let raw = s.model.state_before(id);
+    let attachment = attachment(&doc, id);
+    let Ok(st) = state_for_sketch(s, &doc, id, &raw) else {
         return vec!["lost face attachment; reattach explicitly".into()];
     };
     let Ok(plane) = sketch_plane(&doc, id, &st) else { return Vec::new() };
-    let warnings = match attachment {
-        Some(anchor) => solidcraft_doc::project::refresh_face_anchor_links(&doc, &vals, &st, &plane, sk, anchor),
-        None => solidcraft_doc::project::refresh_links(&doc, &vals, &st, &plane, sk),
-    };
+    let placed = solidcraft_doc::project::Placed { raw: &raw, component: doc.feature(id).map(|f| f.component).unwrap_or(0) };
+    let warnings = solidcraft_doc::project::refresh_sketch_links(captured, &vals, placed, &st, &plane, sk, attachment);
     if let Ok(stored) = doc.sketch(id)
         && sk.positions_in(stored).is_some()
     {
@@ -209,8 +373,96 @@ pub(super) fn refresh(s: &Session, doc: &Document, id: u64, sk: &mut Sketch) -> 
     warnings
 }
 
-/// Add a link for `src` to sketch `id` in `doc` (not stored in the session). Returns the link id.
-pub(super) fn add_link(s: &Session, doc: &Document, id: u64, sk: &mut Sketch, kind: LinkKind, src: LinkSource) -> Result<String> {
+/// A reference resolved for sketch `id` before it becomes a link: what it gives and the
+/// persistent face and edge names it keeps.
+pub(super) struct NewLink {
+    pub resolved: solidcraft_doc::project::Resolved,
+    pub face_name: Option<String>,
+    pub edge_name: Option<String>,
+    /// The transform from the source's frame into the sketch's it was read with.
+    pub seen: solidcraft_doc::Mat,
+}
+
+/// Resolve a reference to an exact placement of another component for sketch `id`, against
+/// the captured placements in `doc`.
+pub(super) fn resolve_new_placed(
+    s: &Session,
+    doc: &Document,
+    id: u64,
+    kind: LinkKind,
+    src: &LinkSource,
+    placement: &LinkPlacement,
+) -> Result<NewLink> {
+    let (vals, _) = doc.param_values();
+    let raw = s.model.state_before(id);
+    let shown = placed_candidate(s, doc);
+    let framed = state_for_sketch(s, &shown, id, &raw)?;
+    let plane = sketch_plane(&shown, id, &framed)?;
+    let placed = solidcraft_doc::project::Placed { raw: &raw, component: doc.feature(id).map(|f| f.component).unwrap_or(0) };
+    let (r, relative) = solidcraft_doc::project::resolve_placed(doc, &vals, placed, &plane, kind, src, placement)?;
+    let face_name = match (&r.source, r.face_index) {
+        (LinkSource::Face { body, .. }, Some(index)) => {
+            raw.body(body).and_then(|body| solidcraft_doc::naming::face_names(body).get(index).filter(|name| !name.is_empty()).cloned())
+        }
+        (LinkSource::Face { body, at }, None) => raw.body(body).and_then(|body| solidcraft_doc::naming::face_name_at_body(body, *at)),
+        _ => None,
+    };
+    let edge_name = solidcraft_doc::project::resolved_edge_name(&raw, &r);
+    Ok(NewLink { resolved: r, face_name, edge_name, seen: relative })
+}
+
+/// The source edges each of `links` (of sketch `id`) is made of now, with the geometry each
+/// gives the sketch, by link id: what deleting some of a link's curves leaves out by identity
+/// ([`solidcraft_sketch::Link::omit_edges`]). An error says why a link is kept whole.
+pub(super) fn link_pieces(
+    s: &Session,
+    doc: &Document,
+    id: u64,
+    links: &[String],
+) -> std::collections::BTreeMap<String, std::result::Result<Vec<solidcraft_doc::project::EdgePieces>, String>> {
+    let raw = s.model.state_before(id);
+    let shown = placed_candidate(s, doc);
+    let framed = state_for_sketch(s, &shown, id, &raw).map_err(|e| e.to_string());
+    let plane = framed.as_ref().map_err(Clone::clone).and_then(|framed| sketch_plane(&shown, id, framed).map_err(|e| e.to_string()));
+    let placed = solidcraft_doc::project::Placed { raw: &raw, component: doc.feature(id).map(|f| f.component).unwrap_or(0) };
+    let anchor = attachment(doc, id);
+    links
+        .iter()
+        .filter_map(|l| doc.sketch(id).ok()?.link(l).cloned())
+        .map(|link| {
+            let pieces = match (&framed, &plane) {
+                (Ok(framed), Ok(plane)) => {
+                    solidcraft_doc::project::face_link_edges(doc, placed, framed, plane, &link, anchor).map_err(|e| e.to_string())
+                }
+                (Err(e), _) | (_, Err(e)) => Err(e.clone()),
+            };
+            (link.id, pieces)
+        })
+        .collect()
+}
+
+/// Add a link for `src` to sketch `id` in `doc` (not stored in the session), reading the exact
+/// `placement` of another component when given. Returns the link id.
+pub(super) fn add_link(
+    s: &Session,
+    doc: &Document,
+    id: u64,
+    sk: &mut Sketch,
+    kind: LinkKind,
+    src: LinkSource,
+    placement: Option<LinkPlacement>,
+) -> Result<String> {
+    if let Some(placement) = placement {
+        let new = resolve_new_placed(s, doc, id, kind, &src, &placement)?;
+        let r = new.resolved;
+        let link = sk.add_link_with_wires(kind, r.source, &r.geom, &r.wires)?;
+        if let Some(l) = sk.links.iter_mut().find(|l| l.id == link) {
+            l.face_name = new.face_name;
+            l.edge_name = new.edge_name;
+            l.placement = Some(LinkPlacement { seen: Some(new.seen), ..placement });
+        }
+        return Ok(link);
+    }
     let doc = placed_candidate(s, doc);
     let (vals, _) = doc.param_values();
     let st = s.model.state_before(id);
@@ -255,14 +507,14 @@ fn run_links(s: &mut Session, p: &Value, cmd: &str, kind: LinkKind) -> Result<Va
         return Err(bad(cmd, "`refs` is empty"));
     }
     let id = s.active_sketch.ok_or_else(|| EngineError::Other("no sketch is being edited".into()))?;
-    let sources: Vec<LinkSource> = refs.iter().map(|v| source(s, v, cmd)).collect::<Result<_>>()?;
     let mut doc = (*s.doc).clone();
     let mut sk = doc.sketch(id)?.clone();
+    let picks: Vec<(LinkSource, Option<LinkPlacement>)> = refs.iter().map(|v| pick(s, &doc, id, &sk, v, cmd)).collect::<Result<_>>()?;
     refresh(s, &doc, id, &mut sk);
     let mut out = Vec::new();
-    for src in sources {
+    for (src, placement) in picks {
         let what = src.describe();
-        let l = add_link(s, &doc, id, &mut sk, kind, src).map_err(|e| bad(cmd, format!("{what}: {e}")))?;
+        let l = add_link(s, &doc, id, &mut sk, kind, src, placement).map_err(|e| bad(cmd, format!("{what}: {e}")))?;
         out.push(link_json(&sk, &l));
     }
     *doc.sketch_mut(id)? = sk;
@@ -289,7 +541,7 @@ fn one_link(s: &mut Session, cmd: &str, kind: LinkKind, src: LinkSource) -> Resu
     let mut sk = doc.sketch(id)?.clone();
     refresh(s, &doc, id, &mut sk);
     let what = src.describe();
-    let l = add_link(s, &doc, id, &mut sk, kind, src).map_err(|e| bad(cmd, format!("{what}: {e}")))?;
+    let l = add_link(s, &doc, id, &mut sk, kind, src, None).map_err(|e| bad(cmd, format!("{what}: {e}")))?;
     let mut out = link_json(&sk, &l);
     let wires: Vec<String> = sk.link_wires(&l).iter().filter_map(|w| sk.wires.get(*w).map(|w| w.id.clone())).collect();
     out["wires"] = json!(wires);
@@ -374,7 +626,7 @@ fn fit_section(s: &mut Session, p: &Value) -> Result<Value> {
     let id = s.active_sketch.ok_or_else(|| EngineError::Other("no sketch is being edited".into()))?;
     let mut doc = (*s.doc).clone();
     let mut sk = doc.sketch(id)?.clone();
-    let l = add_link(s, &doc, id, &mut sk, LinkKind::Intersect, LinkSource::Body { body }).map_err(|e| bad(cmd, e.to_string()))?;
+    let l = add_link(s, &doc, id, &mut sk, LinkKind::Intersect, LinkSource::Body { body }, None).map_err(|e| bad(cmd, e.to_string()))?;
     let curves: Vec<String> = sk.link_curves(&l).iter().filter_map(|c| sk.curves.get(*c).map(|c| c.id.clone())).collect();
     sk.break_link(&l)?;
     *doc.sketch_mut(id)? = sk;
@@ -479,11 +731,11 @@ pub(super) fn snap_points(s: &mut Session, p: &Value, cmd: &str) -> Result<Value
             sk.add_constraint(ConstraintKind::Midpoint { p: pi, l }, None)?;
             sk.points.get(pi).map(|q| q.id.clone()).unwrap_or_default()
         } else if let Some(at) = vertex {
-            let l = add_link(s, d, id, sk, LinkKind::Project, LinkSource::Vertex { body, at }).map_err(|e| bad(cmd, format!("vertex: {e}")))?;
+            let l = add_link(s, d, id, sk, LinkKind::Project, LinkSource::Vertex { body, at }, None).map_err(|e| bad(cmd, format!("vertex: {e}")))?;
             let pi = sk.link_points(&l).first().copied().ok_or_else(|| bad(cmd, "vertex projects to nothing"))?;
             sk.points.get(pi).map(|q| q.id.clone()).unwrap_or_default()
         } else if let Some(at) = edge {
-            let l = add_link(s, d, id, sk, LinkKind::Project, LinkSource::Edge { body, at }).map_err(|e| bad(cmd, format!("edge: {e}")))?;
+            let l = add_link(s, d, id, sk, LinkKind::Project, LinkSource::Edge { body, at }, None).map_err(|e| bad(cmd, format!("edge: {e}")))?;
             let before = s.model.state_before(id);
             let plane = sketch_plane(d, id, &*state_for_sketch(s, d, id, &before)?)?;
             let q = plane.to_local(at);

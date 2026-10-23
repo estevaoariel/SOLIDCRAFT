@@ -1919,8 +1919,11 @@ fn entry_row(
     acts: &mut Actions,
 ) {
     app.tree.order.push(e.row_key.clone());
-    let pattern_sketch =
-        (folder == "sketches").then(|| e.key.parse::<u64>().ok()).flatten().filter(|id| crate::sketch_pattern_tree::has_patterns(app, *id));
+    // A sketch's patterns and projections fold under it.
+    let pattern_sketch = (folder == "sketches")
+        .then(|| e.key.parse::<u64>().ok())
+        .flatten()
+        .filter(|id| crate::sketch_pattern_tree::has_patterns(app, *id) || crate::sketch_link_tree::has_links(app, *id));
     let pattern_key = format!("{}/patterns", e.row_key);
     let patterns_open = is_open(app, &pattern_key, true);
     let badges: &[&str] = if e.locked { &["lock"] } else { &[] };
@@ -1986,7 +1989,9 @@ fn entry_row(
         acts.menu = Some((p, t));
     }
     if let Some(sketch) = pattern_sketch.filter(|_| patterns_open) {
-        crate::sketch_pattern_tree::rows(app, ui, sketch, depth + 1, "browser", path.map(|path| (comp, path)), !e.visible || parent_hidden);
+        let dim = !e.visible || parent_hidden;
+        crate::sketch_pattern_tree::rows(app, ui, sketch, depth + 1, "browser", path.map(|path| (comp, path)), dim);
+        crate::sketch_link_tree::rows(app, ui, sketch, depth + 1, "browser", dim);
     }
     let Some(resp) = &r.resp else { return };
     // Drag: the selected items of this folder when this one is selected, else just this one.
