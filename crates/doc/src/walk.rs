@@ -43,6 +43,8 @@ impl Walk for f64 {}
 impl Walk for usize {}
 impl Walk for u32 {}
 impl Walk for ProfileSel {}
+impl Walk for std::collections::BTreeMap<String, String> {}
+impl Walk for crate::frame::Anchor {}
 impl Walk for solidcraft_sketch::Sketch {}
 impl Walk for solidcraft_sketch::PatternAlignment {}
 impl Walk for solidcraft_kernel::StepNode {}
