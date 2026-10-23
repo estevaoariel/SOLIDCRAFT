@@ -8,6 +8,11 @@ use crate::params::{bad, bool_, str_, string_list};
 use crate::{EngineError, Result, Session};
 
 pub static COMMANDS: &[CommandSpec] = &[
+    CommandSpec::new("engine.version", "SolidCraft Version", version)
+        .icon("inspect")
+        .noundo()
+        .doc_only()
+        .params("No parameters. Returns {name, version, commit} for the SolidCraft engine executing commands; commit is unknown in source archives without Git"),
     CommandSpec::new("inspect.measure", "Measure", measure)
         .at("SOLID", "INSPECT")
         .icon("measure")
@@ -52,6 +57,10 @@ pub static COMMANDS: &[CommandSpec] = &[
         .output(crate::schema::output_schema_for::<crate::schema::inspect::DescribeResult>)
         .params("command: a command id. Returns {id, label, params, input, output} (and param_warnings in the warn parameter-check mode): the command's parameter documentation and, once the command has a typed contract, the JSON Schemas (2020-12) of its parameters and of a successful result (null otherwise). Read-only."),
 ];
+
+fn version(_: &mut Session, _: &Value) -> Result<Value> {
+    Ok(json!({"name": "solidcraft", "version": env!("CARGO_PKG_VERSION"), "commit": env!("SOLIDCRAFT_ENGINE_COMMIT")}))
+}
 
 pub fn measure_json(b: &solidcraft_doc::ModelBody) -> Value {
     match solidcraft_kernel::measure(&b.body) {
