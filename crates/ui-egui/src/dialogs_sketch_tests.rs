@@ -207,3 +207,42 @@ fn apply_keeps_the_panel_open_after_asynchronous_evaluation() {
     assert!(d.inputs.iter().all(|i| i.items.is_empty()));
     assert!(!d.repeat_after_apply);
 }
+
+#[test]
+fn sketch_pattern_dialog_preserves_expression_text_when_applying_and_editing() {
+    let mut h = fixture();
+    h.app.run("parameters.add", json!({"name":"pitch","expression":"30","unit":"mm"})).unwrap();
+    for command in ["sketch.pattern.rectangular", "sketch.pattern.circular"] {
+        let mut d = picked(&h, command);
+        match &mut d.kind {
+            Kind::SketchModify(Mod::PatternRect { count, spacing, .. }) => {
+                *count = "1 + 2".into();
+                *spacing = "pitch".into();
+            }
+            Kind::SketchModify(Mod::PatternCirc { count, angle, .. }) => {
+                *count = "1 + 2".into();
+                *angle = "45 deg + 45 deg".into();
+            }
+            _ => panic!("expected a sketch pattern dialog"),
+        }
+        let cmds = apply_commands(&h.app, &d).unwrap();
+        assert_eq!(cmds[0].1["count"], "1 + 2");
+        let (key, expression) = if command.ends_with("rectangular") { ("spacing", "pitch") } else { ("angle", "45 deg + 45 deg") };
+        assert_eq!(cmds[0].1[key], expression);
+        let result = h.app.run(command, cmds[0].1.clone()).unwrap();
+        if command.ends_with("rectangular") {
+            h.app.preferences.look_at_anim = false;
+            h.step(&json!({"call":"ui.view","params":{"view":"top"}})).unwrap();
+            h.step(&json!({"call":"ui.camera","params":{"target":[50,20,0],"distance":180}})).unwrap();
+            h.step(&json!({"shot":"sketch-pattern-spacing-30"})).unwrap();
+            h.app.run("parameters.change", json!({"name":"pitch","expression":"40"})).unwrap();
+            h.step(&json!({"shot":"sketch-pattern-spacing-40"})).unwrap();
+        }
+        assert!(crate::sketch_modify_ui::edit_pattern(&mut h.app, result["pattern"].as_str().unwrap()));
+        match &h.app.dialog.as_ref().unwrap().kind {
+            Kind::SketchModify(Mod::PatternRect { spacing, .. }) => assert_eq!(spacing, expression),
+            Kind::SketchModify(Mod::PatternCirc { angle, .. }) => assert_eq!(angle, expression),
+            _ => panic!("expected a sketch pattern dialog"),
+        }
+    }
+}

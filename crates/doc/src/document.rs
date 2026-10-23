@@ -3439,6 +3439,7 @@ impl Document {
     /// parameters (in place).
     pub fn apply_dimension_values(&self, vals: &std::collections::BTreeMap<String, expr::Value>, sk: &mut Sketch) -> Result<()> {
         self.apply_point_values(vals, sk)?;
+        self.apply_pattern_values(vals, sk)?;
         for c in &mut sk.constraints {
             if let Some(p) = &c.param {
                 let kind = if c.kind.is_angle() { Kind::Angle } else { Kind::Length };
@@ -3448,6 +3449,42 @@ impl Document {
         }
         for c in &sk.constraints {
             sk.validate(&c.kind)?;
+        }
+        Ok(())
+    }
+
+    /// Evaluate the retained pattern inputs before solving its associative relations.
+    pub fn apply_pattern_values(&self, vals: &std::collections::BTreeMap<String, expr::Value>, sk: &mut Sketch) -> Result<()> {
+        use solidcraft_sketch::SketchPatternKind;
+        for index in 0..sk.patterns.len() {
+            let Some(pattern) = sk.patterns.get(index) else { continue };
+            let mut kind = pattern.kind.clone();
+            for (key, expression) in &pattern.expressions {
+                let unit = match key.as_str() {
+                    "count" | "count2" => Kind::Unitless,
+                    "spacing" | "spacing2" => Kind::Length,
+                    "angle" => Kind::Angle,
+                    _ => return Err(DocError::Invalid(format!("unknown sketch pattern input `{key}`"))),
+                };
+                let value = crate::eval::val(vals, expression, unit).map_err(|e| DocError::Expr(format!("pattern {} `{key}`: {e}", pattern.id)))?;
+                let count = || -> Result<usize> {
+                    if !(1.0..=500.0).contains(&value) || value.fract() != 0.0 {
+                        return Err(DocError::Invalid(format!("pattern `{key}` must be a positive integer from 1 to 500")));
+                    }
+                    Ok(value as usize)
+                };
+                match (&mut kind, key.as_str()) {
+                    (SketchPatternKind::Circular { count: n, .. } | SketchPatternKind::Rectangular { count: n, .. }, "count") => *n = count()?,
+                    (SketchPatternKind::Rectangular { count2, .. }, "count2") => *count2 = count()?,
+                    (SketchPatternKind::Rectangular { spacing, .. }, "spacing") => *spacing = value,
+                    (SketchPatternKind::Rectangular { spacing2, .. }, "spacing2") => *spacing2 = value,
+                    (SketchPatternKind::Circular { angle, .. }, "angle") => *angle = value.to_degrees(),
+                    _ => return Err(DocError::Invalid(format!("invalid sketch pattern input `{key}`"))),
+                }
+            }
+            if kind != pattern.kind {
+                sk.update_pattern(index, kind)?;
+            }
         }
         Ok(())
     }
