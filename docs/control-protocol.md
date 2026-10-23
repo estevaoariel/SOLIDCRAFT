@@ -213,11 +213,15 @@ labels; `prefs:measure_axis_distances` identifies the checkbox.
 | `engine.execute` → `view.history_layout` | `width?`, `dock?`: `bottom`, `left`, `under_browser`, `collapsed?` | Resize/dock the history without opening a dialog or changing the design. Contents respond to measured width; browser-stacked history shares its width and splits height equally. One folded header gives the expanded card the rest; two folded headers stay at the top. |
 | `ui.agent_chat` | `features?`, `toolbar_button?`, `permissions?` (`ask`, `edits`, `all`), `add_agent?` ({`name`, `kind`: `acp` or `api`, `command` or `base_url` + `model`}; no keys), `default_agent?`, `agent?` (the conversation's agent, by id), `mode?` (the agent's own mode), `model?` (one of its models), `open?`, `side?` (`left`, `right`), `minimized?`, `popped?` (in its own window), `width?`, `picker?`, `refresh?`, `connect?`, `stop?`, `attach?`: a file's path (a picture, a text file or a CAD file, for the next message; CAD files are imported at once), `remove_file?` (index of a file on the next message), `send?`: text (files alone make a message too), `attach_view?`, `permission?`: an option id or `"cancel"` (the newest question of the agent's own), `approve?`: true, false or `"always"` (the oldest request held for Allow/Deny), `cancel?` (Stop: the queue stays), `send_now?` (stop the running step, then send the queued messages), `remove_pending?` (index), `new_chat?` (clear the chat, new session), `undo?` (the last message's changes) | the chat's state: `features`, `agents` (found and added), `currentAgent`, `state` (off, starting, ready, busy, auth, exited), `popped`, `window` (its place and size), `agent`, `modes`, `mode`, `models`, `model`, `authMethods`, `toolsPort`, `pid`, `waiting`, `turn`, `pending` (queued messages, with their `files`), `attachments` (the files on the next message, by name), `loading` (pictures still being read for it, by name), `stopped`, `detection` and the conversation (`items`). With `features` off only the settings apply. Desktop only; see [Agent chat](agent-chat.md) |
 | `ui.resize` | `width`, `height` | |
+| `ui.simulation` | `shown?` (a study's name), `quantity?`: `speed` \| `pressure`, `section?`: `x` \| `y` \| `z` \| `off`, `offset?` (0…1 along the grid), `streamlines?`, `lines?` (how many), `see_through?` | what the Simulation workspace's view draws of an Airflow study's result; returns the settings |
 | `app.quit` | `force?` (quit without asking about unsaved designs) | `quitting` (the window closes), `asking` (a "save changes?" prompt is open) |
 
-`ui.workspace {workspace?: "design" | "render"}` reads or changes the active workspace.
-Entering Render requires finishing the current modelling operation; returning restores
-the Design camera. See [the integrated Render workspace](render-workspace.md).
+`ui.workspace {workspace?: "design" | "render" | "simulation"}` reads or changes the active
+workspace. Entering Render or Simulation requires finishing the current modelling operation;
+returning from Render restores the Design camera. See [the integrated Render workspace](render-workspace.md).
+Simulation keeps the modelling view and offers the Airflow, Aerodynamics and Gas Dynamics
+studies (`sim.flow.new`, `sim.aero.new`, `sim.gas.new`). Airflow runs (`sim.flow.*`, Goal Seek
+`sim.seek.*`, its view `ui.simulation`); the other two solvers are not built yet.
 
 ### Continuous camera motion
 

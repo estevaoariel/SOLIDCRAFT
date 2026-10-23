@@ -956,22 +956,20 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
         if !floating {
             painter.line_segment([ws.right_top(), ws.right_bottom()], Stroke::new(1.0, t.border));
         }
-        let render = crate::render_workspace::active(app);
-        let workspace_icon = if render { "ws_render" } else { "ws_design" };
+        // The workspace the window is in: Design, Render or Simulation.
+        let workspace = crate::workspace_switch::current(app);
         icons::paint_icon(
             &painter,
             Rect::from_center_size(pos2(ws.center().x, ws.top() + if labels { 39.0 } else { 25.0 }), vec2(30.0, 30.0)),
-            workspace_icon,
+            workspace.icon(),
             1.0,
         );
-        ribbon_text(
-            ui,
-            pos2(ws.center().x, ws.top() + if labels { 69.0 } else { 50.0 }),
-            app.tr(if render { "ui.render" } else { "ui.design" }),
-            t.font_button,
-            t.text,
-            true,
-        );
+        let name = match workspace {
+            crate::workspace_switch::Workspace::Design => app.tr("ui.design"),
+            crate::workspace_switch::Workspace::Render => app.tr("ui.render"),
+            crate::workspace_switch::Workspace::Simulation => app.tr_label("Simulation"),
+        };
+        ribbon_text(ui, pos2(ws.center().x, ws.top() + if labels { 69.0 } else { 50.0 }), name, t.font_button, t.text, true);
         let label = app.tr("ui.ribbon_workspace");
         let label_width =
             painter.layout_no_wrap(label.to_string(), FontId::proportional(crate::theme::Tokens::get().font_small), t.text_dim).size().x;

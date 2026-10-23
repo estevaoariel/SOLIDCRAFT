@@ -15,6 +15,7 @@ pub(super) fn command(kind: &Kind) -> Option<&'static str> {
         }),
         Kind::Part(_) => Some("parts.insert"),
         Kind::PartSize(_) => Some("parts.resize"),
+        Kind::Sim(k) => Some(k.study.command()),
         Kind::SaveMesh(_) => Some("file.save_mesh"),
         Kind::ViewDxf { .. } => Some("file.export_view_dxf"),
         Kind::Sketch => Some("sketch.create"),
@@ -183,6 +184,7 @@ pub(super) fn rows(app: &mut SolveApp, ctx: &egui::Context, d: &mut Dialog, ui: 
         Kind::Motion(k) => enter |= crate::dialogs_motion::rows(app, ui, k, &mut d.inputs),
         Kind::Part(k) => enter |= crate::dialogs_parts::rows(app, ui, k, &d.inputs),
         Kind::PartSize(k) => enter |= crate::dialogs_part_size::rows(app, ui, k),
+        Kind::Sim(k) => enter |= crate::dialogs_sim::rows(app, ui, k),
         Kind::SaveMesh(k) => enter |= crate::dialogs_save_mesh::rows(app, ui, k),
         Kind::ViewDxf { dashed, tolerance } => crate::dialogs_view_dxf::rows(app, ui, dashed, tolerance),
         Kind::Sketch => {

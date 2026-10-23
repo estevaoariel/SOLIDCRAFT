@@ -4247,6 +4247,7 @@ dependencies = [
  "solidcraft-io",
  "solidcraft-kernel",
  "solidcraft-render",
+ "solidcraft-sim",
  "solidcraft-sketch",
  "thiserror 2.0.21",
  "web-time",
@@ -4274,6 +4275,7 @@ dependencies = [
  "solidcraft-geom",
  "solidcraft-kernel",
  "solidcraft-render",
+ "solidcraft-sim",
  "thiserror 2.0.21",
  "wgpu",
 ]
@@ -4342,6 +4344,14 @@ dependencies = [
  "sha2 0.10.9",
  "solidcraft-geom",
  "weezl",
+]
+
+[[package]]
+name = "solidcraft-sim"
+version = "0.20.0"
+dependencies = [
+ "solidcraft-geom",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

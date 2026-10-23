@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>Aerodynamics study</title>
+  <path d="M10.11 36.5C11.11 28.5 25.11 24.5 36.11 26.5C46.11 28.5 54.11 32.5 58.11 36.5C49.11 37.5 31.11 39.5 19.11 40.5C13.11 41 10.11 39.5 10.11 36.5Z" fill="#e2e8ef"/>
+  <path d="M10.11 36.5C11.11 28.5 25.11 24.5 36.11 26.5C46.11 28.5 54.11 32.5 58.11 36.5C49.11 37.5 31.11 39.5 19.11 40.5C13.11 41 10.11 39.5 10.11 36.5Z" fill="none" stroke="#34465b" stroke-width="2.55" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M5.11 24.5C17.11 21.5 26.11 15.5 37.11 16.5C45.11 17.5 49.11 21.5 53.11 23.5" fill="none" stroke="#ffffff" stroke-width="6.45" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M5.11 24.5C17.11 21.5 26.11 15.5 37.11 16.5C45.11 17.5 49.11 21.5 53.11 23.5" fill="none" stroke="#236ead" stroke-width="4.25" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M5.11 48.5C19.11 48.5 33.11 47.5 53.11 46" fill="none" stroke="#ffffff" stroke-width="6.45" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M5.11 48.5C19.11 48.5 33.11 47.5 53.11 46" fill="none" stroke="#236ead" stroke-width="4.25" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M61.61 27L51.58 27.84L54.92 19.48Z" fill="#236ead"/>
+  <path d="M62.11 45.3L53.54 50.58L52.75 41.61Z" fill="#236ead"/>
+</svg>

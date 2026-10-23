@@ -274,10 +274,10 @@ fn cmd_run(args: &[String]) -> Result<(), String> {
     let timings = profile || args.iter().any(|a| a == "--timings");
     let (mut s, results) = if want_results || timings {
         // Collect every command's result or time (scripts only), then process requested files too.
-        let mut s = match base {
+        let mut s = with_flow_gpu(match base {
             Some(b) => load(b)?,
             None => Session::default(),
-        };
+        });
         let needs = if want_results { "--results needs a script" } else { "--timings needs a script" };
         let v = read_json(path.ok_or(needs)?)?;
         let out = if timings {
@@ -315,12 +315,18 @@ fn cmd_run(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// Airflow studies (`sim.flow.run`) in scripts run on the GPU when there is one, opened on first use.
+fn with_flow_gpu(mut s: Session) -> Session {
+    s.set_flow_backend(Some(std::sync::Arc::new(solidcraft_gpu::flow::Lazy::default())));
+    s
+}
+
 /// The session `run` and `snapshot` start from: `--in` (a design or STEP file) with the
 /// positional script run on top of it, or either one alone.
 fn open(base: Option<&str>, path: Option<&String>) -> Result<Session, String> {
     match (base, path) {
         (Some(b), Some(p)) => {
-            let mut s = load(b)?;
+            let mut s = with_flow_gpu(load(b)?);
             s.run_script(&read_json(p)?).map_err(|e| e.to_string())?;
             Ok(s)
         }

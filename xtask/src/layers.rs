@@ -45,6 +45,8 @@ pub const TABLE: &[(&str, Class)] = &[
     ("sketch", Class::Layer(1)),
     ("kernel", Class::Layer(1)),
     ("render", Class::Layer(1)),
+    // flow simulation setup: voxel grids and fluid regions (no GPU code; solvers sit at L5)
+    ("sim", Class::Layer(1)),
     ("doc", Class::Layer(2)),
     ("io", Class::Layer(3)),
     ("engine", Class::Layer(4)),

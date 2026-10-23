@@ -625,7 +625,8 @@ fn approx(got: f64, want: &Value, what: &str) -> Result<(), String> {
 
 /// Checks: `bodies` (count), `volume` / `area` (total, number or [value, rel tol]), `faces`,
 /// `features` (count), `errors` (timeline features in error, default 0), `dialog` (null: none
-/// open, or a word its kind must contain), `tool` (null or command id), `status` (null, or a
+/// open, or a word its kind must contain), `tool` (null or command id), `workspace` (`design`,
+/// `render` or `simulation`), `status` (null, or a
 /// substring of the status line), `sketching` (bool),
 /// `selection` (count), `glyphs` ({constraint id: count}, none overlapping one another or a dimension value), `param` ({name: value}), `sketch_status` (solved|…), `dof`, `query`
 /// ({command, params?, path, value}: a command's result).
@@ -838,6 +839,13 @@ pub fn check(h: &mut Harness, e: &Value) -> Result<(), String> {
             "tool" => {
                 if ui["tool"] != *v {
                     return Err(format!("tool: got {}, want {v}", ui["tool"]));
+                }
+            }
+            "workspace" => {
+                // "design", "render" or "simulation".
+                let got = crate::workspace_switch::current(&h.app).id();
+                if v.as_str() != Some(got) {
+                    return Err(format!("workspace: got {got}, want {v}"));
                 }
             }
             "status" => {

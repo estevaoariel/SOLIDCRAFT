@@ -589,6 +589,28 @@ fn list_commands_filter_by_a_command_id_matches_ids() {
     assert!(ids.iter().all(|id| id.contains("sketch.delete")), "{} commands matched: {ids:?}", ids.len());
 }
 
+/// The Simulation workspace's studies are listed and reachable like any command. Aerodynamics and
+/// Gas Dynamics have no solver yet, so running one is an error that names that, after the body is
+/// checked; an Airflow study needs its inlets.
+#[test]
+fn simulation_studies_are_listed_and_report_the_missing_solver() {
+    let mut s = server();
+    let cmds = tool(&mut s, "list_commands", json!({"filter": "SIMULATION"}));
+    let ids: Vec<&str> = cmds.as_array().unwrap().iter().filter_map(|c| c["id"].as_str()).collect();
+    for id in ["sim.flow.new", "sim.aero.new", "sim.gas.new"] {
+        assert!(ids.contains(&id), "{id} not in {ids:?}");
+    }
+    tool(&mut s, "execute", json!({"command": "solid.box", "params": {"length": 10, "width": 10, "height": 10, "body_name": "Duct"}}));
+    for id in ["sim.aero.new", "sim.gas.new"] {
+        let r = raw_tool(&mut s, "execute", json!({"command": id, "params": {"body": "Duct"}}));
+        assert_eq!(r["result"]["isError"], json!(true), "{r}");
+        assert!(r["result"]["content"][0]["text"].as_str().is_some_and(|t| t.contains("not supported yet")), "{r}");
+    }
+    let r = raw_tool(&mut s, "execute", json!({"command": "sim.flow.new", "params": {"body": "Duct"}}));
+    assert_eq!(r["result"]["isError"], json!(true), "{r}");
+    assert!(r["result"]["content"][0]["text"].as_str().is_some_and(|t| t.contains("`inlets` is required")), "{r}");
+}
+
 /// Compatibility shims (docs/compatibility.md): a design saved before the rename (legacy
 /// extension and format tag) opens through MCP, and the legacy resource URIs still read.
 #[test]

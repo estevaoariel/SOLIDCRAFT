@@ -1,6 +1,6 @@
 [package]
 name = "solidcraft-gpu"
-description = "SolidCraft GPU rendering: the viewport's render pipelines, offscreen captures, and display tessellation plans evaluated in a compute shader"
+description = "SolidCraft GPU rendering: the viewport's render pipelines, offscreen captures, display tessellation plans evaluated in a compute shader, and the Airflow solver's lattice Boltzmann step"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -11,6 +11,7 @@ workspace = true
 [dependencies]
 solidcraft-geom = { workspace = true }
 solidcraft-render = { workspace = true }
+solidcraft-sim = { workspace = true }
 wgpu = { workspace = true }
 log = { workspace = true }
 thiserror = { workspace = true }

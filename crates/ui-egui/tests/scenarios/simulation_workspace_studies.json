@@ -1,0 +1,38 @@
+[
+  {"note": "The Simulation workspace: switch to it, open each study's setup dialog, and come back to Design with the design untouched. Airflow's OK asks for the inlets first; the Aerodynamics and Gas Dynamics solvers are not built, so they are refused; nothing changes."},
+  {"call": "engine.execute", "params": {"command": "solid.box", "params": {"length": 40, "width": 20, "height": 10, "body_name": "Duct"}}},
+  {"call": "ui.view", "params": {"view": "iso"}},
+  {"expect": {"workspace": "design", "bodies": 1, "volume": 8000}},
+
+  {"note": "Into Simulation through the control channel, as an agent would."},
+  {"call": "ui.workspace", "params": {"workspace": "simulation"}},
+  {"expect": {"workspace": "simulation", "bodies": 1, "volume": 8000}},
+
+  {"note": "Airflow Study: a docked dialog with the body, inlet and outlet pickers; OK with only the body picked asks for the inlets."},
+  {"start": "sim.flow.new"},
+  {"expect": {"dialog": "study: Flow", "dialog_docked": {}}},
+  {"click": {"world": [20, 10, 10]}},
+  {"widget": "OK"},
+  {"expect": {"dialog": "study: Flow", "bodies": 1, "volume": 8000}},
+  {"key": "Escape"},
+  {"expect": {"dialog": null}},
+
+  {"note": "Aerodynamics Study and Gas Dynamics Study, the same way."},
+  {"start": "sim.aero.new"},
+  {"expect": {"dialog": "study: Aero", "dialog_docked": {}}},
+  {"key": "Escape"},
+  {"expect": {"dialog": null}},
+  {"start": "sim.gas.new"},
+  {"expect": {"dialog": "study: Gas", "dialog_docked": {}}},
+  {"key": "Escape"},
+  {"expect": {"dialog": null}},
+
+  {"note": "The engine checks a study run directly too: Airflow needs its inlets, Gas Dynamics its body."},
+  {"call": "engine.execute", "params": {"command": "sim.flow.new", "params": {"body": "Duct"}}, "fail": true},
+  {"call": "engine.execute", "params": {"command": "sim.gas.new", "params": {"body": "Nope"}}, "fail": true},
+
+  {"note": "Back to Design: same body, same volume, nothing to undo."},
+  {"call": "ui.workspace", "params": {"workspace": "design"}},
+  {"expect": {"workspace": "design", "bodies": 1, "volume": 8000, "errors": 0}},
+  {"shot": "simulation_workspace_studies"}
+]

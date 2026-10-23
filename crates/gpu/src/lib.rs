@@ -1,5 +1,6 @@
 //! SolidCraft's GPU work: the viewport's render pipelines ([`view`]), pictures drawn with them
-//! offscreen ([`capture`]), and display tessellation plans evaluated in a compute shader.
+//! offscreen ([`capture`]), display tessellation plans evaluated in a compute shader, and the
+//! Airflow solver's lattice Boltzmann step ([`flow`]).
 //!
 //! Plan evaluation: the surface point and normal at every vertex's parameters, in a compute
 //! shader (`tess.wgsl`), the GPU twin of [`TessPlan::evaluate`]. Shared edge nodes keep their
@@ -20,6 +21,7 @@ use solidcraft_geom::tess::{EvalCurve, EvalSurface, TessPlan};
 use wgpu::util::DeviceExt;
 
 pub mod capture;
+pub mod flow;
 mod pbr;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod select;
@@ -63,12 +65,18 @@ fn popped(f: impl std::future::Future<Output = Option<wgpu::Error>>) -> Option<w
 /// shader compiler (`WGPU_BACKEND`, `WGPU_DX12_COMPILER`).
 #[cfg(not(target_arch = "wasm32"))]
 fn open_headless() -> Result<(wgpu::Adapter, wgpu::Device, wgpu::Queue)> {
+    open_headless_with(|a| wgpu::Limits::downlevel_defaults().using_resolution(a.clone()))
+}
+
+/// [`open_headless`] with the limits `limits` asks for, given the adapter's.
+#[cfg(not(target_arch = "wasm32"))]
+fn open_headless_with(limits: impl FnOnce(&wgpu::Limits) -> wgpu::Limits) -> Result<(wgpu::Adapter, wgpu::Device, wgpu::Queue)> {
     let policy = select::Policy::from_env().map_err(GpuError::Policy)?;
     let (adapter, _) = select::pick(policy).ok_or(GpuError::NoAdapter(policy.name()))?;
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("solidcraft headless"),
         required_features: depth_features(&adapter),
-        required_limits: wgpu::Limits::downlevel_defaults().using_resolution(adapter.limits()),
+        required_limits: limits(&adapter.limits()),
         ..Default::default()
     }))
     .map_err(|e| GpuError::Device(e.to_string()))?;
@@ -95,6 +103,8 @@ pub enum GpuError {
     Pipeline(String),
     #[error("not supported yet: {0}")]
     Unsupported(String),
+    #[error("a flow grid of {cells} cells does not fit this GPU's buffers (at most {max} bytes each); use larger cells")]
+    FlowTooLarge { cells: usize, max: u64 },
     #[error("the GPU device was lost (the graphics driver was reset); it can't draw again")]
     DeviceLost,
 }

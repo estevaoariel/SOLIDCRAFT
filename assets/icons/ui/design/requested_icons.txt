@@ -209,6 +209,9 @@ sheet_rules	false
 shell	false
 shield	false
 silhouette	false
+sim_aero	false
+sim_flow	false
+sim_gas	false
 sketch	false
 sketch_break	false
 sketch_chamfer	false
@@ -276,5 +279,6 @@ ws_animate	false
 ws_design	false
 ws_drawing	false
 ws_render	false
+ws_simulation	false
 zebra	false
 zoom	false

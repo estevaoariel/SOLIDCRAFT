@@ -67,8 +67,14 @@ fn a_pipeline_the_device_rejects_is_an_error_not_a_crash() {
 /// the Windows CI job compiles the real thing with FXC.
 #[test]
 fn the_hlsl_for_fxc_has_no_arrays_fxc_must_unroll_loops_for() {
+    for (shader, entry) in [(SHADER, "void main("), (flow::SHADER, "void collide_stream(")] {
+        assert_fxc_friendly(shader, entry);
+    }
+}
+
+fn assert_fxc_friendly(shader: &str, entry: &str) {
     use naga::back::hlsl;
-    let module = ok(naga::front::wgsl::parse_str(SHADER));
+    let module = ok(naga::front::wgsl::parse_str(shader));
     let info = ok(naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::default()).validate(&module));
     let options = hlsl::Options {
         shader_model: hlsl::ShaderModel::V5_1,
@@ -80,7 +86,7 @@ fn the_hlsl_for_fxc_has_no_arrays_fxc_must_unroll_loops_for() {
     let pipeline = hlsl::PipelineOptions::default();
     let mut out = String::new();
     ok(hlsl::Writer::new(&mut out, &options, &pipeline).write(&module, &info, None));
-    assert!(out.contains("void main("), "{out}");
+    assert!(out.contains(entry), "{out}");
     // Struct members that are arrays: `float n0_[8];` inside a `struct ... { };`.
     let mut in_struct = false;
     for line in out.lines() {

@@ -13,6 +13,7 @@ use solidcraft_engine::render::{
 };
 
 use crate::gpu::{Frame, GpuScene, SceneSlot, ViewportCallback};
+use crate::workspace_switch::Workspace;
 use crate::{SolveApp, theme::Tokens};
 
 const MAX_GEOMETRY_BYTES: usize = 128 * 1024 * 1024;
@@ -68,7 +69,7 @@ impl Default for State {
 }
 
 pub fn active(app: &SolveApp) -> bool {
-    app.ui.tab == "RENDER"
+    crate::workspace_switch::current(app) == Workspace::Render
 }
 
 pub fn host_executor(max_dimension: u32, depth: bool, samples: u32) -> Result<ExecutorDescriptor, String> {
@@ -131,7 +132,7 @@ pub fn reset_document(app: &mut SolveApp) {
     let image_host = app.render_workspace.image_host.clone();
     app.render_workspace = State { host, image_host, ..Default::default() };
     if active(app) {
-        app.ui.tab = "MODEL".into();
+        app.ui.tab = Workspace::Design.tab().into();
     }
     sync_backend(app);
 }
@@ -143,30 +144,32 @@ pub fn invalidate_scene(app: &mut SolveApp) {
     app.render_workspace.key = None;
 }
 
+/// Enter Render (`true`) or go back to Design (`false`); see [`crate::workspace_switch::enter`].
 pub fn enter(app: &mut SolveApp, render: bool) -> Result<(), String> {
-    if render {
-        if app.session.active_sketch.is_some() || app.tool.is_some() || app.dialog.is_some() || app.file_load.busy() {
-            return Err("finish the current modelling operation before entering Render".into());
+    crate::workspace_switch::enter(app, if render { Workspace::Render } else { Workspace::Design })
+}
+
+/// Into Render: settle the product scene, keep the Design camera to come back to, frame the product.
+pub(crate) fn open(app: &mut SolveApp) -> Result<(), String> {
+    app.run("render.scene", json!({}))?;
+    if !active(app) {
+        app.render_workspace.design_camera = Some((app.cam, app.ui.perspective));
+        app.ui.tab = Workspace::Render.tab().into();
+        let scene = solidcraft_engine::product_scene::extract(&app.session).map_err(|e| e.to_string())?;
+        if !scene.bounds.is_empty() {
+            app.cam.fit(&scene.bounds);
         }
-        app.run("render.scene", json!({}))?;
-        if !active(app) {
-            app.render_workspace.design_camera = Some((app.cam, app.ui.perspective));
-            app.ui.tab = "RENDER".into();
-            let scene = solidcraft_engine::product_scene::extract(&app.session).map_err(|e| e.to_string())?;
-            if !scene.bounds.is_empty() {
-                app.cam.fit(&scene.bounds);
-            }
-        }
-    } else {
-        if let Some((camera, perspective)) = app.render_workspace.design_camera.take() {
-            app.cam = camera;
-            app.ui.up_axis = camera.up;
-            app.ui.perspective = perspective;
-        }
-        app.ui.tab = "MODEL".into();
     }
-    app.cancel_view_animation();
     Ok(())
+}
+
+/// Out of Render: the Design camera comes back as it was.
+pub(crate) fn close(app: &mut SolveApp) {
+    if let Some((camera, perspective)) = app.render_workspace.design_camera.take() {
+        app.cam = camera;
+        app.ui.up_axis = camera.up;
+        app.ui.perspective = perspective;
+    }
 }
 
 pub fn panel(app: &mut SolveApp, ui: &mut egui::Ui) {

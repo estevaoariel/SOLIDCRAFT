@@ -43,3 +43,29 @@ fn optional_field_keeps_empty_default_and_options_use_two_columns() {
     frame(&ctx, pointer(first, false), &mut draw);
     assert!(flip && copy);
 }
+
+/// Two segmented choices in one panel, outside labelled rows (the Airflow results' map and
+/// section): each takes its own clicks. Their segments used to share ids by position, so egui
+/// gave both rows' clicks to whichever came last and the first could not be changed.
+#[test]
+fn two_segmented_choices_in_one_panel_each_take_their_clicks() {
+    let ctx = crate::fonts::test_context();
+    let (map, section) = (std::cell::Cell::new(0), std::cell::Cell::new(0));
+    let draw = |ui: &mut Ui| {
+        let compact = Segments { compact: true, ..Default::default() };
+        let (mut m, mut s) = (map.get(), section.get());
+        segmented(ui, &mut m, &["Speed", "Pressure"], compact);
+        segmented(ui, &mut s, &["Off", "X", "Y", "Z"], Segments { compact: true, ..Default::default() });
+        map.set(m);
+        section.set(s);
+    };
+    frame(&ctx, vec![], draw);
+    let pressure = scenario::handle_at("dialog::Pressure").unwrap();
+    frame(&ctx, pointer(pressure, true), draw);
+    frame(&ctx, pointer(pressure, false), draw);
+    assert_eq!((map.get(), section.get()), (1, 0), "the first row changes, the second stays");
+    let y = scenario::handle_at("dialog::Y").unwrap();
+    frame(&ctx, pointer(y, true), draw);
+    frame(&ctx, pointer(y, false), draw);
+    assert_eq!((map.get(), section.get()), (1, 2));
+}

@@ -261,6 +261,7 @@ pub const SECTIONS: &[Section] = &[
     Section { tab: "SHEET METAL", panel: "CONFIGURE", promoted: 2, ids: CONFIGURE },
     Section { tab: "RENDER", panel: "SCENE", promoted: 2, ids: &["render.scene"] },
     Section { tab: "RENDER", panel: "IMAGE", promoted: 1, ids: &["render.start"] },
+    Section { tab: "SIMULATION", panel: "STUDY", promoted: 3, ids: &["sim.flow.new", "sim.gas.new", "sim.aero.new"] },
 ];
 
 /// Compact source labels for painted big buttons only. Menus, search and tooltips
@@ -301,6 +302,9 @@ pub const RIBBON_LABELS: &[(&str, &str)] = &[
     ("sheet.export_dxf", "Export DXF"),
     ("sheet.flat_pattern", "Flat Pattern"),
     ("sheet.manage_rules", "Sheet Rules"),
+    ("sim.aero.new", "Aerodynamics"),
+    ("sim.flow.new", "Airflow"),
+    ("sim.gas.new", "Gas Dynamics"),
     ("sketch.circle.center", "Circle"),
     ("sketch.constraint.coincident", "Coincident"),
     ("sketch.constraint.horizontal_vertical", "Horiz./Vert."),
@@ -351,6 +355,7 @@ pub const PLACEMENTS: &[(&str, &str, &str, &str)] = &[
     ("MESH", "MODIFY", "INSERT", "FILES"),
     ("RENDER", "SCENE", "RENDER", "SCENE"),
     ("RENDER", "IMAGE", "RENDER", "IMAGE"),
+    ("SIMULATION", "STUDY", "SIMULATION", "STUDY"),
 ];
 
 pub fn panels(tab: &str) -> Vec<&'static str> {
@@ -444,8 +449,11 @@ pub fn sheet_body(app: &crate::SolveApp) -> Option<String> {
 }
 
 pub fn visible_tabs(app: &crate::SolveApp) -> Vec<&'static str> {
-    if crate::render_workspace::active(app) {
-        return vec!["RENDER"];
+    // Render and Simulation each show their own tab only.
+    match crate::workspace_switch::current(app) {
+        crate::workspace_switch::Workspace::Render => return vec!["RENDER"],
+        crate::workspace_switch::Workspace::Simulation => return vec!["SIMULATION"],
+        crate::workspace_switch::Workspace::Design => {}
     }
     let mut tabs = TABS.to_vec();
     if app.session.active_sketch.is_some() {
@@ -460,7 +468,7 @@ pub fn visible_tabs(app: &crate::SolveApp) -> Vec<&'static str> {
 /// Select contextual tabs on entry (or a different sheet body), allowing the other tabs to
 /// remain usable for the rest of that context. Sketch takes precedence over sheet metal.
 pub fn sync_context(app: &mut crate::SolveApp) {
-    if crate::render_workspace::active(app) {
+    if crate::workspace_switch::current(app) != crate::workspace_switch::Workspace::Design {
         return;
     }
     let context = app.session.active_sketch.map(|id| format!("sketch:{id}")).or_else(|| sheet_body(app).map(|body| format!("sheet:{body}")));
@@ -488,9 +496,9 @@ pub fn select_command_tab(app: &mut crate::SolveApp, id: &str) {
         return;
     }
     if let Some((tab, _)) = destination(c) {
-        if tab == "RENDER" {
+        if matches!(tab, "RENDER" | "SIMULATION") {
             return;
-        } // The Render workspace owns its entry/exit lifecycle.
+        } // The Render and Simulation workspaces own their entry and exit.
         if visible_tabs(app).contains(&tab) {
             app.ui.tab = tab.into();
         }

@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>Airflow study</title>
+  <path d="M10.61 41.63L33.61 54.91L33.61 58.45L10.61 45.17Z" fill="#b8c3cf"/>
+  <path d="M56.61 41.63L33.61 54.91L33.61 58.45L56.61 45.17Z" fill="#8e9faf"/>
+  <path d="M33.61 28.35L56.61 41.63L33.61 54.91L10.61 41.63Z" fill="#e2e8ef"/>
+  <path d="M33.61 28.35L56.61 41.63L56.61 45.17L33.61 58.45L10.61 45.17L10.61 41.63Z" fill="none" stroke="#34465b" stroke-width="2.55" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M10.61 41.63L33.61 54.91L56.61 41.63" fill="none" stroke="#34465b" stroke-width="2.55" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M33.61 54.91L33.61 58.45" fill="none" stroke="#34465b" stroke-width="2.55" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M4.61 33.4C15.61 33.4 19.61 19.4 33.61 19.4C45.61 19.4 47.61 27.4 53.61 27.4" fill="none" stroke="#ffffff" stroke-width="6.45" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M4.61 33.4C15.61 33.4 19.61 19.4 33.61 19.4C45.61 19.4 47.61 27.4 53.61 27.4" fill="none" stroke="#236ead" stroke-width="4.25" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M62.61 27.4L53.61 31.9L53.61 22.9Z" fill="#236ead"/>
+  <path d="M4.61 19.4C15.61 19.4 19.61 6.4 33.61 6.4C45.61 6.4 47.61 13.4 53.61 13.4" fill="none" stroke="#236ead" stroke-width="4.25" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M62.61 13.4L53.61 17.9L53.61 8.9Z" fill="#236ead"/>
+</svg>

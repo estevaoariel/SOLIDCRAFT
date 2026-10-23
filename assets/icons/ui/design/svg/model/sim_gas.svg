@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>Gas dynamics study</title>
+  <path d="M22 33.54L22 50.54A10 5.77 0 0 0 42 50.54L42 33.54Z" fill="#b8c3cf"/>
+  <path d="M35.5 33.54L35.5 55.95A10 5.77 0 0 0 42 50.54L42 33.54Z" fill="#8e9faf"/>
+  <path d="M22 33.54L22 50.54A10 5.77 0 0 0 42 50.54L42 33.54Z" fill="none" stroke="#34465b" stroke-width="2.55" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M22 33.54A10 5.77 0 1 0 42 33.54A10 5.77 0 1 0 22 33.54Z" fill="#e2e8ef" stroke="#34465b" stroke-width="2.55" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M26 33.54A6 3.46 0 1 0 38 33.54A6 3.46 0 1 0 26 33.54Z" fill="#34465b"/>
+  <path d="M16.96 28.07A16 16 0 0 1 47.04 28.07" fill="none" stroke="#236ead" stroke-width="4.25" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M8.51 24.99A25 25 0 0 1 55.49 24.99" fill="none" stroke="#236ead" stroke-width="4.25" stroke-linejoin="round" stroke-linecap="round"/>
+</svg>
