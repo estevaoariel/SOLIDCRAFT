@@ -297,6 +297,8 @@ pub struct ThreadInfo {
     pub major_diameter: f64,
     pub pitch: f64,
     pub internal: bool,
+    #[serde(default)]
+    pub handedness: crate::ThreadHandedness,
     pub axis_point: Vec3,
     pub axis: UnitVec3,
     /// Threaded part along the axis from `axis_point`.
@@ -371,12 +373,20 @@ fn format_thread(d: f64, p: f64) -> String {
 /// The automatic ISO metric designation for a cylindrical face, using the same fit check as
 /// a thread feature without an explicit size. This query does not change the model.
 pub fn suggested_thread(st: &ModelState, p: Vec3) -> Result<String> {
-    thread_on(st, 0, p, None, None, false).map(|t| t.designation)
+    thread_on(st, 0, p, None, None, false, crate::ThreadHandedness::Right).map(|t| t.designation)
 }
 
 /// A cosmetic thread on the cylindrical face at `p`. A `turned` (modelled) thread also fits a
 /// shaft thicker than it, which it turns down to its major diameter first.
-fn thread_on(st: &ModelState, feature: u64, p: Vec3, designation: Option<&str>, length: Option<f64>, turned: bool) -> Result<ThreadInfo> {
+fn thread_on(
+    st: &ModelState,
+    feature: u64,
+    p: Vec3,
+    designation: Option<&str>,
+    length: Option<f64>,
+    turned: bool,
+    handedness: crate::ThreadHandedness,
+) -> Result<ThreadInfo> {
     let (body, cyl) = st
         .bodies
         .iter()
@@ -423,6 +433,7 @@ fn thread_on(st: &ModelState, feature: u64, p: Vec3, designation: Option<&str>, 
         major_diameter: major,
         pitch,
         internal: cyl.internal,
+        handedness,
         axis_point: cyl.axis_point,
         axis: cyl.axis,
         start: a,
@@ -513,7 +524,58 @@ fn thread_groove(t: &ThreadInfo, radius: f64, open: (bool, bool)) -> Result<soli
     if !stations.is_finite() || stations > 720.0 {
         return Err(DocError::Invalid("the modelled thread is too fine for this diameter; use a cosmetic thread".into()));
     }
-    Ok(kernel::sweep_helix_mesh(&plane, &section, base, *k, p, (s1 - s0) / p, stations as usize)?)
+    // The kernel rotates positively about its sweep axis. Reversing both that axis and the
+    // pitch mirrors the angular motion while the lift stays +k * p per turn. The physical
+    // axis, start/end, radial profile and station count remain exactly as for a right thread.
+    let (sweep_axis, sweep_pitch) = match t.handedness {
+        crate::ThreadHandedness::Right => (*k, p),
+        crate::ThreadHandedness::Left => (-*k, -p),
+    };
+    Ok(kernel::sweep_helix_mesh(&plane, &section, base, sweep_axis, sweep_pitch, (s1 - s0) / p, stations as usize)?)
+}
+
+#[cfg(test)]
+mod thread_handedness_tests {
+    use super::*;
+
+    #[test]
+    fn thread_handedness_groove_reflects_exactly_about_the_physical_axis() {
+        for direction in [Vec3::Z, Vec3::X, Vec3::new(1.0, 2.0, 3.0)] {
+            for internal in [false, true] {
+                let axis = UnitVec3::new(direction).unwrap();
+                let mut info = ThreadInfo {
+                    feature: 1,
+                    body: "Stock".into(),
+                    designation: "M6x1".into(),
+                    major_diameter: 6.0,
+                    pitch: 1.0,
+                    internal,
+                    handedness: crate::ThreadHandedness::Right,
+                    axis_point: Vec3::new(7.0, -5.0, 2.0),
+                    axis,
+                    start: 1.3,
+                    end: 4.3,
+                };
+                let radius = if internal { 2.5 } else { 3.0 };
+                let right = thread_groove(&info, radius, (false, true)).unwrap();
+                info.handedness = crate::ThreadHandedness::Left;
+                let left = thread_groove(&info, radius, (false, true)).unwrap();
+                // Reflection in the radial plane of the initial profile, independent of the
+                // helix parameterization: the projected coordinate along the axis stays fixed.
+                let seed = if axis.x.abs() < 0.9 { Vec3::X } else { Vec3::Y };
+                let normal = (seed - *axis * axis.dot(seed)).normalized().unwrap();
+                assert_eq!(right.positions.len(), left.positions.len());
+                for (r, l) in right.positions.iter().zip(&left.positions) {
+                    let expected = *r - normal * (2.0 * (*r - info.axis_point).dot(normal));
+                    assert!((*l - expected).len() < 1e-10, "physical reflection: {direction:?}/{internal}");
+                    assert!(((*r - *l).dot(*axis)).abs() < 1e-10, "axial extent must not change");
+                }
+                let (r, l) = (right.measure(), left.measure());
+                assert!(r.volume > 0.0 && l.volume > 0.0, "outward, watertight sweep");
+                assert!((r.volume - l.volume).abs() < r.volume * 1e-12, "exact tool volume: {r:?}/{l:?}");
+            }
+        }
+    }
 }
 
 /// What a modelled external thread turns off a shaft thicker than its major diameter before it
@@ -3551,6 +3613,36 @@ fn hole_position(vals: &BTreeMap<String, Value>, position: &crate::FacePick, at:
     Ok(p)
 }
 
+// Pick an actual cylindrical wall, not a depth derived from its radius: a large pipe bore can
+// be shallow or pass through a thin plate. Sampling its finite face also skips a wider entry
+// pocket and keeps metadata attached to the narrow cylindrical bore.
+fn parallel_tapped_wall(st: &ModelState, entry: Vec3, inward: Vec3, radius: f64) -> Option<Vec3> {
+    let tol = (radius * 1e-6).max(1e-6);
+    let mut best: Option<(f64, Vec3)> = None;
+    for body in &st.bodies {
+        let mesh = body.mesh();
+        for face in 0..body.body.face_count() {
+            let Some(c) = kernel::cylinder_face(&body.body, &mesh, face) else { continue };
+            let offset = entry - c.axis_point;
+            if !c.internal
+                || (c.radius - radius).abs() > tol
+                || c.axis.dot(inward).abs() < 1.0 - 1e-8
+                || (offset - c.axis * offset.dot(c.axis)).len() > tol
+            {
+                continue;
+            }
+            let a = (c.axis_point + c.axis * c.start - entry).dot(inward);
+            let b = (c.axis_point + c.axis * c.end - entry).dot(inward);
+            let lo = a.min(b).max(0.0);
+            let hi = a.max(b);
+            if hi > lo + 1e-9 && best.as_ref().is_none_or(|(old, _)| lo < *old) {
+                best = Some((lo, entry + inward * ((lo + hi) * 0.5) + inward.any_perp() * radius));
+            }
+        }
+    }
+    best.map(|(_, wall)| wall)
+}
+
 /// The cutting tools of a hole feature at every spot, each with its exact geometry when it is a
 /// straight cylinder (see [`hole_tools_and_prisms`]).
 fn hole_feature_tools(vals: &BTreeMap<String, Value>, st: &ModelState, f: &Feature) -> Result<Vec<(Traced, Option<more::PrimitivePrism>)>> {
@@ -3735,10 +3827,9 @@ fn hole_tools_and_prisms(
         let prism = more::PrimitivePrism::Cylinder { base: *position + axis * lo, axis, radius: rad, height: hi - lo };
         Ok((crate::lineage::part_tool(tool, part), Some(prism)))
     };
-    let mut tools = Vec::new();
-    match hole {
-        HoleKind::Simple => tools.push(cyl(r, bottom, top, "bore")?),
-        HoleKind::Drilled { tip_angle } => {
+    // Reuse the existing drill-point tool for the narrow bore, independently of its entry.
+    let bore = |tip_angle: Option<&crate::Expr>| -> Result<Vec<(Traced, Option<more::PrimitivePrism>)>> {
+        if let Some(tip_angle) = tip_angle {
             let half = val(vals, tip_angle, Kind::Angle)? / 2.0;
             // A hole exactly as deep as the material: the point is in the air past the exit
             // face, which would lie on the drill point's shoulder (a through hole, as drilled).
@@ -3754,25 +3845,28 @@ fn hole_tools_and_prisms(
                 let rp = Plane::new(*position, side, up).ok_or_else(|| DocError::Invalid("hole axis".into()))?;
                 let pts = [Vec2::new(0.0, top), Vec2::new(r, top), Vec2::new(r, bottom), Vec2::new(0.0, bottom - tip)];
                 let region = Region2 { outer: solidcraft_geom::Loop2::polygon(&pts), holes: vec![] };
-                tools.extend(
-                    kernel::revolve(&rp, &[region], Vec2::ZERO, Vec2::Y, std::f64::consts::TAU)?
-                        .into_iter()
-                        .map(|tool| (crate::lineage::part_tool(tool, "bore"), None)),
-                );
-            } else {
-                tools.push(cyl(r, bottom, top, "bore")?);
+                return Ok(kernel::revolve(&rp, &[region], Vec2::ZERO, Vec2::Y, std::f64::consts::TAU)?
+                    .into_iter()
+                    .map(|tool| (crate::lineage::part_tool(tool, "bore"), None))
+                    .collect());
             }
         }
-        HoleKind::Counterbore { cb_diameter, cb_depth } => {
+        Ok(vec![cyl(r, bottom, top, "bore")?])
+    };
+    let mut tools = Vec::new();
+    match hole {
+        HoleKind::Simple => tools.extend(bore(None)?),
+        HoleKind::Drilled { tip_angle } => tools.extend(bore(Some(tip_angle))?),
+        HoleKind::Counterbore { cb_diameter, cb_depth, tip_angle } => {
             let (rc, dc) = (val(vals, cb_diameter, Kind::Length)? / 2.0, val(vals, cb_depth, Kind::Length)?);
             if !(rc > r && dc > 0.0 && -dc > bottom) {
                 return Err(DocError::Invalid("the counterbore must be wider than the hole and shallower than it".into()));
             }
             // Wide and shallow first: the narrow hole then crosses the pocket floor.
             tools.push(cyl(rc, -dc, top, "cbore")?);
-            tools.push(cyl(r, bottom, top, "bore")?);
+            tools.extend(bore(tip_angle.as_ref())?);
         }
-        HoleKind::Countersink { cs_diameter, cs_angle } => {
+        HoleKind::Countersink { cs_diameter, cs_angle, tip_angle } => {
             let (rc, half) = (val(vals, cs_diameter, Kind::Length)? / 2.0, val(vals, cs_angle, Kind::Angle)? / 2.0);
             if !(rc > r && half > 1e-3 && half < std::f64::consts::FRAC_PI_2) {
                 return Err(DocError::Invalid("the countersink must be wider than the hole".into()));
@@ -3783,7 +3877,7 @@ fn hole_tools_and_prisms(
             let len = (r_top - r_end) / half.tan();
             let top_plane = plane.offset(top);
             tools.push((crate::lineage::part_tool(kernel::extrude_tapered(&top_plane, &disc(r_top), len, -1.0, -half)?, "csink"), None));
-            tools.push(cyl(r, bottom, top, "bore")?);
+            tools.extend(bore(tip_angle.as_ref())?);
         }
     }
     Ok(tools)
@@ -5868,7 +5962,14 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
             }
             apply_traced(st, f, tools, *operation, &crate::plain(targets))
         }
-        FeatureKind::Hole { thread, diameter, .. } => {
+        FeatureKind::Hole { thread, thread_depth, diameter, handedness, .. } => {
+            let thread_depth = thread_depth.as_ref().map(|d| val(vals, d, Kind::Length)).transpose()?;
+            if thread_depth.is_some() && thread.is_none() {
+                return Err(DocError::Invalid("thread depth requires a tapped hole".into()));
+            }
+            if thread_depth.is_some_and(|d| !d.is_finite() || d <= 0.0) {
+                return Err(DocError::Invalid("thread depth must be finite and positive".into()));
+            }
             let (spots, dir) = hole_spots(vals, st, f)?;
             let tools = hole_feature_tools(vals, st, f)?;
             let handled = sheet_hole_cut(st, f, &tools, warning)?;
@@ -5879,22 +5980,39 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
                 apply_beside_sheet_cut(st, f, tools, Operation::Cut, &[], &handled)?;
             }
             if let Some(d) = thread {
-                // A point on each hole's wall, a little below the entry.
+                // Find the bore beyond any entry recess, including shallow and through holes.
                 let r = val(vals, diameter, Kind::Length)? / 2.0;
                 for p in spots {
-                    let wall = p + dir.any_perp() * r + dir * (r * 0.5);
-                    let t = thread_on(st, f.id, wall, Some(d), None, false)?;
+                    let wall = parallel_tapped_wall(st, p, dir, r).unwrap_or(p + dir.any_perp() * r + dir * (r * 0.5));
+                    let mut t = thread_on(st, f.id, wall, Some(d), None, false, *handedness)?;
+                    if let Some(depth) = thread_depth {
+                        let available = t.end - t.start;
+                        if depth > available {
+                            return Err(DocError::Invalid(format!(
+                                "thread depth {} mm exceeds the cylindrical wall's useful length of {} mm; reduce the thread depth or use full thread depth",
+                                show_mm(depth),
+                                show_mm(available)
+                            )));
+                        }
+                        // Start at the entry in the drilling direction, independently of the
+                        // wall probe's position and the cylinder surface's axis orientation.
+                        if dir.dot(t.axis) > 0.0 {
+                            t.end = t.start + depth;
+                        } else {
+                            t.start = t.end - depth;
+                        }
+                    }
                     st.threads.push(t);
                 }
             }
             Ok(())
         }
-        FeatureKind::Thread { face, designation, length, modeled } => {
+        FeatureKind::Thread { face, designation, length, modeled, handedness } => {
             let l = match length {
                 Some(e) => Some(val(vals, e, Kind::Length)?),
                 None => None,
             };
-            let t = thread_on(st, f.id, face.0, designation.as_deref(), l, *modeled)?;
+            let t = thread_on(st, f.id, face.0, designation.as_deref(), l, *modeled, *handedness)?;
             if !*modeled {
                 st.threads.push(t);
                 return Ok(());

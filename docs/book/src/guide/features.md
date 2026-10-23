@@ -91,6 +91,31 @@ offers the face where you clicked. The corners of text outlines don't count, nor
 points while the sketch hides projected geometry. The hole keeps that place on the face; to have
 holes follow later edits of the sketch, place them with **Multiple**.
 
+Two settings under **Create Hole** in **Preferences › Design**, both off by default, change how
+a Single hole is placed:
+
+- **Snap to face and edge centres**: the face itself offers snap points too: its middle, and the centre
+  of each round edge on it (a boss standing on it, a rounded corner, a hole already in it). While
+  the cursor is over the face they show as small marks; a pick near one, or on or beside one of
+  those round edges, places the hole at that centre, and the mark it takes is named. Hold **Alt**
+  or **Ctrl** to place the hole exactly where you click.
+- **Move holes by clicking or dragging**: each placed hole has a handle at its centre. Drag it
+  to move the hole (it snaps when snapping is on), or click it to take the hole out. A pick
+  elsewhere on a face that already has a hole moves the hole there instead of taking it out.
+  **Edit Feature** shows the handle as well, so a hole can be moved later.
+
+The Hole dialog draws a section through the hole as its options make it (type, extents, drill
+point, tapped) and puts each size in a field beside the dimension it sets; hovering a field, or
+typing in it, lights its dimension.
+
+Tapped holes and **Thread** features have a **Thread direction** choice: **Right-hand**
+(the default) or **Left-hand**. Editing and reopening keep the chosen direction. Tapped
+holes carry a cosmetic thread; the separate Thread feature can also cut a **Modeled**
+left-hand helix. Cosmetic direction is recorded with the thread annotation and does not
+change the body. Scripts use `handedness: "left"` or `"right"` on `solid.hole` (with `thread`)
+and `solid.thread`. Existing designs and omitted values remain right-handed. Changing the
+direction keeps the pitch, thread length and axis; it does not change a hole's drill size.
+
 Fillets and chamfers handle straight edges between planar faces, whole smooth loops, runs of
 neighbouring edges with mitred or spherical corners, and closed chains of curved edges (a rolling
 ball). See the roadmap's known limitations for the rest.

@@ -534,6 +534,13 @@ preference_settings! {
     auto_stand_up: bool = true, PAGE_DESIGN => check("Stand up Y-up files automatically", "A STEP or IGES file from a program that saves Y up opens standing, with Undo in the message");
     /// After a STEP or IGES file opens, offer to stand a Y-up part up (`stand_up`).
     offer_stand_up: bool = true, PAGE_DESIGN => check("Offer to stand up Y-up files", "After a STEP or IGES file opens with Z up, offer a quarter turn about X");
+    /// Placing a Single hole snaps to the middle of the face and the centres of its round edges
+    /// (`hole_place`). Off by default: a hole goes where it is clicked.
+    hole_snaps: bool = false, PAGE_DESIGN => check("Snap to face and edge centres");
+    /// A placed Single hole has a handle that drags it, and a pick elsewhere on a face that has a
+    /// hole moves the hole there (`hole_place`). Off by default: a second pick on its face takes
+    /// the hole out, and a hole is moved by taking it out and picking again.
+    hole_moves: bool = false, PAGE_DESIGN => check("Move holes by clicking or dragging");
     /// What a middle-button double-click in the view does: `home`, `fit` or `off`.
     middle_double_click: String = "home".into(), PAGE_NAVIGATION;
     /// Colour vision mode (#778): `off`, `protan`, `deutan` or `tritan`.
@@ -547,6 +554,9 @@ preference_settings! {
     /// The variant last started in each split tool family (Rectangle, Circle, Arc, Slot, Polygon, Line,
     /// Spline): the family's button and shortcut start it again (`sketch_families`).
     sketch_variants: crate::sketch_families::Choices = crate::sketch_families::Choices::default();
+    /// Personal Hole parameter combinations, shared by every design in this profile.
+    /// No page reset discards this user-authored library.
+    hole_presets: crate::hole_presets::Library = crate::hole_presets::Library::default();
     save_mesh_format: String = "stl".into();
     /// Hidden edges in the current-view DXF export (false: omit, true: dashed).
     view_dxf_dashed: bool = false;
@@ -1624,6 +1634,68 @@ mod tests {
         defaults(&mut app, PAGE_SKETCH);
         assert!(!app.ui.pick_bodies);
         assert!(app.session.auto_project);
+    }
+
+    fn hole_preset_row(name: &str) -> serde_json::Value {
+        serde_json::json!({
+            "name": name, "style": "counterbore", "extent": "distance",
+            "diameter": "shaft_diameter + 0.2 mm", "depth": "0.5 in",
+            "cb_diameter": "10 mm", "cb_depth": "3 mm", "cs_diameter": "10 mm",
+            "cs_angle": "90 deg", "tip_angle": "118 deg", "tapped": true, "thread": "M5"
+        })
+    }
+
+    #[test]
+    fn hole_presets_corrupt_rows_and_limits_do_not_discard_other_preferences() {
+        use serde_json::json;
+        let good = hole_preset_row("Workshop");
+        let mut oversized = hole_preset_row("Too long");
+        oversized["diameter"] = json!("x".repeat(513));
+        let mut duplicate = good.clone();
+        duplicate["name"] = json!("WORKSHOP");
+        let p = super::lenient(&json!({"length_decimals":4,"hole_presets":[null,good,oversized,duplicate,{"name":"incomplete"}]}));
+        assert_eq!(p.length_decimals, 4);
+        let rows = serde_json::to_value(&p.hole_presets).unwrap();
+        assert_eq!(rows.as_array().unwrap().len(), 1);
+        assert_eq!(rows[0]["name"], "Workshop");
+        assert_eq!(rows[0]["diameter"], "shaft_diameter + 0.2 mm");
+        assert_eq!(rows[0]["depth"], "0.5 in");
+        let corrupt = super::lenient(&json!({"length_decimals":3,"hole_presets":{"unexpected":true}}));
+        assert_eq!(corrupt.length_decimals, 3);
+        assert_eq!(serde_json::to_value(corrupt.hole_presets).unwrap(), json!([]));
+        let many: Vec<_> = (0..100).map(|i| hole_preset_row(&format!("Preset {i}"))).collect();
+        let capped = super::lenient(&json!({"hole_presets":many}));
+        assert_eq!(serde_json::to_value(capped.hole_presets).unwrap().as_array().unwrap().len(), 64);
+    }
+
+    #[test]
+    fn hole_presets_survive_application_preferences_roundtrip_and_page_resets() {
+        use serde_json::json;
+        let mut app = crate::SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
+        let mut row = hole_preset_row("Fixture");
+        row["thread_options"] = json!({"handedness":"left","full_length":false,"depth":"4 mm"});
+        super::set(&mut app, &json!({"hole_presets":[row]})).unwrap();
+        let expected = serde_json::to_value(&app.preferences.hole_presets).unwrap();
+        assert_eq!(expected[0]["thread_options"]["handedness"], "left");
+        for page in 0..super::PAGES.len() {
+            super::reset_preferences(&mut app.preferences, page);
+        }
+        assert_eq!(serde_json::to_value(&app.preferences.hole_presets).unwrap(), expected);
+        let saved = app.prefs();
+        let mut other = crate::SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
+        other.load_prefs(&saved);
+        assert_eq!(serde_json::to_value(&other.preferences.hole_presets).unwrap(), expected);
+        assert!(other.session.doc.features.is_empty());
+    }
+
+    #[test]
+    fn hole_presets_keep_unknown_thread_options_for_safe_future_recall() {
+        use serde_json::json;
+        let mut row = hole_preset_row("Newer version");
+        row["thread_options"] = json!({"starts":2});
+        let p = super::lenient(&json!({"hole_presets":[row]}));
+        let saved = serde_json::to_value(p.hole_presets).unwrap();
+        assert_eq!(saved[0]["thread_options"]["starts"], 2, "unknown thread semantics must not silently become the defaults");
     }
 
     /// The interface font (#1290): a font that can be read, or empty for the built-in one; saved
