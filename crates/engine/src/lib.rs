@@ -757,6 +757,14 @@ impl Session {
     /// as before. Otherwise store each sketch whose values changed as solved, so the next edit
     /// continues from it (see `Model::adopt_solved_sketches`).
     pub(crate) fn settle_value_edit(&mut self, solved_before: &SketchValues) -> Result<()> {
+        let (vals, _) = self.doc.param_values();
+        for feature in &self.doc.features {
+            if let solidcraft_doc::FeatureKind::Sketch { sketch, .. } = &feature.kind
+                && sketch.patterns.iter().any(|p| !p.expressions.is_empty())
+            {
+                self.doc.apply_pattern_values(&vals, &mut sketch.clone())?;
+            }
+        }
         self.refresh();
         for r in &self.model.results {
             let (Some(before), Some(k)) = (solved_before.get(&r.id), r.state.sketch(r.id)) else { continue };
@@ -1209,5 +1217,21 @@ pub(crate) type SketchValues = std::collections::BTreeMap<u64, std::collections:
 /// The values of a sketch's driving dimensions that come from parameters: what a value edit
 /// changes in it (as opposed to geometry it projects or links from upstream).
 fn own_values(sk: &solidcraft_sketch::Sketch) -> std::collections::BTreeMap<String, f64> {
-    sk.constraints.iter().filter(|c| c.param.is_some() && !c.driven).filter_map(|c| Some((c.id.clone(), c.kind.value()?))).collect()
+    let mut values: std::collections::BTreeMap<_, _> =
+        sk.constraints.iter().filter(|c| c.param.is_some() && !c.driven).filter_map(|c| Some((c.id.clone(), c.kind.value()?))).collect();
+    for p in &sk.patterns {
+        use solidcraft_sketch::SketchPatternKind;
+        let inputs = match p.kind {
+            SketchPatternKind::Circular { count, angle, .. } => vec![("count", count as f64), ("angle", angle)],
+            SketchPatternKind::Rectangular { count, spacing, count2, spacing2, .. } => {
+                vec![("count", count as f64), ("spacing", spacing), ("count2", count2 as f64), ("spacing2", spacing2)]
+            }
+        };
+        for (key, value) in inputs {
+            if p.expressions.contains_key(key) {
+                values.insert(format!("{}.{}", p.id, key), value);
+            }
+        }
+    }
+    values
 }
