@@ -1,6 +1,7 @@
 //! Round an edge by dragging: press on an edge and pull away. Once the pointer has moved far
 //! enough, Fillet starts on the edge (with its tangent chain) and its radius follows the
-//! pointer's distance from the press, in steps. Holding Shift while pulling makes it a Chamfer
+//! pointer's sideways travel, in steps; moving up or down sets the step (up: coarser, down:
+//! finer), as when pulling a face. Holding Shift while pulling makes it a Chamfer
 //! instead. Letting go leaves the window open, where a Round / Chamfer switch changes the kind
 //! and OK applies it. Off unless "Direct interaction" is on in the preferences.
 
@@ -10,6 +11,7 @@ use solidcraft_engine::geom::Vec3;
 
 use crate::SolveApp;
 use crate::dialogs::Kind;
+use crate::drag_extrude::{STEPS, nearest_step, paint_ladder, step_index};
 use crate::viewport::{Hit, Proj};
 
 /// Screen distance the pointer must travel before a press counts as a pull.
@@ -26,7 +28,10 @@ pub struct Gesture {
     point: Vec3,
     /// Fillet has started (the window is open and follows the pointer).
     started: bool,
-    /// The size now, whether it is a chamfer, and where the pointer is, for the label.
+    /// The step at the start (a ladder position): vertical moves from the press change it.
+    step0: usize,
+    /// The step and size now, whether it is a chamfer, and where the pointer is, for the label.
+    step: f64,
     size: f64,
     chamfer: bool,
     at: Pos2,
@@ -50,7 +55,17 @@ pub fn press(app: &mut SolveApp, proj: &Proj, at: Pos2) {
     }
     let hits = crate::viewport::pick(app, proj, at);
     let Some((Hit::Edge { mid, .. }, sel @ Sel::Edge { .. })) = crate::viewport::candidate(app, &hits) else { return };
-    app.viewport.drag_blend.gesture = Some(Gesture { press: at, sel, point: mid, started: false, size: 0.0, chamfer: false, at });
+    app.viewport.drag_blend.gesture = Some(Gesture {
+        press: at,
+        sel,
+        point: mid,
+        started: false,
+        step0: nearest_step(crate::canvas::snap_step(app.cam.half_height())),
+        step: 0.0,
+        size: 0.0,
+        chamfer: false,
+        at,
+    });
 }
 
 /// Millimetres one screen point is worth at `point`, in the plane facing the view.
@@ -87,8 +102,10 @@ pub fn to(app: &mut SolveApp, proj: &Proj, p: Pos2, shift: bool) {
         app.viewport.drag_blend.gesture = Some(g);
         return;
     };
-    let step = crate::canvas::snap_step(app.cam.half_height());
-    let raw = f64::from((p - g.press).length()) * scale;
+    // Up the ladder is up the screen.
+    g.step = STEPS[step_index(g.step0, g.press.y - p.y)];
+    let step = g.step;
+    let raw = f64::from((p.x - g.press.x).abs()) * scale;
     let size = if crate::tool_modifiers::manipulator_free() { raw } else { ((raw / step).round() * step).max(step) };
     g.size = size;
     app.viewport.drag_blend.gesture = Some(g.clone());
@@ -102,14 +119,15 @@ pub fn end(app: &mut SolveApp) {
     app.viewport.drag_blend.gesture = None;
 }
 
-/// What the pull makes and how to switch it, below the pointer.
+/// The step ladder below the pointer and what the pull makes under it.
 pub fn show(app: &SolveApp, painter: &egui::Painter) {
     let Some(g) = app.viewport.drag_blend.gesture.as_ref().filter(|g| g.started) else { return };
     let t = crate::theme::Tokens::get();
+    let ladder = paint_ladder(painter, g.at, g.step);
     let kind = if g.chamfer { "Chamfer" } else { "Round" };
     let text = format!("{kind} {}   (Shift: chamfer)", crate::canvas::format_len(g.size));
     let galley = painter.layout_no_wrap(text, egui::FontId::proportional(t.font_body), t.text);
-    let pos = g.at + egui::vec2(18.0, 22.0);
+    let pos = ladder.left_bottom() + egui::vec2(5.0, 10.0);
     let rect = egui::Rect::from_min_size(pos, galley.size()).expand(5.0);
     painter.rect_filled(rect, 4.0, t.overlay);
     painter.rect_stroke(rect, 4.0, egui::Stroke::new(1.0, t.accent), egui::StrokeKind::Inside);

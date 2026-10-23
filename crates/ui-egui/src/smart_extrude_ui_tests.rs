@@ -197,13 +197,17 @@ fn blend(h: &Harness) -> (String, bool, bool) {
 }
 
 fn pull_an_edge(shift: bool, enabled: bool) -> Harness {
+    pull_an_edge_to(shift, enabled, [26.0, 10.0, 10.0])
+}
+
+fn pull_an_edge_to(shift: bool, enabled: bool, to: [f64; 3]) -> Harness {
     let mut h = Harness::new();
     h.app.preferences.direct_interaction = enabled;
     h.app.run("solid.box", json!({"length":20,"width":20,"height":10,"corner":[0,0,0]})).unwrap();
     h.step(&json!({"call":"ui.view","params":{"view":"home"}})).unwrap();
     h.step(&json!({"call":"ui.view","params":{"view":"fit"}})).unwrap();
     h.settle();
-    h.step(&json!({"drag":[{"world":[20,10,10]},{"world":[26,10,10]}],"shift":shift})).unwrap();
+    h.step(&json!({"drag":[{"world":[20,10,10]},{"world":to}],"shift":shift})).unwrap();
     h.frames(4);
     h
 }
@@ -235,4 +239,15 @@ fn shift_while_pulling_an_edge_chamfers_it() {
 fn pulling_an_edge_does_nothing_until_direct_interaction_is_on() {
     let h = pull_an_edge(false, false);
     assert!(h.app.dialog.is_none());
+}
+
+/// Moving straight up while pulling an edge sets the step, not the size: the size is then just
+/// one step of the ladder.
+#[test]
+fn moving_up_while_pulling_an_edge_sets_the_step() {
+    let h = pull_an_edge_to(false, true, [20.0, 10.0, 16.0]);
+    let (radius, _, marked) = blend(&h);
+    assert!(marked);
+    let r: f64 = radius.trim_end_matches(" mm").parse().unwrap_or(f64::NAN);
+    assert!(crate::drag_extrude::STEPS.iter().any(|s| (s - r).abs() < 1e-9), "{radius} is a step of the ladder");
 }

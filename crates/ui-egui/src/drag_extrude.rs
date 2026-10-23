@@ -21,16 +21,16 @@ const ALIGNED: f32 = 0.8;
 /// Screen distance the pointer travels sideways for one step of the ladder.
 const PX_PER_STEP: f32 = 44.0;
 /// The step sizes (mm) a pull can snap to, finest first.
-const STEPS: [f64; 25] =
+pub(crate) const STEPS: [f64; 25] =
     [0.01, 0.02, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.65, 0.7, 0.8, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 20.0, 50.0, 100.0, 200.0, 500.0, 1000.0];
 
 /// The ladder position nearest to `step`.
-fn nearest_step(step: f64) -> usize {
+pub(crate) fn nearest_step(step: f64) -> usize {
     (0..STEPS.len()).min_by(|a, b| (STEPS[*a] / step).ln().abs().total_cmp(&(STEPS[*b] / step).ln().abs())).unwrap_or(0)
 }
 
 /// The ladder position `dx` screen points sideways from `base`, clamped to the ladder.
-fn step_index(base: usize, dx: f32) -> usize {
+pub(crate) fn step_index(base: usize, dx: f32) -> usize {
     let moved = (dx / PX_PER_STEP).round() as i64;
     (base as i64 + moved).clamp(0, STEPS.len() as i64 - 1) as usize
 }
@@ -173,33 +173,39 @@ pub fn step_note(app: &SolveApp) -> Option<String> {
     Some(format!("Step {}", crate::canvas::format_len(step)))
 }
 
-/// The ladder of steps beside the pointer while pulling: the one in use between its neighbours.
-/// It sits below the pointer, clear of the distance box at the arrow tip.
+/// The ladder of steps beside the pointer while pulling.
 pub fn show(app: &SolveApp, painter: &egui::Painter) {
     let Some(g) = app.viewport.drag_extrude.gesture.as_ref().filter(|g| g.started) else { return };
+    paint_ladder(painter, g.at, g.step);
+}
+
+/// The step in use between its neighbours, below the pointer at `at` (clear of the distance box
+/// at an arrow tip). Returns the box it drew.
+pub(crate) fn paint_ladder(painter: &egui::Painter, at: Pos2, step: f64) -> egui::Rect {
     let t = crate::theme::Tokens::get();
-    let now = nearest_step(g.step);
+    let now = nearest_step(step);
     let galley = |i: usize, current: bool| {
         let size = if current { t.font_body * 1.25 } else { t.font_body };
         let color = if current { t.accent } else { t.text_dim };
         let text = STEPS.get(i).map(|s| crate::canvas::format_len(*s)).unwrap_or_default();
         painter.layout_no_wrap(text, egui::FontId::proportional(size), color)
     };
-    let cells: Vec<_> = (now.saturating_sub(2)..=(now + 2).min(STEPS.len() - 1)).map(|i| (galley(i, i == now), i == now)).collect();
+    let cells: Vec<_> = (now.saturating_sub(2)..=(now + 2).min(STEPS.len() - 1)).map(|i| galley(i, i == now)).collect();
     let gap = 12.0;
-    let width = cells.iter().map(|(g, _)| g.size().x).sum::<f32>() + gap * cells.len().saturating_sub(1) as f32;
-    let height = cells.iter().map(|(g, _)| g.size().y).fold(0.0, f32::max);
-    let pos = g.at + egui::vec2(18.0, 22.0);
+    let width = cells.iter().map(|g| g.size().x).sum::<f32>() + gap * cells.len().saturating_sub(1) as f32;
+    let height = cells.iter().map(|g| g.size().y).fold(0.0, f32::max);
+    let pos = at + egui::vec2(18.0, 22.0);
     let rect = egui::Rect::from_min_size(pos, egui::vec2(width, height)).expand(5.0);
     painter.rect_filled(rect, 4.0, t.overlay);
     painter.rect_stroke(rect, 4.0, egui::Stroke::new(1.0, t.accent), egui::StrokeKind::Inside);
     let mut x = pos.x;
-    for (g, _) in cells {
+    for g in cells {
         let w = g.size().x;
         let y = pos.y + (height - g.size().y) / 2.0;
         painter.galley(egui::pos2(x, y), g, t.text);
         x += w + gap;
     }
+    rect
 }
 
 #[cfg(test)]
