@@ -1602,6 +1602,9 @@ impl SolveApp {
         if self.home.open {
             home::show(self, ui);
             if self.home.open {
+                // Agent detection runs in the background and is only received by `agent_chat::poll`
+                // Polling here is required for the detection to complete on Home
+                agent_chat::poll(self, ui.ctx());
                 // Preferences and Keyboard Shortcuts open from Home too (its links, the gear, Ctrl+,).
                 prefs::show(self, ui.ctx());
                 return;

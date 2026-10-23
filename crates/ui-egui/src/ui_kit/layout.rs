@@ -86,12 +86,15 @@ pub(super) fn sized_row<R>(ui: &mut Ui, text: &str, height: f32, control: impl F
     let t = Tokens::get();
     let width = dimension(ui.available_width());
     let (rect, _) = ui.allocate_exact_size(vec2(width, height), egui::Sense::hover());
+    // A nested row (`"  Of"`) lines up under the one above: the lookup uses the text without its
+    // indent and the indent stays in front of the translation. The `LABEL` tag keeps the original.
+    let shown = indented_label(text);
+    // Measuring takes the original text and prepares it the same way, so column and row agree.
     let label_width = label_column(ui, text, width);
     let label_rect = egui::Rect::from_min_size(rect.min, vec2(label_width, rect.height()));
     ui.scope_builder(egui::UiBuilder::new().max_rect(label_rect).layout(egui::Layout::left_to_right(egui::Align::Center)), |ui| {
         // Left aligned in the label column, as in the design.
-        ui.add(egui::Label::new(RichText::new(crate::i18n::tr_label(text)).size(t.font_label).color(t.dialog_label)).truncate())
-            .on_hover_text(crate::i18n::tr_label(text));
+        ui.add(egui::Label::new(RichText::new(shown.clone()).size(t.font_label).color(t.dialog_label)).truncate()).on_hover_text(shown);
     });
     let control_rect = egui::Rect::from_min_max(egui::pos2((label_rect.right() + label_gap(ui, width)).min(rect.right()), rect.top()), rect.max);
     let result = ui
