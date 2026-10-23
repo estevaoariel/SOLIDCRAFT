@@ -48,7 +48,8 @@
 //! `CHROME` or the usual install locations; `cargo xtask ci` skips this test when there is none.
 //!
 //! The stand-in app has a content-named script, a `shared.js` whose name is the same in every
-//! build (a page must get its own build's), and an on-demand file under `fonts/` (not kept).
+//! build (a page must get its own build's), more files under `icons/` than the browser asks for
+//! at once, and an on-demand file under `fonts/` (not kept).
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -73,6 +74,9 @@ const LAUNCH_TIMEOUT: Duration = Duration::from_secs(240);
 const SLOW_NETWORK_WAIT: Duration = Duration::from_secs(3);
 /// Where Mode::SignIn redirects to (on `localhost`: another origin than the 127.0.0.1 app).
 const SIGN_IN: &str = "/sign-in";
+/// How many requests Chrome sends to one server at a time over HTTP/1.1; the rest wait for a
+/// free connection.
+const CONNECTIONS_PER_SERVER: usize = 6;
 
 /// Exercise the real browser build's command bridge, using the same Chrome harness as the offline test.
 pub fn run_api(site: &str) -> Result<(), String> {
@@ -258,7 +262,11 @@ pub fn run(root: &Path, site: Option<&str>, required: bool) -> Result<(), String
     server.set(Mode::FailFast(v2.clone()));
     let t = launch(&mut cdp, "v1")?;
     // The other files of v2 are asked for (and held) around the page's failure; let them go.
-    server.wait_asked_slowly(asked + kept.get(1).map_or(0, |(_, n)| n.saturating_sub(1)))?;
+    // Only as many as the browser sends at once (less the page's connection) are sure to be
+    // asked for: the page's failure cancels the download, and with it the files still waiting
+    // for a connection (a real build has more files than that).
+    let others = kept.get(1).map_or(0, |(_, n)| n.saturating_sub(1));
+    server.wait_asked_slowly(asked + others.min(CONNECTIONS_PER_SERVER - 1))?;
     server.release();
     wait_for(&mut cdp, &state_js, "no download is left marked in progress", |s| s["caches"].get(&name2_).is_some() && s["filling"] == json!([]))?;
     step("one file fails at once, others are still coming: v1 starts; v2's isn't left in progress", t);
@@ -500,6 +508,11 @@ fn stand_in(dir: &Path, build: &str, registration: &str) -> Result<(), String> {
     write("index.html", mark(&page, build)?)?;
     write(&format!("app-{build}.js"), format!("document.documentElement.dataset.started = \"{build}\";\n"))?;
     write("shared.js", format!("document.documentElement.dataset.shared = \"{build}\";\n"))?;
+    // More files than the browser asks for at once, as in a real build (icons, styles, wasm).
+    std::fs::create_dir_all(dir.join("icons")).map_err(|e| format!("icons: {e}"))?;
+    for i in 0..CONNECTIONS_PER_SERVER {
+        write(&format!("icons/{i}.txt"), format!("{build} {i}\n"))?;
+    }
     std::fs::create_dir_all(dir.join("fonts")).map_err(|e| format!("fonts: {e}"))?;
     write("fonts/on-demand.txt", format!("{build}\n"))
 }
