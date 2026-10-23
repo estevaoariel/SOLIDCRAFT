@@ -465,8 +465,23 @@ pub fn sync_context(app: &mut crate::SolveApp) {
     }
     let context = app.session.active_sketch.map(|id| format!("sketch:{id}")).or_else(|| sheet_body(app).map(|body| format!("sheet:{body}")));
     if app.ui.ribbon_context != context {
+        let was_sketch = app.ui.ribbon_context.as_deref().is_some_and(|c| c.starts_with("sketch:"));
+        let back = if app.session.active_sketch.is_some() {
+            // Remember the tab the sketch was started from (#3250).
+            if !was_sketch && app.ui.tab != "SKETCH" {
+                app.ui.sketch_return_tab = Some(app.ui.tab.clone());
+            }
+            None
+        } else if was_sketch {
+            app.ui.sketch_return_tab.take()
+        } else {
+            None
+        };
         app.ui.tab = if app.session.active_sketch.is_some() {
             "SKETCH"
+        } else if let Some(back) = back.as_deref().filter(|t| *t != "SKETCH" && visible_tabs(app).contains(t)) {
+            // Finishing a sketch goes back to the tab it came from (#3250).
+            visible_tabs(app).into_iter().find(|t| t == &back).unwrap_or("MODEL")
         } else if context.is_some() {
             "SHEET METAL"
         } else {

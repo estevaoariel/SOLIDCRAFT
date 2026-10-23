@@ -261,6 +261,10 @@ pub struct UiState {
     pub layout: shell::LayoutMode,
     /// Ribbon tab; SHEET METAL and the contextual SKETCH join the seven design tabs.
     pub tab: String,
+    /// The toolbar tab a sketch was started from; finishing the sketch goes back to it (#3250).
+    /// Not saved: it only lives while a sketch is open.
+    #[serde(skip)]
+    pub sketch_return_tab: Option<String>,
     /// Last contextual body/sketch, only used to select on entry.
     #[serde(skip)]
     pub ribbon_context: Option<String>,
@@ -299,6 +303,7 @@ impl Default for UiState {
             layout: Default::default(),
             tab: "MODEL".into(),
             ribbon_context: None,
+            sketch_return_tab: None,
             show_browser: true,
             show_timeline: true,
             show_grid: true,

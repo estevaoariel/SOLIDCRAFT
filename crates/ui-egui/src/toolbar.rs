@@ -2886,3 +2886,42 @@ mod fill_width_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod sketch_return_tab_tests {
+    use super::*;
+
+    /// #3250: finishing a sketch goes back to the tab it was started from, not always to MODEL.
+    #[test]
+    fn finishing_a_sketch_returns_to_the_tab_it_started_from() {
+        for start in ["MODEL", "SURFACE", "ASSEMBLE", "INSERT", "INSPECT", "MANAGE", "VIEW"] {
+            let mut h = crate::scenario::Harness::new();
+            h.app.home.open = false;
+            h.app.ui.tab = start.into();
+            h.app.run("sketch.create", json!({"plane":"XY"})).unwrap();
+            assert_eq!(h.app.ui.tab, "SKETCH", "{start}: the sketch tab shows while sketching");
+            h.app.run("sketch.finish", json!({})).unwrap();
+            assert!(h.app.session.active_sketch.is_none());
+            assert_eq!(h.app.ui.tab, start, "{start}: back on the tab the sketch started from");
+        }
+    }
+
+    /// A second sketch started from another tab returns to that tab, and a start tab that is
+    /// not a normal toolbar tab (a stale name) falls back to MODEL.
+    #[test]
+    fn sketch_return_tab_follows_each_sketch_and_falls_back_to_model() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.home.open = false;
+        for start in ["SURFACE", "INSPECT"] {
+            h.app.ui.tab = start.into();
+            h.app.run("sketch.create", json!({"plane":"XY"})).unwrap();
+            h.app.run("sketch.finish", json!({})).unwrap();
+            assert_eq!(h.app.ui.tab, start);
+        }
+        let start = "NO SUCH TAB";
+        h.app.ui.tab = start.into();
+        h.app.run("sketch.create", json!({"plane":"XY"})).unwrap();
+        h.app.run("sketch.finish", json!({})).unwrap();
+        assert_eq!(h.app.ui.tab, "MODEL", "{start}: falls back to MODEL");
+    }
+}
