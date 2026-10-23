@@ -1706,6 +1706,12 @@ pub fn section_plane(app: &SolveApp) -> Option<(Vec3, Vec3)> {
 /// Do not expand these faces into surface patches: neighbouring faces can belong to another
 /// feature even when they share a surface.
 fn feature_geometry(app: &SolveApp, id: u64) -> Vec<Sel> {
+    feature_parts(app, id, true)
+}
+
+/// A feature's geometry as [`feature_geometry`] finds it; `shown_only` leaves out hidden bodies
+/// and bodies a dialog's preview stands in for.
+fn feature_parts(app: &SolveApp, id: u64, shown_only: bool) -> Vec<Sel> {
     if !app.session.model.result(id).is_some_and(|r| !r.skipped && r.error.is_none()) {
         return Vec::new();
     }
@@ -1713,7 +1719,7 @@ fn feature_geometry(app: &SolveApp, id: u64) -> Vec<Sel> {
     let prefix = format!("F{id}:");
     let mut out = Vec::new();
     for b in &st.bodies {
-        if !app.session.body_visible(&b.name) || app.preview.effective_replaced().contains(&b.name) {
+        if shown_only && (!app.session.body_visible(&b.name) || app.preview.effective_replaced().contains(&b.name)) {
             continue;
         }
         if b.feature == id {
@@ -1754,9 +1760,20 @@ fn displayed_selection(app: &SolveApp, item: &Sel) -> Vec<Sel> {
 /// The box around what is selected (bodies, faces, edges, vertices, sketch curves and the
 /// bodies of selected features), where it is shown.
 pub fn selection_bounds(app: &SolveApp) -> Option<solidcraft_engine::geom::Aabb3> {
+    bounds_of(app, app.session.selection.iter().flat_map(|item| displayed_selection(app, item)))
+}
+
+/// The box around the geometry a feature made (its bodies, or its faces on bodies later features
+/// changed), also where a dialog's preview stands in for it: a pattern of the feature previews
+/// the body the feature is on. None when the feature made nothing.
+pub(crate) fn feature_bounds(app: &SolveApp, id: u64) -> Option<solidcraft_engine::geom::Aabb3> {
+    bounds_of(app, feature_parts(app, id, false).into_iter())
+}
+
+fn bounds_of(app: &SolveApp, items: impl Iterator<Item = Sel>) -> Option<solidcraft_engine::geom::Aabb3> {
     let st = crate::open_meshing::shown_world(app);
     let mut b = solidcraft_engine::geom::Aabb3::EMPTY;
-    for s in app.session.selection.iter().flat_map(|item| displayed_selection(app, item)) {
+    for s in items {
         match &s {
             Sel::Body { name } => {
                 if let Some(x) = st.body(name) {

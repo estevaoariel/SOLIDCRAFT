@@ -77,6 +77,9 @@ pub fn anchor(app: &SolveApp, d: &Dialog) -> Option<(Vec3, Option<Vec3>)> {
             (ss.plane.to_world(ss.sketch.point(ss.sketch.resolve_point(point)?)?), None)
         }
         Sel::Body { name } => (st.body(name)?.mesh().bounds().center(), None),
+        // A feature picked as a whole (a pattern or mirror of features): the middle of what it
+        // made, as a body sits at the middle of its box.
+        Sel::Feature { id } => (crate::viewport::feature_bounds(app, *id)?.center(), None),
         Sel::Plane { name } => {
             let pl = solidcraft_engine::geom::Plane::named(name).or_else(|| {
                 solidcraft_engine::view::construction_planes(&app.session).into_iter().find(|(_, n, _)| n == name).map(|(_, _, pl)| pl)
