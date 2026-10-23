@@ -89,6 +89,8 @@ mod manage_dialogs_tests;
 mod material_card_review;
 
 #[cfg(test)]
+mod display_state_ui_tests;
+#[cfg(test)]
 mod measurement_ui_tests;
 #[cfg(test)]
 mod menu_tests;
