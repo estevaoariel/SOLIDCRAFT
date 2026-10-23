@@ -1059,7 +1059,7 @@
   "search.try": "Bir komut adı, bu tasarımdaki bir özellik veya bir parametre yazın. Bir komutu değerlerle çalıştırmak için kimliğini ve bir JSON nesnesi yazın: {example}",
   "search.valid": "Geçerli",
   "settings.display_quality_note": "Daha ince seviyeler eğri yüzeyleri ve kenarları daha pürüzsüz gösterir, ancak ağ oluşturma daha uzun sürer. Yalnızca görünüm değişir; tasarım ve dışa aktarımlar asla değişmez.",
-  "settings.frame_rate_note": "Görünümün sağ alt köşesinde saniyedeki kare sayısını gösterir. Açıkken görünüm sürekli yeniden çizilir.",
+  "settings.frame_rate_note": "Görünümün sağ alt köşesinde saniyedeki kare sayısını gösterir.",
   "settings.measure_axis_distances": "X/Y/Z mesafelerini göster",
   "settings.measure_axis_distances_help": "Ölç açıkken toplam mesafenin yanında dünya ekseni bileşen ölçülerini gösterir.",
   "settings.msaa_applies_on_restart": "Kenar yumuşatma, SolidCraft bir sonraki başlatıldığında uygulanır",

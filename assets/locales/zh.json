@@ -1353,7 +1353,7 @@
   "search.try": "输入命令名称、此设计中的特征或参数。要带值运行命令，请输入其ID和JSON对象：{example}",
   "search.valid": "有效",
   "settings.display_quality_note": "仅影响显示，不影响设计和导出。",
-  "settings.frame_rate_note": "在视图右下角显示每秒帧数。开启时视图会持续重绘。",
+  "settings.frame_rate_note": "在视图右下角显示每秒帧数。",
   "settings.measure_axis_distances": "显示 X/Y/Z 距离",
   "settings.measure_axis_distances_help": "测量对话框打开时，在总距离之外显示沿世界坐标轴方向的尺寸线和距离。",
   "settings.msaa_applies_on_restart": "抗锯齿将在下次启动 SolidCraft 时生效",

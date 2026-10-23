@@ -3240,6 +3240,9 @@ fn agent_chip(app: &mut SolveApp, ui: &egui::Ui, rect: Rect) {
     }
 }
 
+/// How long a status message stays in the view (milliseconds).
+const STATUS_TOAST_MS: f64 = 6000.0;
+
 /// A single visual pattern for ongoing work and the existing six-second status.
 fn transient_messages(app: &mut SolveApp, ui: &egui::Ui, viewport: Rect) {
     if app.status.is_none() && app.computing_since().is_none() {
@@ -3252,7 +3255,8 @@ fn transient_messages(app: &mut SolveApp, ui: &egui::Ui, viewport: Rect) {
     }
     let mut free = crate::viewport_layout::free_rect(crate::shell::content_rect(app, viewport), &obstacles).shrink(t.space_8);
     if let Some((msg, at, error)) = app.status.clone() {
-        if crate::now_ms() - at < 6000.0 {
+        let shown_ms = crate::now_ms() - at;
+        if shown_ms < STATUS_TOAST_MS {
             if let Some(r) = paint_toast(ui, free, msg, error, false) {
                 crate::scenario::publish_rect("toast", r);
                 free.max.y = r.top() - t.space_8;
@@ -3262,7 +3266,10 @@ fn transient_messages(app: &mut SolveApp, ui: &egui::Ui, viewport: Rect) {
                     app.messages.open = true;
                 }
             }
-            ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
+            // One frame when it is due to go, not a frame every half second while it shows.
+            let left_ms = STATUS_TOAST_MS - shown_ms;
+            let left_ms = if (0.0..=STATUS_TOAST_MS).contains(&left_ms) { left_ms } else { STATUS_TOAST_MS };
+            ui.ctx().request_repaint_after(std::time::Duration::from_secs_f64(left_ms / 1000.0 + 0.01));
         } else {
             app.status = None;
         }

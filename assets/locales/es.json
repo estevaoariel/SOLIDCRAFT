@@ -1060,7 +1060,7 @@
   "search.try": "Escribe el nombre de un comando, una operación de este diseño o un parámetro. Para ejecutar un comando con valores, escribe su id y un objeto JSON: {example}",
   "search.valid": "Válido",
   "settings.display_quality_note": "Los niveles más finos muestran las caras y aristas curvas con mayor suavidad, pero tardan más en generar la malla. Solo cambia el visor, nunca el diseño ni las exportaciones.",
-  "settings.frame_rate_note": "Muestra los fotogramas por segundo en la esquina inferior derecha de la vista. Mientras esté activado, la vista se redibuja continuamente.",
+  "settings.frame_rate_note": "Muestra los fotogramas por segundo en la esquina inferior derecha de la vista.",
   "settings.measure_axis_distances": "Mostrar distancias X/Y/Z",
   "settings.measure_axis_distances_help": "Mostrar las cotas de cada eje global junto a la distancia total mientras está abierta la herramienta Medir.",
   "settings.msaa_applies_on_restart": "El suavizado de bordes se aplicará la próxima vez que se inicie SolidCraft",

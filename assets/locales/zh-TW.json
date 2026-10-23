@@ -1059,7 +1059,7 @@
   "search.try": "輸入命令名稱、此設計中的特徵或參數。要帶值執行命令，請輸入其ID和JSON物件：{example}",
   "search.valid": "有效",
   "settings.display_quality_note": "等級越精細，曲面和邊顯示越平滑，但網格化耗時更長。只影響檢視區，不影響設計或匯出。",
-  "settings.frame_rate_note": "在檢視右下角顯示每秒影格數。開啟時檢視會持續重繪。",
+  "settings.frame_rate_note": "在檢視右下角顯示每秒影格數。",
   "settings.measure_axis_distances": "顯示 X/Y/Z 距離",
   "settings.measure_axis_distances_help": "開啟測量時，在總距離之外顯示沿世界座標軸方向的分量尺寸。",
   "settings.msaa_applies_on_restart": "抗鋸齒將在下次啟動 SolidCraft 時生效",

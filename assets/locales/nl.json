@@ -1059,7 +1059,7 @@
   "search.try": "Typ een opdrachtnaam, een kenmerk in dit ontwerp of een parameter. Om een opdracht met waarden uit te voeren, typt u de id en een JSON-object: {example}",
   "search.valid": "Geldig",
   "settings.display_quality_note": "Fijnere niveaus tekenen gebogen vlakken en randen vloeiender en kosten meer tijd om te meshen. Alleen de viewport verandert, nooit het ontwerp of de exports.",
-  "settings.frame_rate_note": "Toont frames per seconde in de rechteronderhoek van de weergave. Zolang dit aan staat, wordt de weergave continu opnieuw getekend.",
+  "settings.frame_rate_note": "Toont frames per seconde in de rechteronderhoek van de weergave.",
   "settings.measure_axis_distances": "X/Y/Z-afstanden tonen",
   "settings.measure_axis_distances_help": "Toon de componentmaten langs de wereldassen naast de totale afstand terwijl Meten open is.",
   "settings.msaa_applies_on_restart": "Anti-aliasing wordt toegepast bij de volgende start van SolidCraft",
