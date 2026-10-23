@@ -594,6 +594,9 @@ preference_settings! {
     /// When true: Shift+click adds without removing; Primary toggles.
     /// When false (default): Shift and Primary both toggle.
     selection_shift_add_only: bool = false, PAGE_SKETCH;
+    /// V shows or hides what is under the pointer (in the 3D view or a Browser row) without
+    /// selecting it first (#4128). Over a selected item or empty space it acts on the selection.
+    hide_under_cursor: bool = true, PAGE_SKETCH;
     /// Plugin ids turned off (Preferences › Plugins). An installed plugin whose id is absent is on.
     disabled_plugins: std::collections::BTreeSet<String> = std::collections::BTreeSet::new(), PAGE_PLUGINS;
 }

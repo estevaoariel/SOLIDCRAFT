@@ -1870,6 +1870,8 @@
   "ui.hideOrigin": "隐藏原点",
   "ui.hidePlanes": "隐藏平面",
   "ui.hideProfile": "隐藏轮廓",
+  "ui.hide_under_cursor": "V 隐藏光标下的对象",
+  "ui.hide_under_cursor_tip": "开：按 V 可显示或隐藏指针下的实体、草图或平面，或指针下的浏览器行，无需先选择。指针在已选对象上或空白处时，V 作用于当前选择。",
   "ui.history_back": "后退一步",
   "ui.history_below_browser": "浏览器下方",
   "ui.history_edge_hint": "双击边缘",
