@@ -1060,7 +1060,7 @@
   "search.try": "Zadejte název příkazu, prvek v tomto návrhu nebo parametr. Chcete-li spustit příkaz s hodnotami, zadejte jeho id a objekt JSON: {example}",
   "search.valid": "Platné",
   "settings.display_quality_note": "Jemnější úrovně kreslí zakřivené plochy a hrany hladčeji, ale síťování trvá déle. Mění se jen zobrazení, nikdy návrh ani exporty.",
-  "settings.frame_rate_note": "Zobrazuje snímky za sekundu v pravém dolním rohu pohledu. Dokud je zapnuto, pohled se překresluje nepřetržitě.",
+  "settings.frame_rate_note": "Zobrazuje snímky za sekundu v pravém dolním rohu pohledu.",
   "settings.measure_axis_distances": "Zobrazit vzdálenosti X/Y/Z",
   "settings.measure_axis_distances_help": "Při otevřeném měření zobrazit kromě celkové vzdálenosti i složky ve směru os.",
   "settings.msaa_applies_on_restart": "Vyhlazování se projeví při příštím spuštění SolidCraftu",

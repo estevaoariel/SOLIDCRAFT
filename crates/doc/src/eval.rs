@@ -120,6 +120,9 @@ impl ModelBody {
         // finding their surface, picks naming their face, sketch planes), and a different
         // triangulation moved those and changed what designs build. A GPU viewport draws the
         // plan ([`ModelBody::display_plan`]).
+        if let Some(mesh) = self.mesh.get() {
+            return mesh.clone();
+        }
         match self.mesh_placement.as_deref() {
             Some(placed) => self.mesh.get_or_init(|| placed.mesh()).clone(),
             None => placed_mesh::reference_mesh(&self.body, &self.mesh, self.display_tol()),

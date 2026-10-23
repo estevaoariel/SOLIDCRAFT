@@ -1064,7 +1064,7 @@
   "search.try": "명령 이름, 이 디자인의 피처 또는 매개변수를 입력하세요. 값과 함께 명령을 실행하려면 명령 ID와 JSON 객체를 입력하세요: {example}",
   "search.valid": "올바름",
   "settings.display_quality_note": "세밀할수록 곡면과 모서리가 더 매끄럽게 표시되지만 메시 생성 시간이 늘어납니다. 뷰포트만 바뀌며 설계나 내보내기는 바뀌지 않습니다.",
-  "settings.frame_rate_note": "뷰의 오른쪽 아래에 초당 프레임 수를 표시합니다. 켜져 있는 동안 뷰를 계속 다시 그립니다.",
+  "settings.frame_rate_note": "뷰의 오른쪽 아래에 초당 프레임 수를 표시합니다.",
   "settings.measure_axis_distances": "X/Y/Z 거리 표시",
   "settings.measure_axis_distances_help": "측정 대화상자가 열려 있는 동안 전체 거리와 함께 월드 축 방향 치수와 거리를 표시합니다.",
   "settings.msaa_applies_on_restart": "안티앨리어싱은 다음에 SolidCraft를 시작할 때 적용됩니다",

@@ -1059,7 +1059,7 @@
   "search.try": "Skriv ett kommandonamn, en funktion i denna konstruktion eller en parameter. För att köra ett kommando med värden, skriv dess id och ett JSON-objekt: {example}",
   "search.valid": "Giltig",
   "settings.display_quality_note": "Finare nivåer ritar krökta ytor och kanter jämnare och tar längre tid att mesha. Endast vyporten ändras, aldrig konstruktionen eller exporter.",
-  "settings.frame_rate_note": "Visar bildrutor per sekund i vyns nedre högra hörn. Medan det är på ritas vyn om kontinuerligt.",
+  "settings.frame_rate_note": "Visar bildrutor per sekund i vyns nedre högra hörn.",
   "settings.measure_axis_distances": "Visa X/Y/Z-avstånd",
   "settings.measure_axis_distances_help": "Visa världsaxelns komponentmått bredvid det totala avståndet medan Mät är öppet.",
   "settings.msaa_applies_on_restart": "Kantutjämning tillämpas nästa gång SolidCraft startar",
