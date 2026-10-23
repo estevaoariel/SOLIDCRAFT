@@ -3263,8 +3263,14 @@ fn transient_messages(app: &mut SolveApp, ui: &egui::Ui, viewport: Rect) {
                 free.max.y = r.top() - t.space_8;
                 // Open the run's messages from the tokenised status toast.
                 crate::scenario::publish_handle("status:chip", r.center());
-                if ui.interact(r, egui::Id::new("sc_status_chip"), Sense::click()).on_hover_text(crate::i18n::tr("messages.chip_hint")).clicked() {
-                    app.messages.open = true;
+                let hint = if app.status_undo { crate::i18n::tr_label("Undo") } else { crate::i18n::tr("messages.chip_hint") };
+                if ui.interact(r, egui::Id::new("sc_status_chip"), Sense::click()).on_hover_text(hint).clicked() {
+                    if app.status_undo {
+                        app.status = None;
+                        let _ = app.run("edit.undo", json!({}));
+                    } else {
+                        app.messages.open = true;
+                    }
                 }
             }
             // One frame when it is due to go, not a frame every half second while it shows.

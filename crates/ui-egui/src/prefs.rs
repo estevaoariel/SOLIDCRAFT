@@ -529,6 +529,9 @@ preference_settings! {
     look_at_speed: f32 = 1.0, PAGE_NAVIGATION, accept(0.25..=4.0) => enabled_slider(look_at_anim, "Animation speed", 0.5..=3.0, 0.25, |v| format!("{v:.2}×"));
     /// Default modelling orientation: `z` (Z up) or `y` (Y up) (#3).
     up_axis: String = "z".into(), PAGE_DESIGN;
+    /// A STEP or IGES file whose header names a Y-up exporter (SolidWorks) is stood up as it
+    /// opens, with an Undo in the toast (`stand_up`).
+    auto_stand_up: bool = true, PAGE_DESIGN => check("Stand up Y-up files automatically", "A STEP or IGES file from a program that saves Y up opens standing, with Undo in the message");
     /// After a STEP or IGES file opens, offer to stand a Y-up part up (`stand_up`).
     offer_stand_up: bool = true, PAGE_DESIGN => check("Offer to stand up Y-up files", "After a STEP or IGES file opens with Z up, offer a quarter turn about X");
     /// Extrude: with a profile picked, a face, vertex or parallel plane picked off its plane
@@ -2253,6 +2256,11 @@ mod tests {
         src.run("file.export", json!({"path": path})).unwrap();
 
         let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
+        app.open_path(&path);
+        assert!(app.stand_up.is_none(), "SolidCraft's own exports already have Z up");
+        // Another originating system keeps the offer.
+        let text = std::fs::read_to_string(&path).unwrap();
+        std::fs::write(&path, text.replace("'SolidCraft','SolidCraft'", "'SolidCraft','Example CAD'")).unwrap();
         app.open_path(&path);
         let offered = app.stand_up.clone().unwrap_or_default();
         assert_eq!(offered.len(), 1, "the file's body is offered");
