@@ -1211,3 +1211,8 @@ pub(crate) type SketchValues = std::collections::BTreeMap<u64, std::collections:
 fn own_values(sk: &solidcraft_sketch::Sketch) -> std::collections::BTreeMap<String, f64> {
     sk.constraints.iter().filter(|c| c.param.is_some() && !c.driven).filter_map(|c| Some((c.id.clone(), c.kind.value()?))).collect()
 }
+
+/// Whether a saved file is the current design or one of its linked components.
+pub fn session_uses_file(session: &Session, path: &str) -> bool {
+    cmd::file_library_uses_file(session, path)
+}
