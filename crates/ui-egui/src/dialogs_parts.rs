@@ -1,5 +1,6 @@
 //! Insert Part: the standard parts library (screws, bolts, nuts, washers, set screws, pins,
-//! bearings) by family, size and length, with the size's table values and a picture of the part.
+//! bearings, and the families of open part libraries) by family, size and length, with the
+//! size's table values and a picture of the part.
 //! Picking a hole (its wall or rim) seats the part in it with a rigid joint; without one the part
 //! goes at the origin. The live preview shows it placed.
 
@@ -22,6 +23,17 @@ pub struct Family {
     /// Size names and their table rows.
     pub sizes: Vec<(String, Value)>,
     pub lengths: Option<Vec<f64>>,
+}
+
+impl Family {
+    /// The lengths size `size` comes in: a library family lists them per size (each with the
+    /// grip it holds), a built-in one for the whole family.
+    pub fn lengths_of(&self, size: usize) -> Option<Vec<f64>> {
+        match self.sizes.get(size).and_then(|(_, row)| row.get("lengths")).and_then(Value::as_array) {
+            Some(ls) => Some(ls.iter().filter_map(|l| l.get("length").and_then(Value::as_f64)).collect()),
+            None => self.lengths.clone(),
+        }
+    }
 }
 
 /// The library as `parts.library` gives it.
@@ -82,7 +94,7 @@ pub fn insert_params(lib: &[Family], k: &Pt, hole: Option<&Sel>) -> Result<Value
     let f = lib.get(k.family).ok_or("the parts library is empty")?;
     let (size, _) = f.sizes.get(k.size).ok_or("pick a size")?;
     let mut p = json!({"family": f.id, "size": size});
-    if let Some(l) = k.length.and_then(|i| f.lengths.as_ref().and_then(|ls| ls.get(i))) {
+    if let Some(l) = k.length.and_then(|i| f.lengths_of(k.size).and_then(|ls| ls.get(i).copied())) {
         p["length"] = json!(l);
     }
     match hole {
@@ -98,9 +110,35 @@ pub fn insert_params(lib: &[Family], k: &Pt, hole: Option<&Sel>) -> Result<Value
     Ok(p)
 }
 
-/// A picture of the part alone.
-fn picture(p: &Value) -> Option<egui::ColorImage> {
+/// The part libraries a picture of a part is built with: the open ones, then a library of the
+/// families only the design keeps (a part inserted from a library that is not open now).
+fn picture_libraries(session: &Session) -> Vec<solidcraft_engine::cmd::PartLibrary> {
+    let mut libs = session.part_libraries.clone();
+    let mut design: Vec<solidcraft_engine::doc::part_family::FastenerFamily> = Vec::new();
+    for f in session.doc.parts.values().filter_map(|p| p.definition.as_ref()) {
+        let known = libs.iter().any(|l| l.library.families.iter().any(|o| o.name == f.name)) || design.iter().any(|o| o.name == f.name);
+        if !known {
+            design.push(f.clone());
+        }
+    }
+    if !design.is_empty() {
+        let library = solidcraft_engine::doc::part_family::Library {
+            format: solidcraft_engine::doc::part_family::FORMAT.into(),
+            id: "design".into(),
+            name: "Design".into(),
+            provenance: None,
+            families: design,
+        };
+        libs.push(solidcraft_engine::cmd::PartLibrary { path: String::new(), library });
+    }
+    libs
+}
+
+/// A picture of the part alone, built with `libraries` (see [`picture_libraries`]) so a
+/// library family's part is drawn too.
+fn picture(p: &Value, libraries: Vec<solidcraft_engine::cmd::PartLibrary>) -> Option<egui::ColorImage> {
     let mut s = Session::default();
+    s.part_libraries = libraries;
     let mut q = p.clone();
     if let Value::Object(m) = &mut q {
         m.remove("at");
@@ -139,8 +177,12 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Pt, inputs: &[SelInpu
     }
     let Some(f) = lib.get(k.family) else { return false };
     let sizes: Vec<&str> = f.sizes.iter().map(|s| s.0.as_str()).collect();
+    let before = k.size;
     choice_row(ui, "Size", "pt_size", &mut k.size, &sizes);
-    if let Some(ls) = &f.lengths {
+    if k.size != before && f.sizes.get(before).is_some_and(|(_, row)| row.get("lengths").is_some()) {
+        k.length = None;
+    }
+    if let Some(ls) = &f.lengths_of(k.size) {
         let mut labels = vec!["Default".to_string()];
         labels.extend(ls.iter().map(|l| crate::prefs::show_mm(app, *l, 1)));
         let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
@@ -157,7 +199,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Pt, inputs: &[SelInpu
     if k.picture != Some(key) {
         let tex = insert_params(&lib, k, None)
             .ok()
-            .and_then(|p| picture(&p))
+            .and_then(|p| picture(&p, picture_libraries(&app.session)))
             .map(|img| ui.ctx().load_texture("sc_part_picture", img, egui::TextureOptions::LINEAR));
         ui.data_mut(|d| match tex {
             Some(t) => {
@@ -178,13 +220,13 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Pt, inputs: &[SelInpu
     if let Some((_, row)) = f.sizes.get(k.size)
         && let Some(o) = row.as_object()
     {
-        for (key, v) in o.iter().filter(|(key, _)| key.as_str() != "size") {
+        // A library size's lengths are the Length row's choices already.
+        for (key, v) in o.iter().filter(|(key, _)| !matches!(key.as_str(), "size" | "lengths")) {
+            // Numbers in the length unit, text (a head style) as it is, without JSON quotes.
+            let shown =
+                v.as_f64().map(|x| crate::prefs::show_mm(app, x, 1)).or_else(|| v.as_str().map(str::to_string)).unwrap_or_else(|| v.to_string());
             form_row(ui, &key.replace('_', " "), |ui| {
-                crate::ui_kit::text(
-                    ui,
-                    &v.as_f64().map(|x| crate::prefs::show_mm(app, x, 1)).unwrap_or_else(|| v.to_string()),
-                    crate::ui_kit::Text::Cell,
-                );
+                crate::ui_kit::text(ui, &shown, crate::ui_kit::Text::Cell);
             });
         }
     }
@@ -248,5 +290,47 @@ mod tests {
         assert_eq!(p["name"], "Front bearing");
         assert!(p.get("length").is_none());
         assert!(insert_params(&[], &k, None).is_err());
+    }
+
+    /// A library family's lengths come from the picked size.
+    #[test]
+    fn library_sizes_carry_their_own_lengths() {
+        let l = families(&json!({"families": [
+            {"family": "rivet_dome", "name": "Rivet", "standard": "", "source": "example.rivets", "lengths": [6, 8, 12],
+             "sizes": [{"size": "4.0", "lengths": [{"length": 6, "grip": [1, 3]}, {"length": 8, "grip": [3, 5]}]},
+                       {"size": "4.8", "lengths": [{"length": 12, "grip": [6, 8]}]}]},
+        ]}));
+        assert_eq!(l[0].lengths_of(0), Some(vec![6.0, 8.0]));
+        assert_eq!(l[0].lengths_of(1), Some(vec![12.0]));
+        let k = Pt { family: 0, size: 1, length: Some(0), name: String::new(), picture: None, lib: None };
+        assert_eq!(insert_params(&l, &k, None).unwrap()["length"], json!(12.0));
+    }
+
+    /// A library family's part is built for its picture with the open libraries, and with the
+    /// design's copy once the library is closed.
+    #[test]
+    fn a_library_part_is_pictured_with_its_family() {
+        let path = std::env::temp_dir().join(format!("solidcraft-picture-lib-{}.json", std::process::id()));
+        let lib = json!({"format": "solidcraft-parts/1", "id": "example.rivets", "name": "Example rivets", "families": [
+            {"kind": "fastener_family", "name": "rivet_dome", "label": "Rivet", "shape": "blind_rivet",
+             "sizes": [{"size": "4.8", "d": 4.8, "head": {"d": 9.5, "h": 1.6}, "lengths": [{"length": 12, "grip": [6, 8]}]}]}]});
+        std::fs::write(&path, lib.to_string()).unwrap();
+        let mut s = Session::default();
+        s.execute("parts.library.load", &json!({"path": path.to_string_lossy()})).unwrap();
+        let _ = std::fs::remove_file(&path);
+        let part = json!({"family": "rivet_dome", "size": "4.8", "point": [0, 0, 0], "direction": [0, 0, 1]});
+        let builds = |libs| {
+            let mut scratch = Session::default();
+            scratch.part_libraries = libs;
+            scratch.execute("parts.insert", &part).is_ok()
+        };
+        assert!(!builds(Vec::new()), "a bare session does not know the family");
+        assert!(builds(picture_libraries(&s)));
+        // Inserted, then the library closed: the design's copy is used.
+        s.execute("parts.insert", &part).unwrap();
+        s.part_libraries.clear();
+        let libs = picture_libraries(&s);
+        assert_eq!(libs.iter().map(|l| l.library.id.as_str()).collect::<Vec<_>>(), ["design"]);
+        assert!(builds(libs));
     }
 }

@@ -306,6 +306,10 @@ pub struct Session {
     /// Record this session's top-level commands in the crash journal (the app's own design;
     /// never previews or other scratch sessions). See [`crash`].
     pub crash_journal: bool,
+    /// Part libraries opened in this session (`parts.library.load`): their fastener families
+    /// sit beside the built-in ones. Not part of the design; a part inserted from one keeps a
+    /// copy of its family.
+    pub part_libraries: Vec<cmd::PartLibrary>,
     /// Full model evaluations (`refresh`), for tests.
     #[cfg(test)]
     pub(crate) evaluations: usize,
@@ -446,11 +450,13 @@ impl Session {
             #[cfg(test)]
             evaluations: 0,
             crash_journal: false,
+            part_libraries: Vec::new(),
         }
     }
 
     /// Become `fresh` (another design opened, recovered or started), keeping the settings that
-    /// are the user's rather than the design's: `auto_project` is a preference (#680).
+    /// are the user's rather than the design's: `auto_project` is a preference (#680), the opened
+    /// part libraries are the user's.
     /// Checkpoints survive too: a batch that failed after `file.new` or `doc.open` goes back
     /// from the checkpoint it took before its first step, and that checkpoint belongs to the
     /// design before the batch, which is what the batch promised (#3242). The design is what a
@@ -462,9 +468,11 @@ impl Session {
         let render_jobs = self.render_jobs.scratch();
         let checkpoints = std::mem::take(&mut self.checkpoints);
         let next_checkpoint = self.next_checkpoint;
+        let part_libraries = std::mem::take(&mut self.part_libraries);
         *self = fresh;
         self.auto_project = auto_project;
         self.param_check = param_check;
+        self.part_libraries = part_libraries;
         self.render_viewport = render_viewport;
         self.render_jobs = render_jobs;
         self.checkpoints = checkpoints;
@@ -979,6 +987,7 @@ impl Session {
             #[cfg(test)]
             evaluations: 0,
             crash_journal: false,
+            part_libraries: self.part_libraries.clone(),
         }
     }
 
