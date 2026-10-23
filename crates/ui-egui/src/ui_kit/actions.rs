@@ -85,6 +85,7 @@ pub(crate) struct Footer<'a> {
     pub confirm: bool,
     /// Parent surface corners; the footer inherits only its two bottom corners.
     pub corners: Option<egui::CornerRadius>,
+    pub secondary_left: bool,
 }
 
 pub(crate) fn footer(ui: &mut Ui, ok_label: &str, cancel_label: &str, ok_enabled: bool, options: Footer<'_>) -> Action {
@@ -99,7 +100,7 @@ pub(super) fn footer_with_left(
     options: Footer<'_>,
     left: impl FnOnce(&mut Ui),
 ) -> Action {
-    let Footer { apply: apply_label, status, selected, danger, confirm, corners } = options;
+    let Footer { apply: apply_label, status, selected, danger, confirm, corners, secondary_left } = options;
     let t = Tokens::get();
     let ok_enabled = ok_enabled && !ok_label.is_empty();
     // The footer is a full-width band (the card has no margin of its own): its own fill, a rule
@@ -178,12 +179,17 @@ pub(super) fn footer_with_left(
     let left_rect = egui::Rect::from_min_max(inner.min, egui::pos2((actions_left - t.space_8).max(inner.left()), inner.bottom()));
     ui.scope_builder(egui::UiBuilder::new().max_rect(left_rect).layout(egui::Layout::left_to_right(egui::Align::Center)), |ui| {
         if let Some(label) = apply_label.filter(|_| confirm) {
-            let response = ui.add(
-                egui::Button::new(crate::i18n::tr_label(label))
-                    .frame(false)
-                    .selected(selected == Some(Action::Apply))
-                    .min_size(vec2(0.0, t.form_button_height)),
-            );
+            let marked = selected == Some(Action::Apply);
+            let mut button =
+                egui::Button::new(crate::i18n::tr_label(label)).frame(secondary_left).selected(marked).min_size(vec2(0.0, t.form_button_height));
+            if secondary_left {
+                ui.spacing_mut().button_padding = vec2(t.space_12, 0.0);
+                button = button
+                    .fill(if marked { t.selected_bg } else { t.control_fill })
+                    .stroke(egui::Stroke::new(1.0, if marked { t.form_primary } else { t.control_border }))
+                    .corner_radius(t.control_radius);
+            }
+            let response = ui.add(button);
             pointer_on_hover(ui, &response);
             scenario::publish_target("dialog:apply", response.rect);
             scenario::publish_handle(&format!("dialog:{label}"), response.rect.center());

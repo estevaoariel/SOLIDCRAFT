@@ -686,6 +686,7 @@ pub fn prompt(app: &mut SolveApp, ctx: &egui::Context) {
     let (closed, action) = ui_kit::Confirm::new(egui::Id::new("sc_close_prompt"), "status_warning", &title)
         .tone(ui_kit::Tone::Warning)
         .actions(crate::i18n::tr("ui.save"), crate::i18n::tr("ui.cancel"), Some(crate::i18n::tr("ui.don_t_save")))
+        .secondary_left()
         .selected(match choice {
             Answer::Save => ui_kit::Action::Ok,
             Answer::DontSave => ui_kit::Action::Apply,
