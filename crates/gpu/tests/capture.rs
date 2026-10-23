@@ -142,6 +142,26 @@ fn pictures_show_the_section_and_its_cap() {
     }
 }
 
+/// With the section's hatch off, the cut shows plain in its body's own colour, as the CPU
+/// rasterizer draws it; hatched, it is tinted and striped.
+#[test]
+fn pictures_show_a_plain_cut_without_the_hatch() {
+    let Some(c) = capturer() else { return };
+    let mut s = session(&[
+        ("solid.box", json!({"length": 40, "width": 30, "height": 20})),
+        ("appearance.assign", json!({"bodies": ["Body1"], "color": [40, 160, 90]})),
+    ]);
+    let cam = view::home_camera(&s);
+    let mut picture = |hatch: bool| {
+        s.execute("inspect.section", &json!({"plane": {"origin": [0, 15, 0], "normal": [0, -1, 0]}, "hatch": hatch})).unwrap();
+        c.rgba(&view::scene(&s, &cam), &cam, 300, 220).unwrap()
+    };
+    let solid = |img: &[u8]| pixels(img).filter(|p| p[..3].iter().zip([40u8, 160, 90]).all(|(a, b)| a.abs_diff(b) <= 3)).count();
+    let (hatched, plain) = (picture(true), picture(false));
+    assert!(solid(&plain) > 500, "plain cut: {} pixels in the body's colour", solid(&plain));
+    assert!(solid(&hatched) < 50, "the hatched cut is tinted: {}", solid(&hatched));
+}
+
 /// Surface analysis shades headless pictures as it shades the viewport: a box's flat faces in
 /// the curvature map's flat colour, zebra stripes in black and white, the accessibility analysis
 /// in reachable and blocked colours.

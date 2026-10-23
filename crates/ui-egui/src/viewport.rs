@@ -1701,6 +1701,15 @@ pub fn section_plane(app: &SolveApp) -> Option<(Vec3, Vec3)> {
     app.session.section
 }
 
+/// Whether the section [`section_plane`] shows has hatched cut faces: an open Section Analysis
+/// dialog's Hatch option, else the section's own.
+pub fn section_hatch(app: &SolveApp) -> bool {
+    match app.dialog.as_ref().map(|d| &d.kind) {
+        Some(crate::dialogs::Kind::Section { hatch, .. }) => *hatch,
+        _ => app.session.section_hatch,
+    }
+}
+
 /// Visible geometry belonging to a timeline feature. Body creators retain their whole-body
 /// feedback; modifiers use persistent face names, which survive later edits and placement.
 /// Do not expand these faces into surface patches: neighbouring faces can belong to another
@@ -2705,7 +2714,10 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             pv_slot: app.preview.slot.clone(),
             pv_hide: app.preview.rolled_back,
             clip: section_clip(app),
-            cap: t.section_cap.to_normalized_gamma_f32(),
+            cap: {
+                let [r, g, b, _] = t.section_cap.to_normalized_gamma_f32();
+                [r, g, b, if section_hatch(app) { 1.0 } else { 0.0 }]
+            },
             view_proj: proj.vp.to_f32(),
             back: proj.cam.back().to_f32(),
             size_px,

@@ -1523,9 +1523,15 @@ fn section_analysis() {
     let mut s = Session::default();
     run(&mut s, "solid.box", json!({"length": 40, "width": 30, "height": 20}));
     let (doc, undo) = (s.doc.clone(), s.undo.len());
-    run(&mut s, "inspect.section", json!({"plane": "XZ", "offset": 15}));
+    let r = run(&mut s, "inspect.section", json!({"plane": "XZ", "offset": 15}));
     let (o, n) = s.section.unwrap();
     assert!((o - n * 15.0).len() < 1e-12 && (n.y.abs() - 1.0).abs() < 1e-12);
+    // The cut faces are hatched unless `hatch` says otherwise.
+    assert!(s.section_hatch && r["section"]["hatch"] == true, "{r}");
+    let r = run(&mut s, "inspect.section", json!({"plane": "XZ", "offset": 15, "hatch": false}));
+    assert!(!s.section_hatch && r["section"]["hatch"] == false, "{r}");
+    run(&mut s, "inspect.section", json!({"plane": "XZ", "offset": 15}));
+    assert!(s.section_hatch);
     run(&mut s, "inspect.section", json!({"plane": {"origin": [0, 0, 5], "normal": [0, 0, 2]}, "flip": true}));
     let (o, n) = s.section.unwrap();
     assert!((o.z - 5.0).abs() < 1e-12 && (n.z + 1.0).abs() < 1e-12);

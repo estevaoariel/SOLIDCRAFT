@@ -1434,7 +1434,7 @@ pub fn set_section_visible(app: &mut SolveApp, visible: bool) {
     if visible {
         if let Some((origin, normal)) = app.tree.hidden_section {
             let plane = json!({"origin": [origin.x, origin.y, origin.z], "normal": [normal.x, normal.y, normal.z]});
-            if app.run("inspect.section", json!({ "plane": plane })).is_ok() {
+            if app.run("inspect.section", json!({"plane": plane, "hatch": app.session.section_hatch})).is_ok() {
                 app.tree.hidden_section = None;
             }
         }

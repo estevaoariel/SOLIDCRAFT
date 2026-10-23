@@ -278,6 +278,8 @@ crate::dialog_descriptor::dialog_descriptors! {
             Section {
                 offset: String,
                 flip: bool,
+                /// Hatch the cut faces.
+                hatch: bool,
             },
             /// Measure one or two picked items (vertices, edges, faces): the result of the last
             /// measurement and the items it was for.
@@ -698,9 +700,10 @@ impl Dialog {
                 vec![SelInput::new("Cylindrical face", FACES, false)],
             ),
             "material.assign" => Dialog::new(Kind::Material { index: 1 }, vec![SelInput::new("Bodies", BODIES, true)]),
-            "inspect.section" => {
-                Dialog::new(Kind::Section { offset: "0 mm".into(), flip: false }, vec![SelInput::new("Plane", PLANES | PLANAR_FACES, false)])
-            }
+            "inspect.section" => Dialog::new(
+                Kind::Section { offset: "0 mm".into(), flip: false, hatch: true },
+                vec![SelInput::new("Plane", PLANES | PLANAR_FACES, false)],
+            ),
             "inspect.measure" => Dialog::new(
                 Kind::Measure { result: None, of: Vec::new(), show: None },
                 vec![SelInput::new("Items", FACES | EDGES | selection::VERTICES | selection::CURVES | PROFILES, true)],
@@ -2948,10 +2951,10 @@ pub(crate) fn run_dialog(app: &mut SolveApp, d: &Dialog) -> Result<(), String> {
             }
         }
     }
-    if let Kind::Section { offset, flip } = &d.kind
+    if let Kind::Section { offset, flip, hatch } = &d.kind
         && let Some(cut) = app.session.section
     {
-        app.tree.section_dialog = Some(SectionDraft { offset: offset.clone(), flip: *flip, plane: sels(d, 0).to_vec(), cut });
+        app.tree.section_dialog = Some(SectionDraft { offset: offset.clone(), flip: *flip, hatch: *hatch, plane: sels(d, 0).to_vec(), cut });
     }
     Ok(())
 }
@@ -2964,7 +2967,7 @@ pub fn edit_section(app: &mut SolveApp) {
     let cut = app.session.section.or(app.tree.hidden_section);
     let Some(last) = app.tree.section_dialog.clone().filter(|last| cut.is_some_and(|c| same_cut(c, last.cut))) else { return };
     if let Some(d) = app.dialog.as_mut().filter(|d| matches!(d.kind, Kind::Section { .. })) {
-        d.kind = Kind::Section { offset: last.offset, flip: last.flip };
+        d.kind = Kind::Section { offset: last.offset, flip: last.flip, hatch: last.hatch };
         if let Some(plane) = d.inputs.first_mut() {
             plane.items = last.plane;
         }
@@ -2977,6 +2980,7 @@ pub fn edit_section(app: &mut SolveApp) {
 pub struct SectionDraft {
     pub offset: String,
     pub flip: bool,
+    pub hatch: bool,
     pub plane: Vec<Sel>,
     pub cut: (Vec3, Vec3),
 }
@@ -3569,7 +3573,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
             let name = s.doc.material_names().get(*index).cloned().unwrap_or_else(|| "Default".into());
             ("material.assign", json!({"bodies": sels(d, 0).body_names(), "material": name}))
         }
-        Kind::Section { offset, flip } => {
+        Kind::Section { offset, flip, hatch } => {
             need(0, "a plane or planar face")?;
             let plane = match sels(d, 0).first() {
                 Some(Sel::Plane { name }) if matches!(name.as_str(), "XY" | "XZ" | "YZ") => json!(name),
@@ -3587,7 +3591,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
                 }
                 _ => return Err("pick a plane or a planar face".into()),
             };
-            ("inspect.section", json!({"plane": plane, "offset": offset, "flip": flip}))
+            ("inspect.section", json!({"plane": plane, "offset": offset, "flip": flip, "hatch": hatch}))
         }
         Kind::Move { .. } => return Ok(vec![("solid.move".into(), crate::dialogs_move::params(app, d)?)]),
         Kind::Hole { diameter, depth, kind, cb_diameter, cb_depth, cs_diameter, cs_angle, opts } => {
