@@ -313,7 +313,7 @@ pub(crate) fn occurrence_at(s: &Session, p: Vec3) -> Option<u64> {
 }
 
 /// A joint origin from parameters: a named origin, or a snap given in world coordinates.
-fn origin_param(s: &Session, v: Option<&Value>, cmd: &str) -> Result<JointOrigin> {
+pub(crate) fn origin_param(s: &Session, v: Option<&Value>, cmd: &str) -> Result<JointOrigin> {
     let v = v.ok_or_else(|| bad(cmd, "joint origins `a` and `b` are required"))?;
     if let Value::String(name) = v {
         return s

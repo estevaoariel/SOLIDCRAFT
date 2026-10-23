@@ -740,6 +740,7 @@
   "cmd.motion_plot": "モーション スタディのグラフ",
   "cmd.motion_study": "モーション スタディ",
   "cmd.motion_trace": "モーション トレース",
+  "cmd.motion_trace_edit": "モーション トレースを編集",
   "cmd.motion_trace_keep": "モーション トレースを保持",
   "cmd.occurrence_copy": "貼り付け（インスタンス）",
   "cmd.occurrence_ground": "空間固定",
