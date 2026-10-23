@@ -1865,7 +1865,7 @@ fn analysis_legend(app: &SolveApp, painter: &egui::Painter, rect: Rect) {
     let h = pad * 2.0 + 18.0 + along.as_ref().map_or(0.0, |_| row) + row * rows.len() as f32;
     let r = Rect::from_min_size(pos2(rect.left() + 12.0, rect.bottom() - 12.0 - h), vec2(230.0, h));
     painter.rect(r, t.radius_md, t.overlay, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
-    crate::scenario::publish_handle("analysis:legend", r.center());
+    crate::scenario::publish_target("analysis:legend", r);
     let mut y = r.top() + pad;
     painter.text(pos2(r.left() + pad, y), Align2::LEFT_TOP, title, FontId::proportional(t.font_button), t.text);
     y += 18.0;
@@ -2726,8 +2726,9 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         });
         painter.add(egui_wgpu::Callback::new_paint_callback(rect, cb));
     }
-    analysis_legend(app, &painter, rect);
-    crate::frame_rate::paint(app, ui.ctx(), &painter, rect);
+    let overlay_rect = crate::shell::bottom_overlay_rect(app, rect);
+    analysis_legend(app, &painter, overlay_rect);
+    crate::frame_rate::paint(app, ui.ctx(), &painter, overlay_rect);
 
     // ---- interaction ----
     // A tool's click that moved on the way (#2448) clicks where the button is let go.
@@ -3184,7 +3185,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     crate::select_other::show(app, ui.ctx());
     axis_view(app, ui, rect);
     nav_bar(app, ui, rect);
-    agent_chip(app, ui, rect);
+    agent_chip(app, ui, overlay_rect);
     transient_messages(app, ui, rect);
 }
 
@@ -4051,12 +4052,10 @@ fn nav_bar(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect) {
     let menu_id = ui.id().with("nav_view_menu");
     let mut menu_open = ui.data(|d| d.get_temp::<bool>(menu_id)).unwrap_or(false);
     let w = items.len() as f32 * 30.0 + 10.0;
-    let bar = app
-        .viewport
-        .layout
-        .as_ref()
-        .map(|l| l.navigation)
-        .unwrap_or_else(|| Rect::from_center_size(pos2(rect.center().x, rect.bottom() - 22.0), vec2(w, 30.0)));
+    let bar = app.viewport.layout.as_ref().map(|l| l.navigation).unwrap_or_else(|| {
+        let available = crate::shell::bottom_overlay_rect(app, rect);
+        Rect::from_center_size(pos2(available.center().x, available.bottom() - 22.0), vec2(w, 30.0))
+    });
     crate::scenario::publish_rect("nav:outer", bar);
     let active = ui.rect_contains_pointer(bar)
         || ui.rect_contains_pointer(axis_rect(app, rect))
