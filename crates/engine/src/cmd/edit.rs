@@ -207,6 +207,15 @@ fn rename(s: &mut Session, p: &Value) -> Result<Value> {
     for f in doc.features.iter_mut() {
         f.kind.remap_refs(&sketches, &names);
     }
+    doc.rename_feature_keys(&old, name);
+    // The hidden list follows in `Session::refresh_from` (undo and redo too).
+    for sel in &mut s.selection {
+        if let Sel::Plane { name: n } = sel
+            && *n == old
+        {
+            *n = name.to_string();
+        }
+    }
     Ok(json!({"feature": id, "name": name}))
 }
 

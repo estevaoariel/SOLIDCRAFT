@@ -139,7 +139,7 @@ fn remap_plane(
     Ok(())
 }
 
-fn remap_link(
+pub(crate) fn remap_link(
     source: &mut solidcraft_sketch::LinkSource,
     ids: &BTreeMap<u64, u64>,
     names: &BTreeMap<String, String>,

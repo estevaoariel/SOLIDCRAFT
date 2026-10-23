@@ -664,6 +664,7 @@ impl Session {
     /// a body or a feature (or undid or redid such a rename) renames it in the model instead,
     /// which keeps every result and mesh (#3044).
     fn refresh_from(&mut self, previous: &Arc<Document>) {
+        self.follow_plane_renames(previous);
         if let Some((old, new)) = self.body_rename(previous)
             && self.model.rename_body(&self.doc, &old, &new)
         {
@@ -681,6 +682,27 @@ impl Session {
             return;
         }
         self.refresh();
+    }
+
+    /// A hidden construction plane stays hidden when the design renames it, or undo or redo
+    /// gives it another name (#4353): the hidden list keeps planes by name.
+    fn follow_plane_renames(&mut self, previous: &Document) {
+        if self.visibility.hidden_origin.is_empty() {
+            return;
+        }
+        let before: std::collections::HashMap<u64, &str> = previous
+            .features
+            .iter()
+            .filter(|f| matches!(f.kind, solidcraft_doc::FeatureKind::ConstructionPlane { .. }))
+            .map(|f| (f.id, f.name.as_str()))
+            .collect();
+        for f in &self.doc.features {
+            if let Some(old) = before.get(&f.id).filter(|old| **old != f.name) {
+                for n in self.visibility.hidden_origin.iter_mut().filter(|n| *n == old) {
+                    n.clone_from(&f.name);
+                }
+            }
+        }
     }
 
     /// The body rename that turned `previous` into the design (old name, new name), if that is

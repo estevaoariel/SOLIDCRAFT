@@ -821,3 +821,58 @@ fn renaming_a_feature_evaluates_nothing() {
     fresh.refresh();
     assert_eq!(failed(&s), failed(&fresh));
 }
+
+/// #4353: a construction plane is also named outside the features: by a sketch's projection of
+/// it, a canvas placed on it and the hidden list. Renaming it renames it there too, and undo
+/// takes the old name back.
+#[test]
+fn renaming_a_plane_keeps_its_projections_canvases_and_hidden_state() {
+    let mut s = Session::default();
+    run(&mut s, "construct.plane.offset", json!({"base": "XY", "offset": 20, "name": "Shelf"}));
+    run(&mut s, "construct.plane.offset", json!({"base": "YZ", "offset": -30, "name": "Guide"}));
+    run(&mut s, "browser.visibility", json!({"items": ["Guide"], "visible": false}));
+    let mut png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
+    png.extend([0, 0, 0, 4, 0, 0, 0, 2, 8, 6, 0, 0, 0, 0, 0, 0, 0]);
+    run(&mut s, "canvas.insert", json!({"data": solidcraft_doc::canvas::base64_encode(&png), "plane": "Shelf", "width": 40}));
+    run(&mut s, "sketch.create", json!({"plane": "XZ", "name": "Profile"}));
+    run(&mut s, "sketch.project", json!({"refs": [{"plane": "Shelf"}]}));
+    run(&mut s, "sketch.finish", json!({}));
+    let plane_link = |s: &Session| match &s.doc.find_feature("Profile").unwrap().kind {
+        solidcraft_doc::FeatureKind::Sketch { sketch, .. } => match &sketch.links[0].source {
+            solidcraft_sketch::LinkSource::Plane { name } => name.clone(),
+            other => panic!("{other:?}"),
+        },
+        other => panic!("{other:?}"),
+    };
+    let canvas_plane = |s: &Session| s.doc.canvases[0].plane.clone();
+    let projected_z = |s: &mut Session| {
+        let r = run(s, "sketch.inspect", json!({"sketch": "Profile"}));
+        r["points"].as_array().unwrap().iter().find(|p| p["link"] == "j1").unwrap()["world"][2].as_f64().unwrap()
+    };
+    let warnings = |s: &Session| s.model.results.iter().filter_map(|r| r.warning.clone()).collect::<Vec<_>>();
+    run(&mut s, "select.set", json!({"items": [{"type": "plane", "name": "Shelf"}]}));
+    run(&mut s, "timeline.rename", json!({"feature": "Shelf", "name": "Ledge"}));
+    run(&mut s, "timeline.rename", json!({"feature": "Guide", "name": "Rail"}));
+    assert_eq!(plane_link(&s), "Ledge");
+    assert_eq!(canvas_plane(&s), solidcraft_doc::PlaneRef::Construction { name: "Ledge".into() });
+    assert_eq!(s.visibility.hidden_origin, ["Rail"]);
+    assert_eq!(s.selection, [Sel::Plane { name: "Ledge".into() }]);
+    assert!(warnings(&s).is_empty(), "{:?}", warnings(&s));
+    // The projection follows the renamed plane.
+    run(&mut s, "timeline.edit", json!({"feature": "Ledge", "set": {"plane.distance": "35"}}));
+    assert!((projected_z(&mut s) - 35.0).abs() < 1e-9);
+    assert!(warnings(&s).is_empty(), "{:?}", warnings(&s));
+    // Undo takes the old name back everywhere in the design, and the sketch finds it again.
+    for _ in 0..3 {
+        run(&mut s, "edit.undo", json!({}));
+    }
+    assert_eq!(plane_link(&s), "Shelf");
+    assert_eq!(canvas_plane(&s), solidcraft_doc::PlaneRef::Construction { name: "Shelf".into() });
+    assert_eq!(s.visibility.hidden_origin, ["Guide"], "the hidden plane stays hidden");
+    assert!(warnings(&s).is_empty(), "{:?}", warnings(&s));
+    assert!((projected_z(&mut s) - 20.0).abs() < 1e-9);
+    run(&mut s, "edit.redo", json!({}));
+    run(&mut s, "edit.redo", json!({}));
+    assert_eq!(s.visibility.hidden_origin, ["Rail"]);
+    assert_eq!(plane_link(&s), "Ledge");
+}
