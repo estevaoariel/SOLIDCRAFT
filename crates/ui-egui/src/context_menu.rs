@@ -344,6 +344,13 @@ pub fn items(app: &SolveApp, target: &Target) -> Vec<Item> {
         Target::Sketch { id } => sketch_items(app, *id),
         Target::Feature { id } => vec![
             act("ui.editFeature", "Edit Feature", "edit").with(json!({"feature":id})).on(app.session.doc.feature(*id).is_some()),
+            act("ui.rename", "Rename", "rename").with(json!({"feature":id})).on(app.session.doc.feature(*id).is_some()),
+            act("ui.delete", "Delete", "delete").key("Del").with(json!({"items": [{"type": "feature", "id": id}]})).on(app
+                .session
+                .doc
+                .feature(*id)
+                .is_some()),
+            Item::sep(),
             act("ui.findTimeline", "Find in Timeline", "rollback").with(json!({"feature":id})).on(app.session.doc.feature(*id).is_some()),
         ],
         Target::Plane { id } => plane_items(app, *id),

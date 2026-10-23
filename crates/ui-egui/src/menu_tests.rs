@@ -402,6 +402,82 @@ fn delete_key_handles_every_kind_and_asks_about_dependents() {
 }
 
 #[test]
+fn browser_feature_menu_deletes_its_target_and_supports_undo() {
+    let mut app = SolveApp::new(Session::default(), Services::default());
+    for (name, x) in [("Keep", 0), ("Delete", 30)] {
+        app.run("solid.box", json!({"length":10,"width":10,"height":10,"corner":[x,0,0],"body_name":name})).unwrap();
+    }
+    let keep = app.session.doc.features[0].id;
+    let target = app.session.doc.features[1].id;
+    // A Browser context menu acts on its row, even when another feature is selected.
+    app.session.selection = vec![solidcraft_engine::Sel::Feature { id: keep }];
+    let saved = app.session.doc.to_json();
+    let undo = app.session.undo.len();
+    act(&mut app, &Target::Feature { id: target }, "Delete");
+    assert!(app.menu.confirm.is_none());
+    assert!(app.session.doc.feature(keep).is_some());
+    assert!(app.session.doc.feature(target).is_none());
+    assert_eq!(app.session.undo.len(), undo + 1);
+    app.run("edit.undo", json!({})).unwrap();
+    assert_eq!(app.session.doc.to_json(), saved);
+    app.run("edit.redo", json!({})).unwrap();
+    assert!(app.session.doc.feature(keep).is_some());
+    assert!(app.session.doc.feature(target).is_none());
+    assert!(!find(&context_menu::items(&app, &Target::Feature { id: target }), "Delete").enabled);
+    assert!(!find(&context_menu::items(&app, &Target::Feature { id: target }), "Rename").enabled);
+}
+
+#[test]
+fn browser_feature_menu_renames_its_target_and_supports_undo() {
+    let mut app = SolveApp::new(Session::default(), Services::default());
+    for x in [0, 30] {
+        app.run("solid.box", json!({"length":10,"width":10,"height":10,"corner":[x,0,0]})).unwrap();
+    }
+    let keep = app.session.doc.features[0].id;
+    let target = app.session.doc.features[1].id;
+    let keep_name = app.session.doc.feature(keep).unwrap().name.clone();
+    let target_name = app.session.doc.feature(target).unwrap().name.clone();
+    app.session.selection = vec![solidcraft_engine::Sel::Feature { id: keep }];
+    let saved = app.session.doc.to_json();
+    let undo = app.session.undo.len();
+    act(&mut app, &Target::Feature { id: target }, "Rename");
+    assert_eq!(app.menu.rename.as_ref().unwrap().text, target_name);
+    assert!(context_menu::finish_rename(&mut app, Some("Cancelled"), false));
+    assert_eq!(app.session.doc.to_json(), saved);
+    assert_eq!(app.session.undo.len(), undo);
+    act(&mut app, &Target::Feature { id: target }, "Rename");
+    assert!(context_menu::finish_rename(&mut app, Some("Renamed feature"), true));
+    assert!(app.menu.rename.is_none());
+    assert_eq!(app.session.doc.feature(target).unwrap().name, "Renamed feature");
+    assert_eq!(app.session.doc.feature(keep).unwrap().name, keep_name);
+    assert_eq!(app.session.undo.len(), undo + 1);
+    app.run("edit.undo", json!({})).unwrap();
+    assert_eq!(app.session.doc.to_json(), saved);
+    app.run("edit.redo", json!({})).unwrap();
+    assert_eq!(app.session.doc.feature(target).unwrap().name, "Renamed feature");
+}
+
+#[test]
+fn browser_feature_menu_confirms_dependent_changes_before_deleting() {
+    let mut app = sample_app();
+    let target = app.session.doc.features[1].id;
+    let saved = app.session.doc.to_json();
+    let undo = app.session.undo.len();
+    act(&mut app, &Target::Feature { id: target }, "Delete");
+    assert!(app.menu.confirm.is_some(), "later features depend on the plate's extrusion");
+    assert_eq!(app.session.doc.to_json(), saved);
+    assert_eq!(app.session.undo.len(), undo);
+    assert!(crate::delete::confirm(&mut app, false));
+    assert_eq!(app.session.doc.to_json(), saved);
+    act(&mut app, &Target::Feature { id: target }, "Delete");
+    assert!(crate::delete::confirm(&mut app, true));
+    assert!(app.session.doc.feature(target).is_none());
+    assert_eq!(app.session.undo.len(), undo + 1);
+    app.run("edit.undo", json!({})).unwrap();
+    assert_eq!(app.session.doc.to_json(), saved);
+}
+
+#[test]
 fn menu_delete_items_use_the_same_path() {
     let mut app = sample_app();
     let b = body(&app);
