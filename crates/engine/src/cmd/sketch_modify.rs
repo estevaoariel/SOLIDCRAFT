@@ -6,7 +6,7 @@ use std::f64::consts::TAU;
 use serde_json::{Value, json};
 use solidcraft_doc::ProfileSel;
 use solidcraft_geom::Vec2;
-use solidcraft_sketch::{ConstraintKind, Curve, CurveKind, Shape, Sketch, intersections};
+use solidcraft_sketch::{ConstraintKind, Curve, CurveKind, Shape, Sketch, intersections, intersections_within};
 
 use super::sketch::{add_c, edit, ids_of, solve_current};
 use super::{CommandSpec, in_sketch};
@@ -144,7 +144,10 @@ fn cut_points(sk: &Sketch, ci: usize) -> Vec<(f64, Vec2, usize)> {
             continue;
         }
         let Some(other) = sk.shape(oi) else { continue };
-        let mut pts = intersections(&sh, &other);
+        // A line or circle the solver made tangent to a circle touches it within rounding noise,
+        // and the exact roots miss it whenever the noise falls outside: the touch counts as a
+        // cut, as profile detection counts it (#588), or trim deletes the whole curve (#5074).
+        let mut pts = intersections_within(&sh, &other, TOL * 10.0);
         // Overlapping or touching ends that the analytic intersection misses (parallel lines).
         if let Shape::Line { a, b } = other {
             pts.extend([a, b]);
