@@ -197,6 +197,24 @@ impl App {
     }
 }
 
+/// Linux file dialogs match patterns by case, so each extension goes in as lower and upper
+/// case, plus FreeCAD's own mixed casing.
+fn case_variants(exts: &[&str]) -> Vec<String> {
+    let mut all: Vec<String> = Vec::new();
+    for e in exts {
+        let mut forms = vec![e.to_ascii_lowercase(), e.to_ascii_uppercase()];
+        if e.eq_ignore_ascii_case("fcstd") {
+            forms.push("FCStd".into());
+        }
+        for v in forms {
+            if !all.contains(&v) {
+                all.push(v);
+            }
+        }
+    }
+    all
+}
+
 fn services(cc: &eframe::CreationContext<'_>) -> Services {
     let parent = rfd::AsyncFileDialog::new().set_parent(cc);
     let open_parent = parent.clone();
@@ -208,48 +226,14 @@ fn services(cc: &eframe::CreationContext<'_>) -> Services {
             let mut dialog = open_parent.clone();
             if !first.is_empty() {
                 let label = first.iter().map(|e| e.to_uppercase()).collect::<Vec<_>>().join(", ");
-                let both: Vec<String> = first.iter().flat_map(|e| [e.to_lowercase(), e.to_uppercase()]).collect();
-                dialog = dialog.add_filter(label, &both);
+                dialog = dialog.add_filter(label, &case_variants(first));
             }
-            let future = dialog
-                .add_filter(
-                    "Designs, CAD files and meshes",
-                    &[
-                        io::DESIGN_EXT,
-                        io::LEGACY_DESIGN_EXT,
-                        "json",
-                        "step",
-                        "stp",
-                        "STEP",
-                        "STP",
-                        "igs",
-                        "iges",
-                        "IGS",
-                        "IGES",
-                        "FCStd",
-                        "fcstd",
-                        "3dm",
-                        "3DM",
-                        "3mf",
-                        "3MF",
-                        "stl",
-                        "STL",
-                        "obj",
-                        "OBJ",
-                        "glb",
-                        "GLB",
-                        "gltf",
-                        "GLTF",
-                    ],
-                )
-                .add_filter("SolidCraft design (container or JSON)", &[io::DESIGN_EXT, io::LEGACY_DESIGN_EXT, "json"])
-                .add_filter("STEP", &["step", "stp", "STEP", "STP"])
-                .add_filter("IGES", &["igs", "iges", "IGS", "IGES"])
-                .add_filter("FreeCAD and Rhino", &["FCStd", "fcstd", "3dm", "3DM"])
-                .add_filter("Mesh (3MF, STL, OBJ, glTF)", &["3mf", "3MF", "stl", "STL", "obj", "OBJ", "glb", "GLB", "gltf", "GLTF"])
-                .add_filter("Sketch drawings (DXF, SVG)", &["dxf", "DXF", "svg", "SVG"])
-                .add_filter("All files", &["*"])
-                .pick_file();
+            // The groups come from the format registry, so a new format joins this dialog by itself.
+            dialog = dialog.add_filter("Designs, CAD files and meshes", &case_variants(&io::formats::open_extensions(true)));
+            for (label, exts) in io::formats::import_filters(true) {
+                dialog = dialog.add_filter(label, &case_variants(&exts));
+            }
+            let future = dialog.add_filter("All files", &["*"]).pick_file();
             Box::pin(async move { future.await.map(|p| p.path().to_string_lossy().into_owned()) })
         })),
         // One kind of file (the agent chat's attachments): only the types it names, as given and in

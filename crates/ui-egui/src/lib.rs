@@ -955,7 +955,7 @@ impl SolveApp {
             // inserted the way Insert STEP or Insert Mesh would (#1240).
             self.pick_open(|app, path| {
                 let Some(path) = path else { return };
-                if is_design_path(&path) {
+                if solidcraft_engine::io::is_design_path(&path) {
                     if app.run("component.insert_design", json!({ "path": path })).is_ok() {
                         app.fit_view();
                     }
@@ -1894,10 +1894,3 @@ pub fn now_ms() -> f64 {
 mod picker_test_support;
 #[cfg(test)]
 mod test_support;
-
-/// A SolidCraft design file (`.solidcraft`, or a design saved as JSON), as opposed to a STEP or
-/// mesh file.
-fn is_design_path(path: &str) -> bool {
-    let ext = std::path::Path::new(path).extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
-    matches!(ext.as_str(), "solidcraft" | "solvecraft" | "json")
-}
