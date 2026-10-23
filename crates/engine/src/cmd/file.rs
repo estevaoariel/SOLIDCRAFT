@@ -20,7 +20,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("open")
         .key("Ctrl+O")
         .noundo()
-        .params("path: .solidcraft design, or a .step/.stp/.igs/.fcstd/.3dm/.3mf/.stl/.obj/.glb/.gltf file (STEP, IGES, FreeCAD, Rhino, 3MF, STL, OBJ or glTF; opens as a new design holding the file as a component named after it, as file.insert_step and file.insert_mesh make); up?: z|y for a STEP, IGES, FreeCAD, Rhino or glTF file (see file.insert_step and file.insert_mesh); names?: auto|solid|product|instance for a STEP, IGES, FreeCAD or Rhino file (see file.insert_step)"),
+        .params("path: .solidcraft design, or a .step/.stp/.igs/.fcstd/.3dm/.3mf/.stl/.obj/.glb/.gltf file (STEP, IGES, FreeCAD, Rhino, 3MF, STL, OBJ or glTF; opens as a new design holding the file as a component named after it, as file.insert_step and file.insert_mesh make); a .dxf or .svg file (a sketch drawing; opens as a new design holding the drawing as a sketch on the XY plane); up?: z|y for a STEP, IGES, FreeCAD, Rhino or glTF file (see file.insert_step and file.insert_mesh); names?: auto|solid|product|instance for a STEP, IGES, FreeCAD or Rhino file (see file.insert_step)"),
     CommandSpec::new("file.insert_step", "Insert STEP", insert_step)
         .at("SOLID", "INSERT")
         .icon("import")
@@ -284,6 +284,21 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
             }
         }
         return Ok(out);
+    }
+    if solidcraft_io::is_drawing_path(path) {
+        // A new, unsaved design holding the drawing as a sketch.
+        let stem = std::path::Path::new(path).file_stem().map(|x| x.to_string_lossy().to_string()).unwrap_or_else(|| "Untitled".into());
+        let mut fresh = Session::new(Document::new(&stem));
+        let cmd = if solidcraft_io::is_svg_path(path) { "sketch.insert_svg" } else { "sketch.insert_dxf" };
+        let r = fresh.execute(cmd, &json!({"path": path})).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+        // The drawing is a sketch of the design, not one being edited.
+        fresh.execute("sketch.finish", &json!({})).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+        fresh.undo.clear();
+        s.replace_design(fresh);
+        let errors = s.model.results.iter().filter(|r| r.error.is_some()).count();
+        return Ok(
+            json!({"path": path, "features": s.doc.features.len(), "errors": errors, "sketch": r["sketch"], "curves": r["curves"], "texts": r["texts"]}),
+        );
     }
     let (mut doc, saved) = solidcraft_io::read_design_file(path, s.open_preview.take()).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
     if let Some(stem) = default_name_for(&doc.name, path) {

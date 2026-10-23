@@ -1212,6 +1212,25 @@ fn join_onto_a_finely_faceted_import() {
     assert!(rel(volume(&mut d), prism + 10.0 * 10.0 * 15.0) < 1e-6, "{}", volume(&mut d));
 }
 
+/// #4843: a DXF file opens as the sketch it holds, not as a broken design.
+#[test]
+fn a_dxf_file_opens_as_a_sketch() {
+    let mut s = Session::default();
+    run(&mut s, "sketch.create", json!({"plane": "XY"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [30, 20]}));
+    let dxf = run(&mut s, "sketch.export_dxf", json!({}))["dxf"].as_str().unwrap().to_string();
+    let dir = std::env::temp_dir().join(format!("solidcraft-open-dxf-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("drawing.dxf");
+    std::fs::write(&path, dxf).unwrap();
+    let mut opened = Session::default();
+    run(&mut opened, "doc.open", json!({"path": path.to_string_lossy()}));
+    let st = opened.model.state();
+    assert_eq!(st.sketches.len(), 1, "the drawing is a sketch of its own");
+    assert_eq!(st.sketches[0].sketch.curves.len(), 4, "the rectangle's four lines");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Shell an imported body; insert STEP into an existing design; extension case; bad files.
 #[test]
 fn step_insert_shell_and_errors() {
