@@ -589,27 +589,23 @@ pub(crate) fn value_box_with(
 ) -> Option<egui::Rect> {
     let t = Tokens::get();
     let mut field = None;
-    Container::new(ui.ctx(), Surface::Canvas).area(area).fixed_pos(at).pivot(pivot).order(egui::Order::Foreground).show(
-        ui.ctx(),
-        |ui| {
-            Container::popup_frame(ui.style()).inner_margin(egui::Margin::symmetric(6, 3)).show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(crate::i18n::tr_label(label)).color(t.text_dim).size(crate::theme::Tokens::get().font_caption));
-                    let r = crate::ui_kit::canvas_value_field(ui, id, value);
-                    crate::params_dialog::complete(ui, &r, value);
-                    if select_all {
-                        r.request_focus();
-                        let n = value.chars().count();
-                        let mut st = egui::text_edit::TextEditState::load(ui.ctx(), id).unwrap_or_default();
-                        st.cursor
-                            .set_char_range(Some(egui::text_selection::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(n))));
-                        st.store(ui.ctx(), id);
-                    }
-                    field = Some(r.rect);
-                });
+    Container::new(ui.ctx(), Surface::Canvas).area(area).fixed_pos(at).pivot(pivot).order(egui::Order::Foreground).show(ui.ctx(), |ui| {
+        Container::popup_frame(ui.style()).inner_margin(egui::Margin::symmetric(6, 3)).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(crate::i18n::tr_label(label)).color(t.text_dim).size(crate::theme::Tokens::get().font_caption));
+                let r = crate::ui_kit::canvas_value_field(ui, id, value);
+                crate::params_dialog::complete(ui, &r, value);
+                if select_all {
+                    r.request_focus();
+                    let n = value.chars().count();
+                    let mut st = egui::text_edit::TextEditState::load(ui.ctx(), id).unwrap_or_default();
+                    st.cursor.set_char_range(Some(egui::text_selection::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(n))));
+                    st.store(ui.ctx(), id);
+                }
+                field = Some(r.rect);
             });
-        },
-    );
+        });
+    });
     field
 }
 
