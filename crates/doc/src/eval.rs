@@ -5289,6 +5289,23 @@ fn path_at(segs: &[kernel::PathSeg], d: f64) -> (Vec3, Vec3) {
     (Vec3::ZERO, Vec3::X)
 }
 
+/// Whether a copy has no material to cut in any of its eligible targets.
+fn copy_misses(st: &ModelState, f: &Feature, targets: &[String], tools: &[Traced]) -> bool {
+    let targets = if targets.is_empty() { &f.participants } else { targets };
+    let all = targets.len() == 1 && targets.first().is_some_and(|t| t == "*");
+    st.bodies
+        .iter()
+        .filter(|b| all || if targets.is_empty() { b.component == f.component || b.feature == f.id } else { targets.contains(&b.name) })
+        .all(|b| {
+            tools.iter().all(|t| {
+                // A diagnostic must neither reject an otherwise valid cut nor add its own
+                // retries to the feature's report. An inconclusive probe is not a miss.
+                let (intersection, _) = kernel::capture_boolean_diagnostics(|| kernel::boolean(&b.body, &t.body, BoolOp::Intersect));
+                matches!(intersection, Ok(None))
+            })
+        })
+}
+
 /// Apply transformed copies of the tools of `features` (patterns, mirrors).
 fn replay(
     doc: &Document,
@@ -5312,6 +5329,7 @@ fn replay(
             format!("{list} suppressed and not copied")
         });
     }
+    let (mut missed, mut total) = (0usize, 0usize);
     for name in features.iter().filter(|n| !suppressed.contains(n)) {
         // A sketch and its extrude often share a name; the feature that makes geometry wins.
         let src = doc
@@ -5359,6 +5377,7 @@ fn replay(
         let present: Vec<String> = targets.iter().filter(|t| st.bodies.iter().any(|b| &b.name == *t)).cloned().collect();
         let targets = if present.is_empty() { targets } else { present };
         let mut copies = Vec::new();
+        let mut instances = Vec::with_capacity(mats.len());
         if let FeatureKind::Hole { diameter, depth, hole, to, .. } = &src.kind {
             // A hole is drilled again at each copy of its spot (found on the surface there), so
             // a blind hole's depth counts from the face at the copy, not from the bottom of the
@@ -5366,6 +5385,7 @@ fn replay(
             let (spots, dir) = hole_spots_raw(vals, st, src)?;
             for (k, m) in mats.iter().enumerate() {
                 let d = crate::apply_vector(m, dir).normalized().ok_or_else(|| DocError::Invalid("hole direction".into()))?;
+                let start = copies.len();
                 for p in &spots {
                     let at = hole_on_surface(st, crate::apply_point(m, *p), d, hole_scope(src));
                     let to = to.map(|t| crate::apply_point(m, t.0));
@@ -5377,13 +5397,24 @@ fn replay(
                             .map(|t| Traced { lineage: t.lineage.map(|l| l.copied(src.id, k + 1)), body: t.body }),
                     );
                 }
+                instances.push(start..copies.len());
             }
         } else {
             // Each copy's faces are named as the source feature's, with the instance.
             let tools = feature_tools_with_constructor(doc, vals, src, st, &mut None)?;
             for (k, m) in mats.iter().enumerate() {
+                let start = copies.len();
                 for t in &tools {
                     copies.push(t.copied(kernel::transform_matrix(&t.body, *m)?, src.id, k + 1));
+                }
+                instances.push(start..copies.len());
+            }
+        }
+        if op == Operation::Cut {
+            for instance in instances {
+                if let Some(tools) = copies.get(instance) {
+                    total += 1;
+                    missed += usize::from(copy_misses(st, f, &targets, tools));
                 }
             }
         }
@@ -5396,6 +5427,9 @@ fn replay(
             named.body_names = f.body_names.iter().skip(start).cloned().collect();
             apply_traced(st, &named, copies, op, &targets)?;
         }
+    }
+    if missed > 0 {
+        append_warning(warning, format!("{missed} of {total} cut copies remove no material"));
     }
     Ok(())
 }

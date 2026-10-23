@@ -42,6 +42,65 @@ fn feature_pattern_plate() -> Session {
 }
 
 #[test]
+fn rectangular_hole_pattern_warns_for_copies_that_miss_and_clears_after_edit() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length":40,"width":30,"height":10,"corner":[0,0,0],"body_name":"Plate"}));
+    run(&mut s, "solid.hole", json!({"position":[10,15,10],"diameter":5,"depth":10,"name":"Hole1"}));
+    let before = volume(&mut s);
+    let reply = run(
+        &mut s,
+        "solid.pattern.rectangular",
+        json!({"features":["Hole1"],"dir1":[1,0,0],"count1":2,"spacing1":45,
+            "dir2":[0,0,1],"count2":2,"spacing2":5,"name":"Pattern"}),
+    );
+    let id = reply["feature"].as_u64().unwrap();
+    let check = |session: &Session| {
+        let result = session.model.result(id).unwrap();
+        assert!(result.error.is_none(), "{result:?}");
+        assert_eq!(result.warning.as_deref(), Some("3 of 3 cut copies remove no material"));
+    };
+    check(&s);
+    assert_eq!(reply["warning"], "3 of 3 cut copies remove no material");
+    // The remaining copy lands in the existing through hole, so the plate stays intact.
+    assert!(rel(volume(&mut s), before) < 1e-8);
+    let reopened = Session::new(solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap());
+    check(&reopened);
+    run(
+        &mut s,
+        "timeline.redefine",
+        json!({"feature":"Pattern","command":"solid.pattern.rectangular","params":{
+            "features":["Hole1"],"dir1":[1,0,0],"count1":2,"spacing1":45,
+            "dir2":[0,1,0],"count2":2,"spacing2":8}}),
+    );
+    assert_eq!(s.model.result(id).unwrap().warning.as_deref(), Some("2 of 3 cut copies remove no material"));
+    assert!(rel(volume(&mut s), 12000.0 - 2.0 * PI * 2.5_f64.powi(2) * 10.0) < 1e-3);
+    run(
+        &mut s,
+        "timeline.redefine",
+        json!({"feature":"Pattern","command":"solid.pattern.rectangular","params":{
+            "features":["Hole1"],"dir1":[1,0,0],"count1":2,"spacing1":15,
+            "dir2":[0,1,0],"count2":2,"spacing2":8}}),
+    );
+    assert!(s.model.result(id).unwrap().warning.is_none());
+    assert!(rel(volume(&mut s), 12000.0 - 4.0 * PI * 2.5_f64.powi(2) * 10.0) < 1e-3);
+}
+
+#[test]
+fn rectangular_cut_pattern_counts_only_target_contacts_and_keeps_landing_copies() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length":40,"width":30,"height":10,"corner":[0,0,0],"body_name":"Plate"}));
+    run(&mut s, "solid.box", json!({"length":40,"width":30,"height":10,"corner":[45,0,0],"operation":"new","body_name":"Neighbor"}));
+    run(&mut s, "solid.cylinder", json!({"radius":2,"height":20,"base":[10,15,-5],"operation":"cut","targets":["Plate"],"name":"Cut"}));
+    let reply = run(&mut s, "solid.pattern.rectangular", json!({"features":["Cut"],"dir1":[1,0,0],"count1":4,"spacing1":20}));
+    assert_eq!(reply["warning"], "2 of 3 cut copies remove no material");
+    let state = s.world_state();
+    let plate = &state.body("Plate").unwrap().body;
+    assert!(!plate.contains(solidcraft_geom::Vec3::new(30., 15., 5.)));
+    assert!(state.body("Neighbor").unwrap().body.contains(solidcraft_geom::Vec3::new(50., 15., 5.)));
+    assert!(rel(volume(&mut s), 24000.0 - 2.0 * PI * 4.0 * 10.0) < 1e-3);
+}
+
+#[test]
 fn feature_rectangular_center_flip_and_oblique_direction_keep_source_and_recompute() {
     use solidcraft_geom::Vec3;
     for flipped in [false, true] {
