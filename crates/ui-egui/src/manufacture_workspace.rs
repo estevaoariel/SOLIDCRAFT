@@ -16,6 +16,7 @@ pub enum MfgTab {
     Contour,
     Drill,
     HoleRecognition,
+    ThreeD,
 }
 
 /// Manufacture process family for a new setup.
@@ -49,6 +50,7 @@ pub struct State {
     pub contour_dialog: Option<crate::manufacture_contour::ContourDialogState>,
     pub drill_dialog: Option<crate::manufacture_drill::DrillDialogState>,
     pub hole_rec_dialog: Option<crate::manufacture_hole_recognition::HoleRecDialogState>,
+    pub threed_dialog: Option<crate::manufacture_3d::ThreedDialogState>,
 }
 
 pub fn active(app: &SolveApp) -> bool {
@@ -93,6 +95,7 @@ pub fn close_floating_dialogs(app: &mut SolveApp) {
     app.manufacture_workspace.contour_dialog = None;
     app.manufacture_workspace.drill_dialog = None;
     app.manufacture_workspace.hole_rec_dialog = None;
+    app.manufacture_workspace.threed_dialog = None;
     app.ui.pick_bodies = false;
 }
 
@@ -146,6 +149,7 @@ pub fn start_hook(app: &mut SolveApp, id: &str) -> bool {
             crate::manufacture_hole_recognition::open_new(app);
             false
         }
+        id if id.starts_with("manufacture.3d.") => crate::manufacture_3d::open_from_command(app, id),
         id if id.starts_with("manufacture.2d.") => crate::manufacture_2d::open_from_command(app, id),
         _ => true,
     }
@@ -178,6 +182,7 @@ pub fn panel(app: &mut SolveApp, ui: &mut egui::Ui) {
     crate::manufacture_contour::show_dialogs(app, ui);
     crate::manufacture_drill::show_dialogs(app, ui);
     crate::manufacture_hole_recognition::show_dialogs(app, ui);
+    crate::manufacture_3d::show_dialogs(app, ui);
 }
 
 pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {

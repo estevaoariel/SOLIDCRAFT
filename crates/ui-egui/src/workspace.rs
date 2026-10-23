@@ -285,6 +285,19 @@ pub const SECTIONS: &[Section] = &[
     Section { tab: "MANUFACTURE", panel: "DRILLING", promoted: 2, ids: &["manufacture.drill", "manufacture.hole_recognition"] },
     Section {
         tab: "MANUFACTURE",
+        panel: "3D",
+        promoted: 4,
+        ids: &[
+            "manufacture.3d.adaptive",
+            "manufacture.3d.parallel",
+            "manufacture.3d.scallop",
+            "manufacture.3d.steep",
+            "manufacture.3d.contour",
+            "manufacture.3d.flat",
+        ],
+    },
+    Section {
+        tab: "MANUFACTURE",
         panel: "INSPECT",
         promoted: 2,
         ids: &[
@@ -339,6 +352,12 @@ pub const RIBBON_LABELS: &[(&str, &str)] = &[
     ("manufacture.2d.slot", "Slot"),
     ("manufacture.2d.thread", "Thread"),
     ("manufacture.2d.trace", "Trace"),
+    ("manufacture.3d.adaptive", "Adaptive"),
+    ("manufacture.3d.contour", "3D Contour"),
+    ("manufacture.3d.flat", "Flat"),
+    ("manufacture.3d.parallel", "Parallel"),
+    ("manufacture.3d.scallop", "Scallop"),
+    ("manufacture.3d.steep", "Steep"),
     ("manufacture.drill", "Drill"),
     ("manufacture.hole_recognition", "Hole Rec."),
     ("manufacture.setup.new", "New Setup"),

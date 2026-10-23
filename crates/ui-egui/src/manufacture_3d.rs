@@ -1,7 +1,5 @@
-//! 3D milling dialogs (Tool / Geometry / Heights / Passes / Linking)
-//! for Adaptive Roughing, Offset Roughing, Steep and Shallow, Flat, Parallel, Scallop,
-//! Contour, Ramp, Pencil, Horizontal, Spiral, Radial, Morphed Spiral, Project, Blend,
-//! Morph, Corner, Flow, Deburr, Geodesic, and 3+2 Roughing.
+//! 3D milling dialogs (Tool / Geometry / Heights / Passes / Linking).
+//! Document writes go through manufacture.settings.set; not companion HTTP or GPL CAM.
 
 use egui::RichText;
 use serde_json::json;
@@ -10,7 +8,7 @@ use solidcraft_manufacture::{
     SidewaysCompensation, ThreedOperation, ThreedStrategy, Tool,
 };
 
-use crate::{SolveApp, viewport};
+use crate::{viewport, SolveApp};
 
 const HEIGHT_FROM: &[HeightFrom] = &[
     HeightFrom::ClearanceHeight,
@@ -49,36 +47,72 @@ pub fn open(app: &mut SolveApp, setup_name: &str, op_index: usize) {
         return;
     };
     app.manufacture_workspace.selected_op = Some(op_index);
+    app.manufacture_workspace.tool_library_dialog = None;
+    app.manufacture_workspace.edit_tool_dialog = None;
+    app.manufacture_workspace.manage_stub_dialog = None;
+    app.manufacture_workspace.setup_dialog = None;
     app.manufacture_workspace.drill_dialog = None;
     app.manufacture_workspace.contour_dialog = None;
     app.manufacture_workspace.twod_dialog = None;
     app.manufacture_workspace.hole_rec_dialog = None;
-    app.manufacture_workspace.multiaxis_dialog = None;
     app.manufacture_workspace.threed_dialog =
         Some(ThreedDialogState { setup_name: setup_name.to_string(), op_index, draft: op, tab: ThreedTab::Tool });
-    app.manufacture_workspace.tab = crate::manufacture_workspace::MfgTab::Operations;
+    app.manufacture_workspace.tab = crate::manufacture_workspace::MfgTab::ThreeD;
 }
 
-pub fn show_dialog(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
+/// Create a 3D op with `strategy` on the active setup and open its inspector.
+pub fn open_new(app: &mut SolveApp, strategy: ThreedStrategy) {
+    crate::manufacture_workspace::ensure_setup(app);
+    let setup_name = app.manufacture_workspace.active_setup.clone();
+    if setup_name.is_empty() {
+        return;
+    }
+    let Some(mut setup) = app.session.doc.manufacture.setups.get(&setup_name).cloned() else {
+        return;
+    };
+    setup.operations.push(Operation::Threed(ThreedOperation::with_strategy(strategy)));
+    let op_index = setup.operations.len() - 1;
+    match serde_json::to_value(&setup.operations) {
+        Ok(ops) => match app.run("manufacture.settings.set", json!({"name": setup_name, "set": {"operations": ops}})) {
+            Ok(_) => {
+                app.manufacture_workspace.revision = u64::MAX;
+                app.manufacture_workspace.last_issues = app.session.doc.manufacture.issues();
+                open(app, &setup_name, op_index);
+            }
+            Err(e) => app.set_status(e, true),
+        },
+        Err(e) => app.set_status(e.to_string(), true),
+    }
+}
+
+/// Return false when `id` is a 3D milling command this panel handles.
+pub fn open_from_command(app: &mut SolveApp, id: &str) -> bool {
+    let strategy = match id {
+        "manufacture.3d.adaptive" => ThreedStrategy::AdaptiveRoughing,
+        "manufacture.3d.parallel" => ThreedStrategy::Parallel,
+        "manufacture.3d.scallop" => ThreedStrategy::Scallop,
+        "manufacture.3d.steep" => ThreedStrategy::SteepAndShallow,
+        "manufacture.3d.contour" => ThreedStrategy::Contour,
+        "manufacture.3d.flat" => ThreedStrategy::Flat,
+        _ => return true,
+    };
+    open_new(app, strategy);
+    false
+}
+
+pub fn show_dialogs(app: &mut SolveApp, ui: &mut egui::Ui) {
+    let _ = ui;
     let Some(state) = app.manufacture_workspace.threed_dialog.clone() else {
-        return false;
+        return;
     };
     let tools: Vec<Tool> = app.session.doc.manufacture.setups.get(&state.setup_name).map(|s| s.tools.clone()).unwrap_or_default();
 
-    let mut open = true;
-    let mut commit = false;
-    let mut cancel = false;
     let mut draft = state.draft.clone();
     let mut tab = state.tab;
     let title = dialog_title(&draft);
 
-    crate::frame::window(ui.ctx(), title, crate::frame::Width::Normal)
-        .id(egui::Id::new("mfg_3d_dialog"))
-        .open(&mut open)
-        .collapsible(false)
-        .resizable(true)
-        .default_width(360.0)
-        .show(ui.ctx(), |ui| {
+    let (closed, action) =
+        crate::ui_kit::Window::new(egui::Id::new("mfg_3d_dialog"), "settings", &title).fields().cards(1.5).show(ui.ctx(), true, |ui| {
             ui.horizontal(|ui| {
                 for (v, l) in [
                     (ThreedTab::Tool, "Tool"),
@@ -101,37 +135,31 @@ pub fn show_dialog(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
                 ThreedTab::Passes => passes_tab(ui, &mut draft),
                 ThreedTab::Linking => linking_tab(ui, &mut draft.linking),
             });
-            ui.separator();
-            ui.horizontal(|ui| {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("OK").clicked() {
-                        commit = true;
-                    }
-                    if ui.button("Cancel").clicked() {
-                        cancel = true;
-                    }
-                });
-            });
         });
+    let commit = action == crate::ui_kit::Action::Ok;
+    let cancel = closed || action == crate::ui_kit::Action::Cancel;
 
-    if !open || cancel {
+    if cancel {
         app.manufacture_workspace.threed_dialog = None;
-        return false;
+        return;
     }
     if commit && save(app, &state.setup_name, state.op_index, draft.clone()) {
         app.manufacture_workspace.threed_dialog = None;
-        return false;
+        return;
     }
     if let Some(d) = &mut app.manufacture_workspace.threed_dialog {
         d.draft = draft;
         d.tab = tab;
     }
-    true
 }
 
 fn dialog_title(draft: &ThreedOperation) -> String {
     let kind = draft.strategy.label().to_uppercase();
-    if draft.name.is_empty() || draft.name == draft.strategy.label() { kind } else { format!("{kind} : {}", draft.name.to_uppercase()) }
+    if draft.name.is_empty() || draft.name == draft.strategy.label() {
+        kind
+    } else {
+        format!("{kind} : {}", draft.name.to_uppercase())
+    }
 }
 
 fn tool_tab(ui: &mut egui::Ui, draft: &mut ThreedOperation, tools: &[Tool]) {
@@ -175,9 +203,42 @@ fn tool_tab(ui: &mut egui::Ui, draft: &mut ThreedOperation, tools: &[Tool]) {
     });
 }
 
+const THREED_STRATEGIES: &[ThreedStrategy] = &[
+    ThreedStrategy::AdaptiveRoughing,
+    ThreedStrategy::OffsetRoughing,
+    ThreedStrategy::ThreePlusTwoRoughing,
+    ThreedStrategy::SteepAndShallow,
+    ThreedStrategy::Flat,
+    ThreedStrategy::Parallel,
+    ThreedStrategy::Scallop,
+    ThreedStrategy::Contour,
+    ThreedStrategy::Ramp,
+    ThreedStrategy::Pencil,
+    ThreedStrategy::Horizontal,
+    ThreedStrategy::Spiral,
+    ThreedStrategy::Radial,
+    ThreedStrategy::MorphedSpiral,
+    ThreedStrategy::Project,
+    ThreedStrategy::Blend,
+    ThreedStrategy::Morph,
+    ThreedStrategy::Corner,
+    ThreedStrategy::Flow,
+    ThreedStrategy::Deburr,
+    ThreedStrategy::Geodesic,
+];
+
 fn geometry_tab(ui: &mut egui::Ui, draft: &mut ThreedOperation) {
     ui.heading("Geometry");
-    ui.label(format!("Strategy: {}", draft.strategy.label()));
+    ui.horizontal(|ui| {
+        ui.label("Strategy");
+        egui::ComboBox::from_id_salt("3d_strategy").selected_text(draft.strategy.label()).show_ui(ui, |ui| {
+            for s in THREED_STRATEGIES {
+                if ui.selectable_label(draft.strategy == *s, s.label()).clicked() {
+                    draft.strategy = *s;
+                }
+            }
+        });
+    });
     let n = if draft.targets.face_sample_points.is_empty() { draft.targets.drill_points.len() } else { draft.targets.face_sample_points.len() };
     ui.label(format!("{n} selection(s)"));
 
@@ -497,7 +558,7 @@ fn save(app: &mut SolveApp, setup_name: &str, op_index: usize, draft: ThreedOper
     }
 }
 
-pub fn paint_overlays(app: &SolveApp, ui: &egui::Ui) {
+pub fn paint_overlays(app: &SolveApp, painter: &egui::Painter, proj: &viewport::Proj) {
     let Some(state) = &app.manufacture_workspace.threed_dialog else {
         return;
     };
@@ -509,12 +570,6 @@ pub fn paint_overlays(app: &SolveApp, ui: &egui::Ui) {
     if pts.is_empty() {
         return;
     }
-    let rect = match app.viewport.rect {
-        Some(r) if r.area() > 0.0 => r,
-        _ => return,
-    };
-    let proj = viewport::projection(app, rect);
-    let painter = ui.painter();
     let zs = state.draft.height_zs(0.0);
     let color = egui::Color32::from_rgb(120, 200, 90);
     let mut screen = Vec::new();

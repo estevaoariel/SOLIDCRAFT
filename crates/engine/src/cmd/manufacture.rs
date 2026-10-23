@@ -110,6 +110,42 @@ pub static COMMANDS: &[CommandSpec] = &[
         .doc_only()
         .at("MANUFACTURE", "2D")
         .params("Opens a 2D Chamfer operation on the active Manufacture setup. Document writes go through manufacture.settings.set."),
+    CommandSpec::new("manufacture.3d.adaptive", "Adaptive", twod_open)
+        .icon("settings")
+        .noundo()
+        .doc_only()
+        .at("MANUFACTURE", "3D")
+        .params("Opens 3D Adaptive Roughing on the active Manufacture setup. Document writes go through manufacture.settings.set."),
+    CommandSpec::new("manufacture.3d.parallel", "Parallel", twod_open)
+        .icon("settings")
+        .noundo()
+        .doc_only()
+        .at("MANUFACTURE", "3D")
+        .params("Opens a 3D Parallel operation on the active Manufacture setup. Document writes go through manufacture.settings.set."),
+    CommandSpec::new("manufacture.3d.scallop", "Scallop", twod_open)
+        .icon("settings")
+        .noundo()
+        .doc_only()
+        .at("MANUFACTURE", "3D")
+        .params("Opens a 3D Scallop operation on the active Manufacture setup. Document writes go through manufacture.settings.set."),
+    CommandSpec::new("manufacture.3d.steep", "Steep", twod_open)
+        .icon("settings")
+        .noundo()
+        .doc_only()
+        .at("MANUFACTURE", "3D")
+        .params("Opens Steep and Shallow on the active Manufacture setup. Document writes go through manufacture.settings.set."),
+    CommandSpec::new("manufacture.3d.contour", "3D Contour", twod_open)
+        .icon("settings")
+        .noundo()
+        .doc_only()
+        .at("MANUFACTURE", "3D")
+        .params("Opens a 3D Contour operation on the active Manufacture setup. Document writes go through manufacture.settings.set."),
+    CommandSpec::new("manufacture.3d.flat", "Flat", twod_open)
+        .icon("settings")
+        .noundo()
+        .doc_only()
+        .at("MANUFACTURE", "3D")
+        .params("Opens a 3D Flat operation on the active Manufacture setup. Document writes go through manufacture.settings.set."),
 ];
 
 // ── Settings get ───────────────────────────────────────────────────────────────
@@ -287,6 +323,24 @@ mod tests {
             "manufacture.2d.circular",
             "manufacture.2d.engrave",
             "manufacture.2d.chamfer",
+        ];
+        for id in IDS {
+            let mut s = Session::default();
+            let r = s.execute(id, &json!({})).unwrap();
+            assert_eq!(r["opened"], true, "{id}");
+            assert!(s.doc.manufacture.setups.is_empty(), "{id}");
+        }
+    }
+
+    #[test]
+    fn threed_commands_are_display_only() {
+        const IDS: &[&str] = &[
+            "manufacture.3d.adaptive",
+            "manufacture.3d.parallel",
+            "manufacture.3d.scallop",
+            "manufacture.3d.steep",
+            "manufacture.3d.contour",
+            "manufacture.3d.flat",
         ];
         for id in IDS {
             let mut s = Session::default();
