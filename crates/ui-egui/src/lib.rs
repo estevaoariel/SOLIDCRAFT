@@ -172,6 +172,7 @@ mod primitive_units_tests;
 pub mod recovery_ui;
 pub mod ref_images;
 pub mod render_workspace;
+pub mod revisions_panel;
 #[cfg(test)]
 mod revolve_edit_tests;
 #[cfg(test)]
@@ -385,6 +386,8 @@ pub struct SolveApp {
     pub design_properties: Option<design_properties::DesignProperties>,
     /// The Bill of Materials window, when open.
     pub bom: Option<bom_panel::BomPanel>,
+    /// The Revisions window, when open.
+    pub revisions: Option<revisions_panel::RevisionsPanel>,
     material_card_review: Option<material_card_review::ReviewWindow>,
     /// Context menus, rename box and Properties window.
     pub menu: context_menu::MenuState,
@@ -547,6 +550,7 @@ impl SolveApp {
             params: None,
             design_properties: None,
             bom: None,
+            revisions: None,
             material_card_review: None,
             menu: context_menu::MenuState::default(),
             gesture: mouse_gesture::State::default(),
@@ -871,6 +875,12 @@ impl SolveApp {
     /// Start a command the way a toolbar click does: interactive tools and dialogs for commands
     /// that have them, otherwise run it with defaults.
     pub fn start(&mut self, id: &str) {
+        // Revisions is a file window. Another command closes it, the same way a new command
+        // leaves the File view. While it stayed open it was wider than a command dialog, and
+        // every later dialog failed the shared window-width limit.
+        if id != "doc.revisions" {
+            self.revisions = None;
+        }
         if id == "ui.palette" {
             shortcut_box::open(self, None);
             return;
@@ -993,6 +1003,11 @@ impl SolveApp {
         }
         if id == "assembly.bom" {
             bom_panel::open(self);
+            return;
+        }
+        if id == "doc.revisions" {
+            revisions_panel::open(self);
+            self.home.open = false;
             return;
         }
         if id == "sketch.finish" {
@@ -1706,6 +1721,7 @@ impl SolveApp {
         params_dialog::show(self, ui.ctx());
         design_properties::show(self, ui.ctx());
         bom_panel::show(self, ui.ctx());
+        revisions_panel::show(self, ui.ctx());
         material_card_review::show(self, ui.ctx());
         recovery_ui::show(self, ui.ctx());
         stand_up::show(self, ui.ctx());
