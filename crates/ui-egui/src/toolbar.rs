@@ -1900,7 +1900,7 @@ pub fn shortcuts(app: &mut SolveApp, ctx: &egui::Context) {
                     }
                     continue;
                 }
-                if crate::sketch_text_move::cancel_drag(app) {
+                if crate::sketch_text_move::cancel_drag(app) || crate::occurrence_drag::cancel(app) {
                     continue;
                 }
                 if crate::select_other::is_open(app) {

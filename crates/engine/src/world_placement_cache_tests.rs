@@ -182,7 +182,7 @@ fn adopted_scratch_keeps_its_warm_geometry_and_history_stages_invalidate_it() {
 #[test]
 fn moved_component_bodies_are_not_placed_again_when_something_else_changes() {
     let mut session = Session::default();
-    let created = run(&mut session, "component.create", json!({"name":"Wheel"}));
+    let created = run(&mut session, "component.create", json!({"name":"Wheel","grounded":false}));
     let occurrence = created["occurrence"].as_u64().unwrap();
     run(&mut session, "solid.box", json!({"length":60,"width":60,"height":5,"body_name":"Rim"}));
     run(&mut session, "component.activate", json!({"component":"root"}));

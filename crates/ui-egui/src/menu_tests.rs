@@ -254,6 +254,11 @@ fn component_menu_activates_grounds_and_pastes() {
     let t = Target::Component { id: c };
     act(&mut app, &t, "Activate");
     assert_eq!(app.session.active_component, c);
+    // The design's first part comes in grounded (#2804); the menu frees it and grounds it again.
+    assert!(app.session.doc.occurrence_of(c).unwrap().grounded);
+    act(&mut app, &t, "Unground");
+    assert!(!app.session.doc.occurrence_of(c).unwrap().grounded);
+    assert!(find(&context_menu::items(&app, &t), "Move/Copy").enabled, "free");
     act(&mut app, &t, "Ground");
     assert!(app.session.doc.occurrence_of(c).unwrap().grounded);
     assert!(!find(&context_menu::items(&app, &t), "Move/Copy").enabled, "grounded");
@@ -608,6 +613,7 @@ fn an_uncaptured_move_asks_before_the_next_command() {
     let b = body(&app);
     app.run("component.from_bodies", json!({"bodies": [b]})).unwrap();
     let occ = app.session.doc.occurrences[0].id;
+    app.run("occurrence.ground", json!({"occurrence": occ, "grounded": false})).unwrap();
     app.run("occurrence.move", json!({"occurrence": occ, "translate": [10, 0, 0], "capture": false})).unwrap();
     app.start("sketch.create");
     assert_eq!(app.tree.capture_prompt.as_deref(), Some("sketch.create"), "asks first");
@@ -647,6 +653,7 @@ fn occurrence_moves_turn_about_their_origin_then_move() {
     let b = body(&app);
     app.run("component.from_bodies", json!({"bodies": [b]})).unwrap();
     let occ = app.session.doc.occurrences[0].id;
+    app.run("occurrence.ground", json!({"occurrence": occ, "grounded": false})).unwrap();
     let mut m = crate::browser::OccMove::new(occ);
     m.pivot = Some(solidcraft_engine::geom::Vec3::new(5.0, 0.0, 0.0));
     m.translate = [10.0, 0.0, 0.0];

@@ -583,6 +583,10 @@ completed drawings publish atomically. The browser still exports synchronously.
   continuous collision detection; local thin walls and small details remain limitations.
   See [contact-set limits and recovery](docs/contact-sets.md).
 
+## Assembly dragging
+
+The design's first part is grounded when it is made, and a left-button drag repositions a free part (`occurrence.drag`: one undo step, exact occurrence paths including repeated jointed definitions, any floating-chain member carries the chain, grounded parts and joints hold where present, Escape cancels).
+
 ## 3D sketch bridges
 
 3D sketch drawing snaps to points on other visible sketch planes without flattening them onto

@@ -777,7 +777,7 @@ mod tests {
     #[test]
     fn preview_saves_do_not_build_cold_placements_or_persist_transient_edits() {
         let mut s = Session::default();
-        let created = s.execute("component.create", &json!({"name":"PreviewPart"})).unwrap();
+        let created = s.execute("component.create", &json!({"name":"PreviewPart","grounded":false})).unwrap();
         let occurrence = created["occurrence"].as_u64().unwrap();
         s.execute("solid.box", &json!({"length":2,"width":3,"height":4,"body_name":"Block","operation":"new"})).unwrap();
         for body in &s.model.state().bodies {

@@ -559,7 +559,7 @@ fn contact_check_finds_plates_crossing_face_to_face() {
 fn contact_uses_preserved_body_placements_after_component_reassignment() {
     let mut s = Session::default();
     run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "body_name": "Transferred"}));
-    let component = run(&mut s, "component.create", json!({"name": "Carrier"}));
+    let component = run(&mut s, "component.create", json!({"name": "Carrier", "grounded": false}));
     run(&mut s, "occurrence.move", json!({"occurrence": component["occurrence"], "translate": [100, 0, 0]}));
     run(&mut s, "component.move_bodies", json!({"bodies": ["Transferred"], "component": component["component"]}));
     run(&mut s, "component.activate", json!({"component": "root"}));
@@ -577,7 +577,7 @@ fn contact_uses_preserved_body_placements_after_component_reassignment() {
 fn automatic_explode_centres_follow_reassigned_bodies() {
     let mut s = Session::default();
     run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "body_name": "Transferred"}));
-    let component = run(&mut s, "component.create", json!({"name": "Carrier"}));
+    let component = run(&mut s, "component.create", json!({"name": "Carrier", "grounded": false}));
     run(&mut s, "occurrence.move", json!({"occurrence": component["occurrence"], "translate": [100, 0, 0]}));
     run(&mut s, "component.move_bodies", json!({"bodies": ["Transferred"], "component": component["component"]}));
     run(&mut s, "component.activate", json!({"component": "root"}));

@@ -330,7 +330,7 @@ fn redefine_cannot_publish_a_second_transfer_that_breaks_existing_ownership() {
 fn redefine_maps_placement_inputs_in_the_feature_owner_frame() {
     let mut s = Session::default();
     run(&mut s, "solid.box", json!({"length": 4, "width": 4, "height": 4, "name": "RootBox", "body_name": "RootBody"}));
-    let owner = run(&mut s, "component.create", json!({"name": "Owner"}));
+    let owner = run(&mut s, "component.create", json!({"name": "Owner", "grounded": false}));
     run(&mut s, "solid.box", json!({"length": 4, "width": 4, "height": 4, "corner": [10, 0, 0], "name": "OwnedBox", "body_name": "OwnedBody"}));
     run(&mut s, "solid.fillet", json!({"edges": [[12, 0, 4]], "radius": 0.5, "body": "OwnedBody", "name": "OwnerRound"}));
     run(&mut s, "occurrence.move", json!({"occurrence": owner["occurrence"], "translate": [100, 0, 0]}));

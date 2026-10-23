@@ -25,7 +25,7 @@ fn assert_box(got: (Vec3, Vec3), want: (Vec3, Vec3)) {
 
 /// A component "Arm" holding "ArmBody", its occurrence turned and moved; the root is active.
 fn moved_arm(s: &mut Session) -> (u64, u64) {
-    let c = run(s, "component.create", json!({"name": "Arm"}));
+    let c = run(s, "component.create", json!({"name": "Arm", "grounded": false}));
     let (component, occurrence) = (c["component"].as_u64().unwrap(), c["occurrence"].as_u64().unwrap());
     run(s, "solid.box", json!({"corner": [10, 0, 0], "length": 20, "width": 4, "height": 6, "body_name": "ArmBody"}));
     run(s, "component.activate", json!({"component": 0}));

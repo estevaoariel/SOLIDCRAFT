@@ -245,7 +245,7 @@ fn construction_on_a_3d_wire_ignores_its_sketch_plane_and_follows_edits() {
 #[test]
 fn plane_on_a_3d_wire_moves_with_its_component() {
     let mut s = Session::default();
-    run(&mut s, "component.create", json!({"name":"Part"}));
+    run(&mut s, "component.create", json!({"name":"Part","grounded":false}));
     let sketch = run(&mut s, "sketch.create", json!({"plane":"XY"}))["sketch"].as_u64().unwrap();
     run(&mut s, "sketch.options", json!({"sketch_3d":true}));
     let wire = run(&mut s, "sketch.line3d", json!({"points":[[0,0,10],[0,0,40]]}))["curves"][0].as_str().unwrap().to_string();
@@ -311,7 +311,7 @@ fn a_plane_through_three_vertices_follows_them() {
 #[test]
 fn construction_lives_in_the_component_frame() {
     let mut s = Session::default();
-    run(&mut s, "component.create", json!({"name": "Part"}));
+    run(&mut s, "component.create", json!({"name": "Part", "grounded": false}));
     run(&mut s, "solid.cylinder", json!({"radius": 5, "height": 10, "body_name": "Pin"}));
     run(&mut s, "occurrence.move", json!({"occurrence": "Part:1", "translate": [50, 0, 0]}));
     run(&mut s, "construct.axis.through_cylinder", json!({"face": {"face": [55, 0, 5]}, "name": "PinAxis"}));

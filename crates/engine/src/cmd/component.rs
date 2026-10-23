@@ -11,6 +11,8 @@ use super::CommandSpec;
 use crate::params::{bad, bool_, str_, string_list, vec3};
 use crate::{Result, Session};
 
+#[path = "component_drag.rs"]
+mod drag;
 #[path = "component_matrix.rs"]
 pub(super) mod matrix;
 #[path = "component_properties.rs"]
@@ -27,7 +29,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("component.create", "New Component", new_component)
         .at("SOLID", "ASSEMBLE")
         .icon("component")
-        .params("name?, parent?: component id or name (default: the active one); parent_path?: exact parent placement; activate?: bool (default true)"),
+        .params("name?, parent?: component id or name (default: the active one); parent_path?: exact parent placement; activate?: bool (default true); grounded?: bool (default: true for the design's first part, false otherwise)"),
     CommandSpec::new("component.from_bodies", "Create Components from Bodies", from_bodies)
         .icon("component")
         .params("bodies: [names] → one new component per body, named after it"),
@@ -54,7 +56,12 @@ pub static COMMANDS: &[CommandSpec] = &[
         .params("component (or occurrence): what to place again; path?: validates selected occurrence; parent?: component (default: the same parent); translate?: [x,y,z]. Copies the selected effective transform, including pending moves"),
     CommandSpec::new("component.paste_new", "Paste New", paste_new).icon("paste").params("component: independently copy its nested definition graph and history, materials and styles; occurrence?, path?: selected source placement; translate?: [x,y,z]. Reassigned external bodies become base geometry; retained external links and omitted boundary joints are reported"),
     CommandSpec::new("occurrence.move", "Move Occurrence", move_occurrence).icon("move")
-        .params("occurrence; path?: exact placement; space?: local|world (default local); translate?: [x,y,z]; axis?: [x,y,z], angle?: radians or \"30 deg\", origin?: [x,y,z]; matrix?: [12 or 16 numbers] (instead of translate/axis/angle/origin: a rigid move as a row-major 3x4 rotation-and-translation or 4x4 matrix, flat or as rows; one that is a rotation only up to rounding is orthonormalised, a scale, shear or mirror is refused); tolerance?: largest accepted |RᵀR − I| (default 1e-9, at most 1e-3); capture?: bool (default true; false keeps it pending until Capture Position). Nested occurrence definitions remain shared"),
+        .params("occurrence; path?: exact placement; space?: local|world (default local); translate?: [x,y,z]; axis?: [x,y,z], angle?: radians or \"30 deg\", origin?: [x,y,z]; matrix?: [12 or 16 numbers] (instead of translate/axis/angle/origin: a rigid move as a row-major 3x4 rotation-and-translation or 4x4 matrix, flat or as rows; one that is a rotation only up to rounding is orthonormalised, a scale, shear or mirror is refused); tolerance?: largest accepted |RᵀR − I| (default 1e-9, at most 1e-3); capture?: bool (default true; false keeps it pending until Capture Position); move_grounded?: bool (default false: a grounded occurrence refuses; true moves it and it stays grounded). Nested occurrence definitions remain shared"),
+    CommandSpec::new("occurrence.drag", "Drag Occurrence", drag::drag).icon("move").params(
+        "occurrence or path: exact placement; at: [x,y,z] world point on it; point: [x,y,z] where it goes. Moves the placement by \
+         point - at (with any chain of joints it is in that is joined to nothing grounded) and captures its position; other pending \
+         moves stay pending. Shared definitions move in all placements. Grounded parts and parts joints hold to something fixed are refused (joint.reach moves those)",
+    ),
     CommandSpec::new("occurrence.ground", "Ground", ground).icon("ground").params("occurrence; grounded?: bool (default toggles)"),
     CommandSpec::new("component.capture_position", "Capture Position", capture).at("SOLID", "POSITION").icon("capture").params("keeps pending occurrence moves"),
     CommandSpec::new("component.revert_position", "Revert Position", revert).at("SOLID", "POSITION").icon("revert").noundo().params("occurrences?: [ids] (default all); drops selected pending occurrence moves"),
@@ -129,7 +136,16 @@ pub(super) fn new_component(s: &mut Session, p: &Value) -> Result<Value> {
     if parent_path.len() >= 64 {
         return Err(bad(cmd, "new component exceeds occurrence depth limit"));
     }
+    let grounded = match p.get("grounded") {
+        None => None,
+        Some(v) => Some(v.as_bool().ok_or_else(|| bad(cmd, "grounded must be true or false"))?),
+    };
     let id = s.doc_mut().add_component(str_(p, "name"), parent)?;
+    if let Some(grounded) = grounded
+        && let Some(o) = s.doc_mut().occurrences.iter_mut().find(|o| o.component == id)
+    {
+        o.grounded = grounded;
+    }
     if p.get("activate").and_then(Value::as_bool).unwrap_or(true) {
         let mut path = parent_path;
         if let Some(o) = s.doc.occurrence_of(id) {
@@ -139,8 +155,8 @@ pub(super) fn new_component(s: &mut Session, p: &Value) -> Result<Value> {
         s.active_occurrence_path = Some(path);
     }
     let name = s.doc.components.iter().find(|c| c.id == id).map(|c| c.name.clone()).unwrap_or_default();
-    let occ = s.doc.occurrence_of(id).map(|o| o.id);
-    Ok(json!({"component": id, "name": name, "parent": parent, "occurrence": occ}))
+    let occ = s.doc.occurrence_of(id);
+    Ok(json!({"component": id, "name": name, "parent": parent, "occurrence": occ.map(|o| o.id), "grounded": occ.is_some_and(|o| o.grounded)}))
 }
 
 fn from_bodies(s: &mut Session, p: &Value) -> Result<Value> {
@@ -404,8 +420,11 @@ fn move_occurrence(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "occurrence.move";
     let id = occurrence(s, p, cmd)?;
     let o = s.doc.occurrences.iter().find(|o| o.id == id).cloned().ok_or_else(|| bad(cmd, "occurrence"))?;
-    if o.grounded {
-        return Err(bad(cmd, format!("{} is grounded", o.name)));
+    if o.grounded && bool_(p, "move_grounded") != Some(true) {
+        return Err(bad(
+            cmd,
+            format!("{} is grounded: unground it first (occurrence.ground; a design's first part is grounded when it is made)", o.name),
+        ));
     }
     if let Some(mut group) = s.held_by_rigid_group(id) {
         // The outermost component the group holds it in moves it.

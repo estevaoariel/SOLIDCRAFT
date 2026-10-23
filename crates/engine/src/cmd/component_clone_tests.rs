@@ -5,7 +5,7 @@ fn run(s: &mut Session, cmd: &str, p: Value) -> Value {
     s.execute(cmd, &p).unwrap()
 }
 fn component(s: &mut Session, name: &str) -> u64 {
-    run(s, "component.create", json!({"name":name}))["component"].as_u64().unwrap()
+    run(s, "component.create", json!({"name":name,"grounded":false}))["component"].as_u64().unwrap()
 }
 fn volume(s: &mut Session, id: u64) -> f64 {
     run(s, "component.properties", json!({"component":id}))["total"]["volume_mm3"].as_f64().unwrap()

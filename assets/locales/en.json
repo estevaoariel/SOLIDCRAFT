@@ -742,6 +742,7 @@
   "cmd.motion_trace": "Motion Trace",
   "cmd.motion_trace_keep": "Keep Motion Trace",
   "cmd.occurrence_copy": "Paste (Instance)",
+  "cmd.occurrence_drag": "Drag Occurrence",
   "cmd.occurrence_ground": "Ground",
   "cmd.occurrence_move": "Move Occurrence",
   "cmd.occurrence_properties": "Occurrence Physical Properties",
