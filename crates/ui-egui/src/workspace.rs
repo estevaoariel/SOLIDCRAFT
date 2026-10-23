@@ -643,6 +643,19 @@ mod tests {
         }
     }
 
+    /// The ribbon redesign (#2176) removed the MESH and UTILITIES tabs. A command that still
+    /// declares one is advertised at a place the ribbon cannot show, because the generated command
+    /// inventory prints the placement a spec declares (#133).
+    #[test]
+    fn no_command_is_advertised_at_a_tab_the_ribbon_removed() {
+        for c in solidcraft_engine::command_specs() {
+            assert!(!matches!(c.tab, "MESH" | "UTILITIES"), "{} declares the removed {} tab", c.id, c.tab);
+        }
+        let spec = solidcraft_engine::find_command("file.save_mesh").expect("file.save_mesh is registered");
+        assert_eq!((spec.tab, spec.panel), ("INSERT", "FILES"), "Save As Mesh declares the panel that shows it");
+        assert_eq!(destination(spec), Some(("INSERT", "FILES")));
+    }
+
     #[test]
     fn contextual_tabs_follow_the_active_body_and_allow_other_tabs() {
         let mut h = crate::scenario::Harness::new();
