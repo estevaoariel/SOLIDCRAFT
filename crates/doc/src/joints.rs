@@ -572,6 +572,8 @@ pub struct Assembly {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub studies: Vec<crate::motion::MotionStudy>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub traces: Vec<crate::motion::MotionTrace>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub exploded: Vec<crate::motion::ExplodedView>,
 }
 
@@ -597,6 +599,15 @@ impl Assembly {
                 }
             }
         }
+        for trace in &self.traces {
+            if let crate::motion::TraceMotion::Joint { joint, from, to, .. } = &trace.motion {
+                for (label, value) in [("from", from), ("to", to)] {
+                    if let serde_json::Value::String(e) = value {
+                        out.push((*joint, format!("trace {} {label}", trace.sketch), e.as_str()));
+                    }
+                }
+            }
+        }
         out
     }
 
@@ -616,6 +627,15 @@ impl Assembly {
                 }
             }
         }
+        for trace in &mut self.traces {
+            if let crate::motion::TraceMotion::Joint { from, to, .. } = &mut trace.motion {
+                for value in [from, to] {
+                    if let serde_json::Value::String(e) = value {
+                        out.push(e);
+                    }
+                }
+            }
+        }
         out
     }
 
@@ -627,6 +647,7 @@ impl Assembly {
             && !self.contact_enabled
             && !self.contact_all
             && self.studies.is_empty()
+            && self.traces.is_empty()
             && self.exploded.is_empty()
     }
 }
@@ -731,8 +752,7 @@ fn nearest_plane(doc: &Document, st: &ModelState, o: &JointOrigin, pick: Vec3) -
     let mut best: Option<(f64, Vec3, Vec3)> = None;
     for b in component_bodies(doc, st, comp) {
         let offset = doc.model_body_offset(b);
-        let tol = (b.body.size() * 2e-3).max(1e-3);
-        for f in b.body.faces(tol)? {
+        for f in b.joint_faces()?.iter() {
             let Some(n) = f.plane_normal else { continue };
             let (c, n) = match offset {
                 Some(m) => (apply_point(m, f.centroid), apply_vector(m, n)),

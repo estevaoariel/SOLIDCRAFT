@@ -740,6 +740,7 @@
   "cmd.motion_plot": "运动研究图表",
   "cmd.motion_study": "运动研究",
   "cmd.motion_trace": "运动轨迹",
+  "cmd.motion_trace_edit": "编辑运动轨迹",
   "cmd.motion_trace_keep": "保留运动轨迹",
   "cmd.occurrence_copy": "粘贴（实例）",
   "cmd.occurrence_ground": "固定",
