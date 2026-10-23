@@ -334,7 +334,7 @@ impl Walk for PlaneRef {
                 PlaneRef::AlongPath { t, .. } => return f(("Distance (0 to 1)", t, Kind::Unitless, ExprRole::Input)),
                 // A plane seen from behind keeps its base's expressions (a sketch made with
                 // `flip` on an offset plane did not follow the offset's parameter).
-                PlaneRef::Flipped { base, .. } => p = base,
+                PlaneRef::Flipped { base, .. } | PlaneRef::ThroughPoint { base, .. } => p = base,
                 PlaneRef::Placed { origin, .. } => {
                     for (label, e) in ["X", "Y", "Z"].into_iter().zip(origin) {
                         f((label, e, Kind::Length, ExprRole::Placement));
@@ -360,7 +360,7 @@ impl Walk for PlaneRef {
                 PlaneRef::AlongPath { t, .. } => return f(("Distance (0 to 1)", t, Kind::Unitless, ExprRole::Input)),
                 // A plane seen from behind keeps its base's expressions (a sketch made with
                 // `flip` on an offset plane did not follow the offset's parameter).
-                PlaneRef::Flipped { base, .. } => p = base,
+                PlaneRef::Flipped { base, .. } | PlaneRef::ThroughPoint { base, .. } => p = base,
                 PlaneRef::Placed { origin, .. } => {
                     for (label, e) in ["X", "Y", "Z"].into_iter().zip(origin) {
                         f((label, e, Kind::Length, ExprRole::Placement));
@@ -375,7 +375,10 @@ impl Walk for PlaneRef {
         let mut p = self;
         for _ in 0..64 {
             match p {
-                PlaneRef::Offset { base, .. } | PlaneRef::AtAngle { base, .. } | PlaneRef::Flipped { base, .. } => p = base,
+                PlaneRef::Offset { base, .. }
+                | PlaneRef::ThroughPoint { base, .. }
+                | PlaneRef::AtAngle { base, .. }
+                | PlaneRef::Flipped { base, .. } => p = base,
                 PlaneRef::Construction { name } => return f(Ref::Feature(name)),
                 _ => return,
             }
@@ -385,7 +388,10 @@ impl Walk for PlaneRef {
         let mut p = self;
         for _ in 0..64 {
             match p {
-                PlaneRef::Offset { base, .. } | PlaneRef::AtAngle { base, .. } | PlaneRef::Flipped { base, .. } => p = base,
+                PlaneRef::Offset { base, .. }
+                | PlaneRef::ThroughPoint { base, .. }
+                | PlaneRef::AtAngle { base, .. }
+                | PlaneRef::Flipped { base, .. } => p = base,
                 PlaneRef::Construction { name } => return f(Ref::Feature(name)),
                 _ => return,
             }

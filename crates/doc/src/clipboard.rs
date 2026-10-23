@@ -121,6 +121,10 @@ fn remap_plane(
         PlaneRef::Offset { base, .. } | PlaneRef::AtAngle { base, .. } | PlaneRef::Flipped { base, .. } => {
             remap_plane(base, ids, names, bodies, depth + 1)?
         }
+        PlaneRef::ThroughPoint { base, point } => {
+            remap_plane(base, ids, names, bodies, depth + 1)?;
+            remap_geo(point, ids, names, bodies, depth + 1)?;
+        }
         PlaneRef::Construction { name } => mapped_name(&mut name.0, names),
         PlaneRef::Face { name, anchor, .. } => {
             if let Some(name) = name {
@@ -298,6 +302,10 @@ fn checked_plane(p: &PlaneRef, depth: usize) -> crate::Result<()> {
         PlaneRef::Perpendicular { plane, line } => {
             checked_geo(plane, depth + 1)?;
             checked_geo(line, depth + 1)?;
+        }
+        PlaneRef::ThroughPoint { base, point } => {
+            checked_plane(base, depth + 1)?;
+            checked_geo(point, depth + 1)?;
         }
         PlaneRef::ThreePoints { a, b, c } => {
             checked_geo(a, depth + 1)?;
