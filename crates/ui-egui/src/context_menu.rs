@@ -223,6 +223,8 @@ pub struct MenuState {
     /// The button that opened the menu, when it toggles it: a press there is not a press outside,
     /// so its click closes the menu instead of closing and reopening it (#1522).
     opener: Option<Rect>,
+    /// The menu was on screen in an earlier frame. Until then a press is the opening click's own.
+    shown: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1500,6 +1502,7 @@ pub fn open_for(app: &mut SolveApp, at: Pos2, target: Target) {
     app.menu.target = target;
     app.menu.flick = false;
     app.menu.opener = None;
+    app.menu.shown = false;
     app.viewport.context_menu = Some(at);
 }
 
@@ -1823,10 +1826,11 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         inside |= sub.response.contains_pointer() || pointer.is_some_and(|p| sub.response.rect.contains(p));
     }
 
+    let shown = std::mem::replace(&mut app.menu.shown, true);
     let (primary, secondary, esc) = ctx.input(|i| {
         (
-            i.pointer.button_pressed(egui::PointerButton::Primary),
-            i.pointer.button_pressed(egui::PointerButton::Secondary),
+            shown && i.pointer.button_pressed(egui::PointerButton::Primary),
+            shown && i.pointer.button_pressed(egui::PointerButton::Secondary),
             i.key_pressed(egui::Key::Escape),
         )
     });
