@@ -888,3 +888,52 @@ fn undoing_a_defining_dimension_removes_the_parameter_too() {
     assert_eq!(param_row(&mut s, "w")["expression"], "20");
     assert!((line_length(&s, "la") - 20.0).abs() < 1e-6);
 }
+
+/// Four circles, `c1` dimensioned to radius 5 (diameter 10).
+fn four_circles() -> Session {
+    let mut s = new_sketch();
+    for (x, r) in [(0, 5), (20, 3), (40, 7), (60, 4)] {
+        run(&mut s, "sketch.circle.center", json!({"center": [x, 0], "radius": r}));
+    }
+    run(&mut s, "sketch.dimension", json!({"entities": ["c1"], "value": 10}));
+    s
+}
+
+fn radius_of(s: &Session, id: &str) -> f64 {
+    let sk = sketch(s);
+    sk.radius(sk.curve_index(id).unwrap()).unwrap()
+}
+
+#[test]
+fn equal_over_a_list_of_curves_makes_them_all_equal_in_one_step() {
+    // #4985: whatever the order, the dimensioned circle keeps its size and the others take it.
+    for order in [["c1", "c2", "c3", "c4"], ["c4", "c3", "c2", "c1"]] {
+        let mut s = four_circles();
+        let r1 = radius_of(&s, "c1");
+        let undo = s.undo.len();
+        let out = run(&mut s, "sketch.constraint.equal", json!({"curves": order}));
+        assert_eq!(out["constraints"].as_array().unwrap().len(), 3, "{order:?}");
+        assert_eq!(s.undo.len(), undo + 1, "one undo step");
+        for id in ["c1", "c2", "c3", "c4"] {
+            assert!((radius_of(&s, id) - r1).abs() < 1e-6, "{order:?} {id}: {}", radius_of(&s, id));
+        }
+        // Applying it again adds nothing: those pairs are already equal.
+        let again = run(&mut s, "sketch.constraint.equal", json!({"curves": order}));
+        assert!(again["constraints"].as_array().unwrap().is_empty());
+    }
+}
+
+#[test]
+fn equal_over_a_list_refuses_bad_lists_and_conflicts_without_changing_the_sketch() {
+    let mut s = four_circles();
+    let before = s.doc.to_json();
+    for bad in [json!({"curves": ["c1"]}), json!({"curves": ["c1", "c1"]}), json!({"curves": ["c1", "nope"]}), json!({"curves": vec!["c1"; 201]})] {
+        assert!(s.execute("sketch.constraint.equal", &bad).is_err(), "{bad}");
+        assert_eq!(s.doc.to_json(), before, "{bad}");
+    }
+    // Two circles dimensioned to different sizes can't be made equal: nothing changes.
+    run(&mut s, "sketch.dimension", json!({"entities": ["c2"], "value": 6}));
+    let before = s.doc.to_json();
+    assert!(s.execute("sketch.constraint.equal", &json!({"curves": ["c1", "c2", "c3"]})).is_err());
+    assert_eq!(s.doc.to_json(), before);
+}

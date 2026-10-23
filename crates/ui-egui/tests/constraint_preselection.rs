@@ -102,6 +102,39 @@ fn selected_circles_apply_constraints() {
     }
 }
 
+/// #4985: Equal with three or more curves selected makes them all equal, in one undo step. With
+/// one circle dimensioned, the others take its size.
+#[test]
+fn selected_circles_all_become_equal() {
+    let mut h = Harness::new();
+    h.run(&json!([
+        {"call":"engine.execute","params":{"command":"sketch.create","params":{"plane":"XY"}}},
+        {"call":"engine.execute","params":{"command":"sketch.circle.center","params":{"center":[0,0],"radius":5}}},
+        {"call":"engine.execute","params":{"command":"sketch.circle.center","params":{"center":[20,0],"radius":3}}},
+        {"call":"engine.execute","params":{"command":"sketch.circle.center","params":{"center":[40,0],"radius":7}}},
+        {"call":"engine.execute","params":{"command":"sketch.circle.center","params":{"center":[60,0],"radius":4}}},
+        {"call":"engine.execute","params":{"command":"sketch.dimension","params":{"entities":["c1"]}}}
+    ]))
+    .unwrap();
+    let radius = |h: &Harness, id: &str| {
+        let sk = &h.app.session.model.state().sketches[0].sketch;
+        sk.radius(sk.curve_index(id).unwrap()).unwrap()
+    };
+    let r1 = radius(&h, "c1");
+    h.app.session.selection = ["c4", "c3", "c2", "c1"].iter().map(|id| Sel::SketchCurve { id: (*id).into() }).collect();
+    let undo = h.app.session.undo.len();
+    h.run(&json!([{"start":"sketch.constraint.equal"}])).unwrap();
+    assert!(!h.app.status.as_ref().is_some_and(|(_, _, error)| *error), "{:?}", h.app.status);
+    assert_eq!(h.app.session.undo.len(), undo + 1, "one undo step");
+    assert!(h.app.tool.is_none(), "applied at once, no pick tool");
+    assert!(h.app.session.selection.is_empty());
+    let sk = &h.app.session.model.state().sketches[0].sketch;
+    assert_eq!(sk.constraints.iter().filter(|c| matches!(c.kind, ConstraintKind::Equal { .. })).count(), 3);
+    for id in ["c1", "c2", "c3", "c4"] {
+        assert!((radius(&h, id) - r1).abs() < 1e-6, "{id}: {} vs the dimensioned {r1}", radius(&h, id));
+    }
+}
+
 #[test]
 fn ambiguous_selection_preserves_tool_first_workflow() {
     for selection in [
