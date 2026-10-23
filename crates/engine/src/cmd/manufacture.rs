@@ -242,6 +242,42 @@ pub static COMMANDS: &[CommandSpec] = &[
         .doc_only()
         .at("MANUFACTURE", "PART")
         .params("Opens a Tool Call operation on the active Manufacture setup. Document writes go through manufacture.settings.set."),
+    CommandSpec::new("manufacture.inspection.wcs", "Probe WCS", twod_open)
+        .icon("settings")
+        .noundo()
+        .doc_only()
+        .at("MANUFACTURE", "PROBE")
+        .params("Opens Probe WCS on the active Manufacture setup. Document writes go through manufacture.settings.set."),
+    CommandSpec::new("manufacture.inspection.geometry", "Probe Geom", twod_open)
+        .icon("settings")
+        .noundo()
+        .doc_only()
+        .at("MANUFACTURE", "PROBE")
+        .params("Opens Probe Geometry on the active Manufacture setup. Document writes go through manufacture.settings.set."),
+    CommandSpec::new("manufacture.inspection.surface", "Surface", twod_open)
+        .icon("settings")
+        .noundo()
+        .doc_only()
+        .at("MANUFACTURE", "PROBE")
+        .params("Opens Inspect Surface on the active Manufacture setup. Document writes go through manufacture.settings.set."),
+    CommandSpec::new("manufacture.inspection.align", "Align", twod_open)
+        .icon("settings")
+        .noundo()
+        .doc_only()
+        .at("MANUFACTURE", "PROBE")
+        .params("Opens Part Alignment on the active Manufacture setup. Document writes go through manufacture.settings.set."),
+    CommandSpec::new("manufacture.inspection.manual", "Manual", twod_open)
+        .icon("settings")
+        .noundo()
+        .doc_only()
+        .at("MANUFACTURE", "PROBE")
+        .params("Opens Manual Inspection on the active Manufacture setup. Document writes go through manufacture.settings.set."),
+    CommandSpec::new("manufacture.inspection.record", "Record", twod_open)
+        .icon("settings")
+        .noundo()
+        .doc_only()
+        .at("MANUFACTURE", "PROBE")
+        .params("Opens Record Manual Inspection on the active Manufacture setup. Document writes go through manufacture.settings.set."),
 ];
 
 // ── Settings get ───────────────────────────────────────────────────────────────
@@ -489,6 +525,24 @@ mod tests {
             "manufacture.part_handling.bar_pull",
             "manufacture.part_handling.return",
             "manufacture.part_handling.tool_call",
+        ];
+        for id in IDS {
+            let mut s = Session::default();
+            let r = s.execute(id, &json!({})).unwrap();
+            assert_eq!(r["opened"], true, "{id}");
+            assert!(s.doc.manufacture.setups.is_empty(), "{id}");
+        }
+    }
+
+    #[test]
+    fn inspection_commands_are_display_only() {
+        const IDS: &[&str] = &[
+            "manufacture.inspection.wcs",
+            "manufacture.inspection.geometry",
+            "manufacture.inspection.surface",
+            "manufacture.inspection.align",
+            "manufacture.inspection.manual",
+            "manufacture.inspection.record",
         ];
         for id in IDS {
             let mut s = Session::default();

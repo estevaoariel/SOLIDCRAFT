@@ -335,6 +335,19 @@ pub const SECTIONS: &[Section] = &[
     },
     Section {
         tab: "MANUFACTURE",
+        panel: "PROBE",
+        promoted: 4,
+        ids: &[
+            "manufacture.inspection.wcs",
+            "manufacture.inspection.geometry",
+            "manufacture.inspection.surface",
+            "manufacture.inspection.align",
+            "manufacture.inspection.manual",
+            "manufacture.inspection.record",
+        ],
+    },
+    Section {
+        tab: "MANUFACTURE",
         panel: "INSPECT",
         promoted: 2,
         ids: &[
@@ -397,6 +410,12 @@ pub const RIBBON_LABELS: &[(&str, &str)] = &[
     ("manufacture.3d.steep", "Steep"),
     ("manufacture.drill", "Drill"),
     ("manufacture.hole_recognition", "Hole Rec."),
+    ("manufacture.inspection.align", "Align"),
+    ("manufacture.inspection.geometry", "Probe Geom"),
+    ("manufacture.inspection.manual", "Manual"),
+    ("manufacture.inspection.record", "Record"),
+    ("manufacture.inspection.surface", "Surface"),
+    ("manufacture.inspection.wcs", "Probe WCS"),
     ("manufacture.multiaxis.adv_swarf", "Adv. Swarf"),
     ("manufacture.multiaxis.contour", "MA Contour"),
     ("manufacture.multiaxis.finish", "MA Finish"),
