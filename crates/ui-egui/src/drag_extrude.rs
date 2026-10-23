@@ -71,7 +71,7 @@ pub fn started(app: &SolveApp) -> bool {
 /// Note a press at `at` when it is on a planar face or a profile.
 pub fn press(app: &mut SolveApp, proj: &Proj, at: Pos2) {
     app.viewport.drag_extrude.gesture = None;
-    if !app.preferences.pull_to_extrude {
+    if !app.preferences.direct_interaction {
         return;
     }
     let hits = crate::viewport::pick(app, proj, at);
