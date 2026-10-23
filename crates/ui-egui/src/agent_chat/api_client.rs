@@ -24,9 +24,10 @@ pub const MAX_REQUESTS_PER_TURN: usize = 24;
 const MAX_TOOL_TEXT: usize = 20_000;
 /// Messages kept in the conversation (the system note stays).
 const MAX_HISTORY: usize = 240;
-/// How long one model request may take.
-const REQUEST_TIMEOUT_S: u64 = 300;
-/// How long one tool call may take (it may wait for the user's Allow).
+/// How long one tool call may take (it may wait for the user's Allow, declined after four
+/// minutes). It does not depend on the endpoint's request timeout: a tool call is SolidCraft's own
+/// work and the user's answer, never a wait for the model, so a longer request timeout does not
+/// need a longer tool timeout.
 const TOOL_TIMEOUT: Duration = Duration::from_secs(330);
 /// How often a waiting request or tool call looks at the cancel flag.
 const CANCEL_POLL: Duration = Duration::from_millis(40);
@@ -40,12 +41,15 @@ pub struct ApiConfig {
     pub model: String,
     pub key: Option<String>,
     pub http: HttpFn,
+    /// How long one model request may take, in seconds (the endpoint's setting).
+    pub request_timeout_s: u64,
 }
 
 enum Cmd {
     Prompt(Vec<PromptPart>),
     NewChat,
     SetModel(String),
+    SetRequestTimeout(u64),
 }
 
 pub struct ApiBackend {
@@ -108,6 +112,11 @@ impl ChatBackend for ApiBackend {
     fn set_model(&mut self, model: &str) {
         if let Some(c) = &self.cmds {
             let _ = c.send(Cmd::SetModel(model.to_string()));
+        }
+    }
+    fn set_request_timeout(&mut self, secs: u64) {
+        if let Some(c) = &self.cmds {
+            let _ = c.send(Cmd::SetRequestTimeout(secs));
         }
     }
     fn new_session(&mut self) {
@@ -177,6 +186,7 @@ impl Worker {
             match cmd {
                 Cmd::Prompt(parts) => self.turn(parts),
                 Cmd::SetModel(m) => self.cfg.model = m,
+                Cmd::SetRequestTimeout(secs) => self.cfg.request_timeout_s = secs,
                 Cmd::NewChat => {
                     self.history.truncate(1);
                     self.cancel.store(false, Ordering::Relaxed);
@@ -365,27 +375,50 @@ impl Worker {
             url: format!("{}/chat/completions", self.cfg.base_url),
             headers,
             body: Some(body.to_string().into_bytes()),
-            timeout_s: REQUEST_TIMEOUT_S,
+            timeout_s: self.limit_s(),
         };
         // The request runs on a thread of its own so that Stop does not wait for the model: a
         // cancelled one is abandoned (the host's own timeout ends it) and its answer dropped.
         let (tx, rx) = channel();
         let http = self.cfg.http.clone();
+        let started = std::time::Instant::now();
         std::thread::spawn(move || {
             let _ = tx.send(http(&req));
         });
+        // The host ends the request at the limit; a few seconds more is the backstop for one
+        // that does not.
+        let backstop = Duration::from_secs(self.limit_s().saturating_add(5));
         let (status, bytes) = loop {
             if self.cancel.load(Ordering::Relaxed) {
                 return Err("cancelled by the user".into());
             }
             match rx.recv_timeout(CANCEL_POLL) {
-                Ok(r) => break r?,
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Ok(r) => break r.map_err(|e| request_error(e, started.elapsed(), self.limit_s()))?,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) if started.elapsed() < backstop => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => return Err(timed_out(self.limit_s())),
                 Err(_) => return Err("the request ended without an answer".into()),
             }
         };
         Ok((status, serde_json::from_slice(&bytes).unwrap_or(Value::Null)))
     }
+}
+
+impl Worker {
+    /// The endpoint's request timeout, in range.
+    fn limit_s(&self) -> u64 {
+        self.cfg.request_timeout_s.clamp(super::agents::MIN_REQUEST_TIMEOUT_S, super::agents::MAX_REQUEST_TIMEOUT_S)
+    }
+}
+
+/// What the chat says when a request ran out of time: the limit, and where to raise it.
+pub fn timed_out(limit_s: u64) -> String {
+    crate::i18n::format("ui.ai_request_timed_out", &[("seconds", &limit_s.to_string())])
+}
+
+/// A failed request as people read it: one that ran into the endpoint's request timeout (the
+/// host says so, or it failed at the limit) says the limit and where to raise it.
+pub fn request_error(error: String, elapsed: Duration, limit_s: u64) -> String {
+    if error.starts_with("timeout: global") || elapsed >= Duration::from_secs(limit_s) { timed_out(limit_s) } else { error }
 }
 
 /// An endpoint's refusal as people read it.
@@ -595,7 +628,8 @@ mod tests {
             let a = answers.lock().unwrap().pop().unwrap_or(json!({}));
             Ok((200, a.to_string().into_bytes()))
         });
-        let cfg = ApiConfig { name: "Test".into(), base_url: "http://localhost:1/v1".into(), model: "m".into(), key: None, http };
+        let cfg =
+            ApiConfig { name: "Test".into(), base_url: "http://localhost:1/v1".into(), model: "m".into(), key: None, http, request_timeout_s: 300 };
         let ctx = StartContext { cwd: std::env::temp_dir(), bridge: None, tools: None, wake: Box::new(|| {}) };
         let mut b = ApiBackend::start(cfg, ctx).unwrap();
         b.prompt(&[PromptPart::Text("measure it".into())]);
@@ -641,7 +675,8 @@ mod tests {
             }
             Ok((200, json!({"choices": [{"message": {"role": "assistant", "content": "Steered."}}]}).to_string().into_bytes()))
         });
-        let cfg = ApiConfig { name: "Test".into(), base_url: "http://localhost:1/v1".into(), model: "m".into(), key: None, http };
+        let cfg =
+            ApiConfig { name: "Test".into(), base_url: "http://localhost:1/v1".into(), model: "m".into(), key: None, http, request_timeout_s: 300 };
         let ctx = StartContext { cwd: std::env::temp_dir(), bridge: None, tools: None, wake: Box::new(|| {}) };
         let mut b = ApiBackend::start(cfg, ctx).unwrap();
         let wait = |b: &mut ApiBackend, events: &mut Vec<Event>| {
@@ -688,7 +723,8 @@ mod tests {
             log.lock().unwrap().push(serde_json::from_slice(r.body.as_deref().unwrap_or(b"null")).unwrap());
             Ok((200, json!({"choices": [{"message": {"role": "assistant", "content": "ok"}}]}).to_string().into_bytes()))
         });
-        let cfg = ApiConfig { name: "Test".into(), base_url: "http://localhost:1/v1".into(), model: "m".into(), key: None, http };
+        let cfg =
+            ApiConfig { name: "Test".into(), base_url: "http://localhost:1/v1".into(), model: "m".into(), key: None, http, request_timeout_s: 300 };
         let ctx = StartContext { cwd: std::env::temp_dir(), bridge: None, tools: None, wake: Box::new(|| {}) };
         let mut b = ApiBackend::start(cfg, ctx).unwrap();
         let run = |b: &mut ApiBackend, f: &dyn Fn(&mut ApiBackend), want: usize| {
@@ -726,7 +762,14 @@ mod tests {
             log.lock().unwrap().push(serde_json::from_slice(r.body.as_deref().unwrap_or(b"null")).unwrap());
             Ok((200, json!({"choices": [{"message": {"role": "assistant", "content": "ok"}}]}).to_string().into_bytes()))
         });
-        let cfg = ApiConfig { name: "Test".into(), base_url: "http://localhost:1/v1".into(), model: "local".into(), key: None, http };
+        let cfg = ApiConfig {
+            name: "Test".into(),
+            base_url: "http://localhost:1/v1".into(),
+            model: "local".into(),
+            key: None,
+            http,
+            request_timeout_s: 300,
+        };
         let ctx = StartContext { cwd: std::env::temp_dir(), bridge: None, tools: None, wake: Box::new(|| {}) };
         let mut b = ApiBackend::start(cfg, ctx).unwrap();
         let mut events = Vec::new();
@@ -775,7 +818,8 @@ mod tests {
             log.lock().unwrap().push(serde_json::from_slice(r.body.as_deref().unwrap_or(b"null")).unwrap());
             Ok((200, answers.lock().unwrap().pop().unwrap_or(json!({})).to_string().into_bytes()))
         });
-        let cfg = ApiConfig { name: "Test".into(), base_url: "http://localhost:1/v1".into(), model: "m".into(), key: None, http };
+        let cfg =
+            ApiConfig { name: "Test".into(), base_url: "http://localhost:1/v1".into(), model: "m".into(), key: None, http, request_timeout_s: 300 };
         let ctx = StartContext { cwd: std::env::temp_dir(), bridge: None, tools: None, wake: Box::new(|| {}) };
         let mut b = ApiBackend::start(cfg, ctx).unwrap();
         b.prompt(&[PromptPart::Text("go".into())]);
@@ -801,7 +845,14 @@ mod tests {
     fn keys_never_go_over_plain_http_to_another_computer() {
         let http: HttpFn = Arc::new(|_: &HttpRequest| Ok((200, b"{}".to_vec())));
         assert!(test_endpoint(&http, "http://10.0.0.2:11434/v1", Some("k"), "m").is_err());
-        let cfg = ApiConfig { name: "x".into(), base_url: "http://10.0.0.2/v1".into(), model: "m".into(), key: Some("k".into()), http };
+        let cfg = ApiConfig {
+            name: "x".into(),
+            base_url: "http://10.0.0.2/v1".into(),
+            model: "m".into(),
+            key: Some("k".into()),
+            http,
+            request_timeout_s: 300,
+        };
         let ctx = StartContext { cwd: std::env::temp_dir(), bridge: None, tools: None, wake: Box::new(|| {}) };
         assert!(ApiBackend::start(cfg, ctx).is_err());
     }
@@ -817,7 +868,14 @@ mod tests {
             let (status, v) = answers.lock().unwrap().pop().expect("no request beyond the script");
             Ok((status, v.to_string().into_bytes()))
         });
-        let cfg = ApiConfig { name: "Test".into(), base_url: "http://localhost:1/v1".into(), model: "m".into(), key: Some("sk-secret".into()), http };
+        let cfg = ApiConfig {
+            name: "Test".into(),
+            base_url: "http://localhost:1/v1".into(),
+            model: "m".into(),
+            key: Some("sk-secret".into()),
+            http,
+            request_timeout_s: 300,
+        };
         let (events, _rx) = channel();
         let w = Worker {
             cfg,
@@ -863,5 +921,27 @@ mod tests {
         let (w, seen) = scripted_worker(vec![(400, json!({"error": {"message": "context length exceeded"}}))]);
         assert!(w.request().unwrap_err().contains("context length"));
         assert_eq!(seen.lock().unwrap().len(), 1);
+    }
+
+    /// A request that runs out of time says the endpoint's limit and where to raise it; the host
+    /// is given that limit, in range; other failures keep their own words.
+    #[test]
+    fn a_request_that_runs_out_of_time_says_the_limit_and_where_to_raise_it() {
+        let asked = Arc::new(std::sync::Mutex::new(Vec::<u64>::new()));
+        let log = asked.clone();
+        let (mut w, _) = scripted_worker(Vec::new());
+        w.cfg.http = Arc::new(move |r: &HttpRequest| {
+            log.lock().unwrap().push(r.timeout_s);
+            Err("timeout: global".into())
+        });
+        w.cfg.request_timeout_s = 1200;
+        let e = w.request().unwrap_err();
+        assert_eq!(e, timed_out(1200));
+        assert!(e.contains("1200 s") && e.contains("request timeout") && e.contains("Preferences"), "{e}");
+        w.cfg.request_timeout_s = 5;
+        assert_eq!(w.request().unwrap_err(), timed_out(30));
+        assert_eq!(*asked.lock().unwrap(), [1200, 30]);
+        assert_eq!(request_error("connection refused".into(), Duration::from_secs(1), 300), "connection refused");
+        assert_eq!(request_error("connection reset".into(), Duration::from_secs(300), 300), timed_out(300));
     }
 }
