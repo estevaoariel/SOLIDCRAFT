@@ -2217,18 +2217,17 @@ fn partial_depth_intersect_keeps_disconnected_tool_islands_and_annular_curves() 
 }
 
 #[test]
-fn partial_depth_intersect_deletes_material_already_removed_by_a_pocket_atomically() {
+fn partial_depth_intersect_of_material_already_removed_by_a_pocket_is_refused() {
     let mut s = Session::default();
     base(&mut s, 100.0, 60.0);
     rectangle_tool(&mut s, "Removed", [20.0, 20.0], [30.0, 30.0]);
     run(&mut s, "solid.extrude", json!({"sketch":"Removed","distance":1,"operation":"cut"}));
-    run(&mut s, "solid.extrude", json!({"sketch":"Removed","distance":1,"operation":"intersect"}));
-    assert!(s.model.state().bodies.is_empty());
-    assert!(s.model.state().sheets.is_empty());
-    run(&mut s, "edit.undo", json!({}));
+    let before = s.doc.to_json();
+    let result = s.execute("solid.extrude", &json!({"sketch":"Removed","distance":1,"operation":"intersect"}));
+    assert!(result.as_ref().err().is_some_and(|e| e.to_string().contains("the intersection is empty")), "{result:?}");
+    assert_eq!(s.doc.to_json(), before);
+    assert_eq!(s.model.state().sheets.len(), 1);
     assert!((volume(&mut s) - 14900.0).abs() < 1e-6);
-    run(&mut s, "edit.redo", json!({}));
-    assert!(s.model.state().bodies.is_empty());
 }
 
 #[test]
