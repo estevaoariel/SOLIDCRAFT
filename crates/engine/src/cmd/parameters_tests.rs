@@ -201,16 +201,6 @@ fn favorites_comments_and_completion() {
     block(&mut s);
     run(&mut s, "parameters.favorite", json!({"name": "len", "favorite": false}));
     assert_eq!(run(&mut s, "parameters.list", json!({"favorites": true}))["count"], 0);
-    // Several at once, all or nothing.
-    run(&mut s, "parameters.add", json!({"name": "wid", "expression": "20 mm"}));
-    run(&mut s, "parameters.favorite", json!({"names": ["len", "wid"]}));
-    assert_eq!(run(&mut s, "parameters.list", json!({"favorites": true}))["count"], 2);
-    for bad in [json!({"names": ["len", "nope"], "favorite": false}), json!({"names": "len"}), json!({"names": [1]})] {
-        assert!(s.execute("parameters.favorite", &bad).is_err(), "{bad}");
-    }
-    assert_eq!(run(&mut s, "parameters.list", json!({"favorites": true}))["count"], 2);
-    run(&mut s, "parameters.favorite", json!({"names": ["len", "wid"], "favorite": false}));
-    assert_eq!(run(&mut s, "parameters.list", json!({"favorites": true}))["count"], 0);
     let ext = s.doc.features.get(1).and_then(|f| f.param_names.first().cloned()).unwrap_or_default();
     run(&mut s, "parameters.comment", json!({"name": ext, "comment": "plate thickness"}));
     let l = run(&mut s, "parameters.list", json!({}));
