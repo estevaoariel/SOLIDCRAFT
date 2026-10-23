@@ -1009,6 +1009,18 @@ const ELEMENTS: &[Element] = &[
     element!("caption", "dialog:caption:Gallery", None, |ui, _| {
         caption(ui, "Gallery", "Construction");
     }),
+    element!("figure_rows", "dialog:figure:gallery", Some("dialog:Gallery"), |ui, s| {
+        let Sample { value, second, .. } = s;
+        figure_rows(ui, "gallery", &mut [("Gallery", value), ("Second", second)], |painter, rect, slots| {
+            let t = Tokens::get();
+            painter.rect_stroke(rect.shrink(t.space_4), t.control_radius, egui::Stroke::new(1.0, t.form_dim), egui::StrokeKind::Inside);
+            for slot in slots {
+                let ink = if slot.hot { t.form_primary } else { t.form_dim };
+                let y = slot.rect.center().y;
+                painter.line_segment([egui::pos2(rect.center().x, y), egui::pos2(slot.rect.left(), y)], egui::Stroke::new(1.0, ink));
+            }
+        });
+    }),
     element!("section", "dialog:section:Advanced", Some("dialog:section:Advanced"), |ui, _| {
         section(ui, "gallery", "Advanced", false, |_| {});
     }),

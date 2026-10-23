@@ -484,7 +484,7 @@ pub(super) fn rows(app: &mut SolveApp, ctx: &egui::Context, d: &mut Dialog, ui: 
                 feature_pattern_alignment_row(ui, &mut d.extra, 0);
             }
         }
-        Kind::Hole { diameter, depth, kind, cb_diameter, cb_depth, cs_diameter, cs_angle, opts } => {
+        Kind::Hole { kind, opts, .. } => {
             form_row(ui, "Extents", |ui| {
                 let cur = if to_object_on(&d.inputs) { 1 } else { usize::from(opts.all) * 2 };
                 let mut ext = cur;
@@ -512,31 +512,20 @@ pub(super) fn rows(app: &mut SolveApp, ctx: &egui::Context, d: &mut Dialog, ui: 
             });
             if opts.tapped {
                 enter |= crate::dialogs_thread::hole_rows(ui, &app.session.doc, &mut opts.thread, &mut opts.custom_thread);
+                ui_kit::checkbox_grid(ui, &mut [("Full thread depth", &mut opts.thread_full_depth)], 1);
             }
-            if *kind == 0 {
+            // Through all, the tip lies past the part.
+            if !opts.all {
                 form_row(ui, "Drill Point", |ui| {
                     let mut tip = usize::from(opts.angled);
                     combo(ui, "hole_tip", &["Flat", "Angle"], &mut tip);
                     opts.angled = tip == 1;
                 });
             }
-            if !opts.all {
-                enter |= expr_row(ui, "Depth", depth);
-            }
-            if *kind == 0 && opts.angled {
-                enter |= expr_row(ui, "Tip Angle", &mut opts.tip_angle);
-            }
-            if !opts.tapped {
-                enter |= expr_row(ui, "Diameter", diameter);
-            }
-            if *kind == 1 {
-                enter |= expr_row(ui, "Counterbore Ø", cb_diameter);
-                enter |= expr_row(ui, "Counterbore depth", cb_depth);
-            }
-            if *kind == 2 {
-                enter |= expr_row(ui, "Countersink Ø", cs_diameter);
-                enter |= expr_row(ui, "Countersink angle", cs_angle);
-            }
+            // The section through the hole, each size beside its dimension (#2171).
+            let to_object = to_object_on(&d.inputs);
+            let doc = &app.session.doc;
+            enter |= crate::dialogs_hole::rows(ui, &mut d.kind, to_object, &|e, k| doc.eval(e, k).ok());
         }
         _ => enter |= additional_rows(app, d, ui),
     }
