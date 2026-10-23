@@ -957,6 +957,7 @@
   "crash.report": "Report…",
   "crash.unclean_explanation": "Detected on a later launch; the exact exit time was not recorded. A system shutdown or forced stop can also cause an unclean exit.",
   "delete.and_more": "… and {count} more",
+  "diagnostic.empty_boolean_component": "there is no body to cut or intersect in component '{component}'; the tool may overlap '{body}' in component '{other}' — activate that component or pick the body as a target",
   "dialog.bodies_count": "{count} bodies",
   "dialog.clearance_invalid": "the clearance must be a length of 0 or more",
   "dialog.compute": "Compute",
