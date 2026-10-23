@@ -41,12 +41,13 @@ pub fn boxes_for(cmd: &str, n: usize) -> Vec<DimBox> {
         ("sketch.rectangle.two_point" | "sketch.rectangle.center", 1) => vec![b("Width", Length), b("Height", Length)],
         ("sketch.rectangle.rounded", 1) => vec![b("Width", Length), b("Height", Length), b("Radius", Length)],
         ("sketch.circle.center", 1) => vec![b("Diameter", Length)],
-        ("sketch.arc.center_point", 1) => vec![b("Radius", Length)],
-        ("sketch.arc.center_point", 2) => vec![b("Sweep", Angle)],
+        ("sketch.arc.center_point" | "sketch.slot.arc_center", 1) => vec![b("Radius", Length)],
+        ("sketch.arc.center_point" | "sketch.slot.arc_center", 2) => vec![b("Sweep", Angle)],
         ("sketch.polygon.inscribed" | "sketch.polygon.circumscribed", 1) => vec![b("Radius", Length), b("Sides", Unitless)],
-        ("sketch.slot.center_to_center" | "sketch.slot.overall", 1) => vec![b("Length", Length)],
+        ("sketch.slot.center_to_center" | "sketch.slot.overall" | "sketch.slot.center_point", 1) => vec![b("Length", Length)],
         ("sketch.conic", 2) => vec![b("Rho", Unitless)],
-        ("sketch.slot.center_to_center" | "sketch.slot.overall", 2) => vec![b("Width", Length)],
+        ("sketch.slot.center_to_center" | "sketch.slot.overall" | "sketch.slot.center_point", 2)
+        | ("sketch.slot.arc_center" | "sketch.slot.arc_three_point", 3) => vec![b("Width", Length)],
         _ => Vec::new(),
     }
 }
@@ -85,8 +86,9 @@ pub fn effective(app: &SolveApp, t: &Tool, h: Vec2) -> Vec2 {
             Vec2::new(a.x + lk("Width").map_or(d.x, |w| w * 0.5 * sign(d.x)), a.y + lk("Height").map_or(d.y, |hh| hh * 0.5 * sign(d.y)))
         }
         ("sketch.circle.center", 1) => a + dir_or_x(h - a) * lk("Diameter").map_or((h - a).len(), |d| d * 0.5),
-        ("sketch.arc.center_point", 1) => a + dir_or_x(h - a) * lk("Radius").unwrap_or((h - a).len()),
-        ("sketch.arc.center_point", 2) => {
+        ("sketch.slot.center_point", 1) => a + dir_or_x(h - a) * lk("Length").map_or((h - a).len(), |l| l * 0.5),
+        ("sketch.arc.center_point" | "sketch.slot.arc_center", 1) => a + dir_or_x(h - a) * lk("Radius").unwrap_or((h - a).len()),
+        ("sketch.arc.center_point" | "sketch.slot.arc_center", 2) => {
             let c = t.pts.first().map(|p| p.0).unwrap_or(a);
             let r = (a - c).len();
             let a0 = (a - c).angle();
@@ -94,7 +96,7 @@ pub fn effective(app: &SolveApp, t: &Tool, h: Vec2) -> Vec2 {
             c + Vec2::from_angle(a0 + sweep) * r
         }
         ("sketch.polygon.inscribed" | "sketch.polygon.circumscribed", 1) => a + dir_or_x(h - a) * lk("Radius").unwrap_or((h - a).len()),
-        ("sketch.slot.center_to_center" | "sketch.slot.overall", 2) => match lk("Width") {
+        ("sketch.slot.center_to_center" | "sketch.slot.overall" | "sketch.slot.center_point", 2) => match lk("Width") {
             Some(w) => {
                 let c0 = t.pts.first().map(|p| p.0).unwrap_or(a);
                 let dir = dir_or_x(a - c0);
@@ -104,6 +106,12 @@ pub fn effective(app: &SolveApp, t: &Tool, h: Vec2) -> Vec2 {
             }
             None => h,
         },
+        ("sketch.slot.arc_center", 3) => {
+            let Some(c) = t.pts.first().map(|p| p.0) else { return h };
+            let Some(start) = t.pts.get(1).map(|p| p.0) else { return h };
+            lk("Width").map_or(h, |w| c + dir_or_x(h - c) * (c.dist(start) + w * 0.5))
+        }
+        ("sketch.slot.arc_three_point", 3) => lk("Width").map_or(h, |w| a + dir_or_x(h - a) * (w * 0.5)),
         _ => h,
     }
 }
@@ -193,6 +201,7 @@ fn live(app: &SolveApp, t: &Tool, e: Vec2, px: f64) -> Vec<(f64, Vec2)> {
             let n = d.perp();
             vec![(v.len(), (a + e) * 0.5 + n * off), (v.angle(), a + d * (v.len() * 0.3).min(60.0 * px) - n * off)]
         }
+        ("sketch.slot.center_point", 1) => vec![(2.0 * (e - a).len(), (a + e) * 0.5 + dir_or_x(e - a).perp() * off)],
         ("sketch.rectangle.two_point", 1) => {
             let (sx, sy) = (sign(e.x - a.x), sign(e.y - a.y));
             vec![
@@ -216,10 +225,10 @@ fn live(app: &SolveApp, t: &Tool, e: Vec2, px: f64) -> Vec<(f64, Vec2)> {
             vec![(2.0 * d.x.abs(), Vec2::new(a.x, a.y - d.y - sy * off)), (2.0 * d.y.abs(), Vec2::new(a.x + d.x + sx * 2.0 * off, a.y))]
         }
         ("sketch.circle.center", 1) => vec![(2.0 * (e - a).len(), (a + e) * 0.5 + dir_or_x(e - a).perp() * off)],
-        ("sketch.arc.center_point", 1) | ("sketch.polygon.inscribed" | "sketch.polygon.circumscribed", 1) => {
+        ("sketch.arc.center_point" | "sketch.slot.arc_center", 1) | ("sketch.polygon.inscribed" | "sketch.polygon.circumscribed", 1) => {
             vec![((e - a).len(), (a + e) * 0.5), (6.0, a + (e - a) * 0.5 + (e - a).perp() * 0.3)]
         }
-        ("sketch.arc.center_point", 2) => {
+        ("sketch.arc.center_point" | "sketch.slot.arc_center", 2) => {
             let a0 = (a - first).angle();
             // Out along the radius, clear of the cursor: a box on it would take the hover and
             // the click meant for a point there (#2201).
@@ -235,12 +244,17 @@ fn live(app: &SolveApp, t: &Tool, e: Vec2, px: f64) -> Vec<(f64, Vec2)> {
             let d = e - mid;
             vec![(rho, mid + d * rho + dir_or_x(d).perp() * off)]
         }
-        ("sketch.slot.center_to_center" | "sketch.slot.overall", 2) => {
+        ("sketch.slot.center_to_center" | "sketch.slot.overall" | "sketch.slot.center_point", 2) => {
             let dir = dir_or_x(a - first);
             let side = if dir.cross(e - first) < 0.0 { -1.0 } else { 1.0 };
             // Beyond the cursor, away from the centre line, as for the arc (#2201).
             vec![(2.0 * dir.cross(e - first).abs(), e + dir.perp() * (side * 2.5 * off))]
         }
+        ("sketch.slot.arc_center", 3) => {
+            let Some(start) = t.pts.get(1).map(|p| p.0) else { return Vec::new() };
+            vec![(2.0 * (e.dist(first) - start.dist(first)).abs(), e + dir_or_x(e - first) * (2.5 * off))]
+        }
+        ("sketch.slot.arc_three_point", 3) => vec![(2.0 * e.dist(a), e + dir_or_x(e - a) * (2.5 * off))],
         _ => Vec::new(),
     }
 }
@@ -262,9 +276,15 @@ fn fmt(app: &SolveApp, label: &str, kind: ValueKind, v: f64) -> String {
 /// Make the tool's boxes match its stage (new boxes when a point was placed).
 pub fn sync(t: &mut Tool) {
     if t.dims_stage != t.pts.len() {
-        if t.dims_stage == 1
-            && t.pts.len() == 2
-            && matches!(t.cmd, "sketch.arc.center_point" | "sketch.slot.center_to_center" | "sketch.slot.overall")
+        if t.pts.len() == t.dims_stage.saturating_add(1)
+            && matches!(
+                t.cmd,
+                "sketch.arc.center_point"
+                    | "sketch.slot.center_to_center"
+                    | "sketch.slot.overall"
+                    | "sketch.slot.center_point"
+                    | "sketch.slot.arc_center"
+            )
         {
             t.dim_history.extend(t.dims.iter().filter(|dimension| dimension.locked).cloned());
         } else if t.pts.len() <= t.dims_stage || t.cmd == "sketch.line" {
@@ -315,6 +335,9 @@ pub fn validate(app: &SolveApp, t: &Tool) -> Result<(), String> {
         }
         match dimension.label {
             "Angle" => {}
+            "Sweep" if t.cmd == "sketch.slot.arc_center" && value <= 0.0 => {
+                return Err("Arc slot Sweep must be greater than zero and less than 360 degrees".into());
+            }
             "Sweep" if value.abs() > 1e-9 && value.abs() < std::f64::consts::TAU - 1e-9 => {}
             "Sweep" => return Err("Sweep must lie strictly between -360 and 360 degrees, and cannot be zero".into()),
             "Sides" if (3.0..=200.0).contains(&value) && value.fract() == 0.0 => {}

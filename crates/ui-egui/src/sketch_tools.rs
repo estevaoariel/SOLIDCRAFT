@@ -995,16 +995,22 @@ pub(crate) fn place_point(app: &mut SolveApp, tool: &mut Tool, p: (Vec2, Option<
         app.set_status(error, true);
         return;
     }
+    let p = crate::sketch_dims::placed(app, tool, &p);
     tool.pts.push(p);
     if n > 0 && tool.pts.len() >= n {
-        run_points(app, tool);
-        tool.pts.clear();
+        if run_points(app, tool) {
+            tool.pts.clear();
+            crate::sketch_dims::reset(tool);
+        } else {
+            tool.pts.pop();
+        }
     }
 }
 
-fn run_points(app: &mut SolveApp, t: &Tool) {
+fn run_points(app: &mut SolveApp, t: &Tool) -> bool {
     let p = &t.pts;
     let width = |a: Vec2, b: Vec2, c: Vec2| -> f64 { 2.0 * (b - a).normalized().map(|d| d.cross(c - a).abs()).unwrap_or(1.0) };
+    let slot_width = |fallback: f64| crate::sketch_dims::locked_value(app, t, "Width").unwrap_or_else(|| fallback.max(1e-3));
     let params = match (t.cmd, p.as_slice()) {
         ("sketch.line.midpoint", [m, e]) => json!({"mid": arg(m), "end": xy(e.0)}),
         ("sketch.arc.tangent", [s, e]) => json!({"start": arg(s), "end": xy(e.0)}),
@@ -1014,28 +1020,28 @@ fn run_points(app: &mut SolveApp, t: &Tool) {
             let rho = crate::sketch_dims::locked_value(app, t, "Rho").unwrap_or(0.5);
             json!({"start": arg(a), "end": arg(b), "apex": arg(x), "rho": rho})
         }
-        ("sketch.slot.center_point", [c, e, w]) => json!({"center": xy(c.0), "end": xy(e.0), "width": width(c.0, e.0, w.0).max(1e-3)}),
+        ("sketch.slot.center_point", [c, e, w]) => json!({"center": xy(c.0), "end": xy(e.0), "width": slot_width(width(c.0, e.0, w.0))}),
         ("sketch.slot.arc_three_point", [a, th, b, w]) => {
-            json!({"start": xy(a.0), "through": xy(th.0), "end": xy(b.0), "width": (2.0 * w.0.dist(b.0)).max(1e-3)})
+            json!({"start": xy(a.0), "through": xy(th.0), "end": xy(b.0), "width": slot_width(2.0 * w.0.dist(b.0))})
         }
         ("sketch.slot.arc_center", [c, a, b, w]) => {
             let r = c.0.dist(a.0);
-            json!({"center": xy(c.0), "start": xy(a.0), "end": xy(b.0), "width": (2.0 * (w.0.dist(c.0) - r).abs()).max(1e-3)})
+            json!({"center": xy(c.0), "start": xy(a.0), "end": xy(b.0), "width": slot_width(2.0 * (w.0.dist(c.0) - r).abs())})
         }
         ("sketch.spline.fit_point" | "sketch.spline.control_point" | "sketch.spline.control_point_5", pts) if pts.len() >= 2 => {
             json!({"points": pts.iter().map(arg).collect::<Vec<_>>()})
         }
         ("sketch.blend_curve", [a, b]) => match (&a.1, &b.1) {
             (Some(x), Some(y)) => json!({"a": x, "b": y}),
-            _ => return,
+            _ => return false,
         },
         ("sketch.text", [at]) => {
             crate::sketch_text::place(app, at.0, round_nice(app.cam.half_height() * 0.1));
-            return;
+            return true;
         }
-        _ => return,
+        _ => return false,
     };
-    let _ = app.run(t.cmd, params);
+    crate::tools::draw(app, t, params).is_ok()
 }
 
 fn run_entities(app: &mut SolveApp, t: &Tool) {
@@ -1169,8 +1175,14 @@ pub fn preview(app: &SolveApp, t: &Tool, painter: &egui::Painter, proj: &Proj) {
             crate::tools::paint_sketch_path(&[ss.plane.to_world(last.0), hw], mode, painter, proj, stroke);
         }
     }
-    if let Some((h, _)) = t.hover.as_ref()
-        && let Some(curve) = crate::tools::preview_curve(t, *h, None, crate::sketch_dims::locked_value(app, t, "Rho"), None)
+    if let Some(hover) = t.hover.as_ref()
+        && let Some(curve) = crate::tools::preview_curve(
+            t,
+            crate::sketch_dims::shown(app, t, hover),
+            None,
+            crate::sketch_dims::locked_value(app, t, "Rho"),
+            crate::sketch_dims::locked_value(app, t, "Width"),
+        )
     {
         crate::tools::paint_preview_curve(curve, &ss.plane, painter, proj, stroke, crate::sketch_palette::mode(app));
     }

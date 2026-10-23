@@ -399,7 +399,7 @@ pub fn place(app: &mut SolveApp, p: (Vec2, Option<String>)) {
 }
 
 /// Geometry and typed constraints are committed atomically, as one undo step.
-fn draw(app: &mut SolveApp, t: &Tool, params: Value) -> Result<Value, String> {
+pub(crate) fn draw(app: &mut SolveApp, t: &Tool, params: Value) -> Result<Value, String> {
     let dimensions = crate::sketch_dims::dimensions(t);
     if dimensions.as_object().is_none_or(|values| values.is_empty()) {
         app.run(t.cmd, params)
@@ -738,6 +738,7 @@ pub(crate) fn preview_curve(
                 let (start, end) = if span(*b) < span(*c) { (*a, *c) } else { (*c, *a) };
                 (centre, start, end, centre.dist(*a), (2.0 * hover.dist(*c)).max(1e-3))
             };
+            let width = slot_width.unwrap_or(width);
             let t0 = (start - centre).angle();
             let sweep = ((end - centre).angle() - t0).rem_euclid(std::f64::consts::TAU);
             let half = width * 0.5;
