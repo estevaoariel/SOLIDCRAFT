@@ -181,6 +181,13 @@ Grok Build also supports `XAI_API_KEY` for users who choose API authentication.
   same tools, limits and questions as for a coding agent, and at most 24 model requests per
   message.
 
+For Ollama, choosing a model checks its reported capabilities in the background. If its
+capabilities list lacks `tools`, a warning below the model picker explains that the model can
+only chat and suggests choosing one with tool support. Results are cached in memory per base URL and
+model, with a limit of 128 entries. SolidCraft recognises Ollama through `/api/version` at the
+endpoint's origin or the Ollama preset. Failed checks and older servers without a capabilities
+field show no warning. The check never blocks sending a message.
+
 ## Signing in
 
 If a coding agent isn't signed in, it says so and the panel shows **Sign in to the agent** with
