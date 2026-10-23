@@ -47,6 +47,23 @@ pub struct ParamsDialog {
     /// How many times the rows were listed and the add row checked (for the tests).
     pub lists: u32,
     pub checks: u32,
+    /// Measured model groups keep their scroll space without rebuilding offscreen tables.
+    group_layout: Option<GroupLayout>,
+    group_sizes: std::collections::HashMap<String, egui::Vec2>,
+    #[cfg(test)]
+    groups_drawn: usize,
+}
+
+#[derive(PartialEq)]
+struct GroupLayout {
+    revision: u64,
+    filter: String,
+    width: f32,
+    pixels_per_point: f32,
+    style: Arc<egui::Style>,
+    font: String,
+    system_fonts: bool,
+    language: &'static str,
 }
 
 impl ParamsDialog {
@@ -233,20 +250,42 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     table(app, ui, &mut d, &users, "user");
                 });
                 ui_kit::section(ui, "models", "Model Parameters", true, |ui| {
-                    let mut groups = Vec::new();
+                    // Group once, in listing order, rather than scanning every parameter for
+                    // each feature on every frame (#2733).
+                    let mut groups: Vec<(&str, Vec<&Row>)> = Vec::new();
+                    let mut indices = std::collections::HashMap::new();
                     for r in visible.iter().filter(|r| r.source != "user") {
-                        if !groups.contains(&r.group) {
-                            groups.push(r.group.clone());
+                        let index = *indices.entry(r.group.as_str()).or_insert_with(|| {
+                            groups.push((&r.group, Vec::new()));
+                            groups.len() - 1
+                        });
+                        if let Some((_, members)) = groups.get_mut(index) {
+                            members.push(r);
                         }
                     }
                     ui.scope(|ui| {
                         ui.spacing_mut().indent = crate::theme::Tokens::get().space_14;
                         ui.indent("model_groups", |ui| {
-                            for group in groups {
-                                let members: Vec<_> = visible.iter().copied().filter(|r| r.source != "user" && r.group == group).collect();
-                                ui_kit::section_count(ui, ("pgroup", &group), &group, true, Some(members.len()), |ui| {
-                                    table(app, ui, &mut d, &members, &group)
-                                });
+                            let layout = GroupLayout {
+                                revision: app.session.revision,
+                                filter: filter.clone(),
+                                width: ui.available_width(),
+                                pixels_per_point: ui.ctx().pixels_per_point(),
+                                style: ui.style().clone(),
+                                font: app.applied_ui_font.clone(),
+                                system_fonts: app.applied_system_fonts,
+                                language: crate::i18n::language(),
+                            };
+                            if d.group_layout.as_ref() != Some(&layout) {
+                                d.group_sizes.clear();
+                                d.group_layout = Some(layout);
+                            }
+                            #[cfg(test)]
+                            {
+                                d.groups_drawn = 0;
+                            }
+                            for (group, members) in groups {
+                                model_group(app, ui, &mut d, group, &members);
                             }
                         });
                     });
@@ -269,6 +308,31 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     if !close {
         app.params = Some(d);
     }
+}
+
+fn model_group(app: &mut SolveApp, ui: &mut egui::Ui, d: &mut ParamsDialog, group: &str, rows: &[&Row]) {
+    // Focused editors and pending drafts must still receive focus-loss/commit events after
+    // scrolling away. The measured size is used only while the group is idle.
+    let active = ui.ctx().egui_wants_keyboard_input()
+        || rows.iter().any(|r| {
+            d.editing.contains_key(&r.name) || d.comments.contains_key(&r.name) || d.renaming.as_ref().is_some_and(|(old, _)| *old == r.name)
+        });
+    let measured = d.group_sizes.get(group).copied();
+    let response = ui.push_id(("parameter_group", group), |ui| {
+        if !active
+            && let Some(size) = measured
+            && !ui.is_rect_visible(egui::Rect::from_min_size(ui.next_widget_position(), size))
+        {
+            ui.allocate_space(size);
+            return;
+        }
+        #[cfg(test)]
+        {
+            d.groups_drawn += 1;
+        }
+        ui_kit::section_count(ui, ("pgroup", group), group, true, Some(rows.len()), |ui| table(app, ui, d, rows, group));
+    });
+    d.group_sizes.insert(group.to_owned(), response.response.rect.size());
 }
 
 /// Live check of an expression typed for a parameter of this unit: Ok(shown value) or the message.
@@ -777,6 +841,81 @@ mod tests {
         let open = frame_ms(&mut h, 20);
         assert!(h.app.params.is_some());
         eprintln!("params frame time: closed {closed:.2} ms, open {open:.2} ms");
+    }
+
+    /// #2733: many feature groups, rather than only many user parameters.
+    fn many_feature_groups() -> crate::scenario::Harness {
+        use solidcraft_engine::doc::{Document, FeatureKind, PlaneRef};
+        let mut doc = Document::default();
+        for i in 0..51 {
+            doc.add_user_param(&format!("p{i}"), "10 mm", None, None).unwrap();
+        }
+        for i in 0..740 {
+            doc.add_feature(
+                FeatureKind::ConstructionPlane {
+                    plane: PlaneRef::Offset { base: Box::new(PlaneRef::Origin { name: "XY".into() }), distance: format!("{} mm", i + 1).into() },
+                },
+                Some(&format!("Plane{i}")),
+            )
+            .unwrap();
+        }
+        let mut h = crate::scenario::Harness::new();
+        h.app.home.open = false;
+        h.app.session = solidcraft_engine::Session::new(doc);
+        h.app.ui.show_origin = false;
+        h
+    }
+
+    #[test]
+    fn params_many_feature_groups_frame_time() {
+        let mut h = many_feature_groups();
+        h.frames(5);
+        let closed = frame_ms(&mut h, 20);
+        h.app.start("parameters.change");
+        h.frames(5);
+        let open = frame_ms(&mut h, 20);
+        let listed = &h.app.params.as_ref().unwrap().listed.as_ref().unwrap().1;
+        assert_eq!(listed.iter().filter(|r| r.source == "feature").count(), 740);
+        assert!(h.app.params.as_ref().unwrap().groups_drawn < 10, "offscreen feature groups must not build tables on idle frames");
+        eprintln!("740 feature groups: closed {closed:.2} ms, open {open:.2} ms");
+    }
+
+    #[test]
+    fn model_groups_keep_scroll_geometry_and_editability() {
+        let mut h = many_feature_groups();
+        h.app.start("parameters.change");
+        h.frames(5);
+        let height = crate::scenario::count_of("dialog:body:content_height").unwrap();
+        let sizes = h.app.params.as_ref().unwrap().group_sizes.clone();
+        h.frames(20);
+        assert_eq!(h.app.params.as_ref().unwrap().group_sizes, sizes, "skipping groups must preserve their measured size");
+        let last = h.app.params.as_ref().unwrap().listed.as_ref().unwrap().1.iter().find(|r| r.group == "Plane739").unwrap().name.clone();
+        let viewport = crate::scenario::rect_of("dialog:body:viewport").unwrap();
+        h.call("ui.scroll", json!({"x":viewport.center().x,"y":viewport.center().y,"delta":-100_000}));
+        h.frames(40);
+        assert!((crate::scenario::count_of("dialog:body:content_height").unwrap() - height).abs() < 1.0);
+        let at = crate::scenario::handle_at(&format!("param:{last}")).unwrap();
+        assert!(crate::scenario::rect_of("dialog:body:viewport").unwrap().contains(at), "the last parameter remains reachable");
+        assert!(h.app.params.as_ref().unwrap().groups_drawn < 10);
+        h.step(&json!({"click":{"handle":format!("param:{last}")}})).unwrap();
+        h.step(&json!({"key":"A","cmd":true})).unwrap();
+        h.step(&json!({"text":"900 mm"})).unwrap();
+        h.step(&json!({"key":"Enter"})).unwrap();
+        h.settle();
+        let value = |h: &crate::scenario::Harness| {
+            h.app.params.as_ref().unwrap().listed.as_ref().unwrap().1.iter().find(|r| r.name == last).unwrap().value.unwrap()
+        };
+        assert_eq!(value(&h), 900.0);
+        h.app.run("edit.undo", json!({})).unwrap();
+        h.frames(3);
+        assert_eq!(value(&h), 740.0);
+        h.app.run("edit.redo", json!({})).unwrap();
+        h.frames(3);
+        assert_eq!(value(&h), 900.0);
+        h.app.params.as_mut().unwrap().filter = "Plane739".into();
+        h.frames(5);
+        assert_eq!(h.app.params.as_ref().unwrap().group_sizes.len(), 1, "filtering invalidates the group layout");
+        assert!(crate::scenario::handle_at(&format!("param:{last}")).is_some());
     }
 
     /// #2919: the add row starts blank; a blank expression shows no error and adds nothing, and
