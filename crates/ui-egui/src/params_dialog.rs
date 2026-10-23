@@ -58,6 +58,11 @@ impl ParamsDialog {
     pub fn new() -> Self {
         ParamsDialog { reset_scroll: true, ..Default::default() }
     }
+    /// List the parameters and linked designs again on the next frame (a linked file changed).
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub(crate) fn relist(&mut self) {
+        self.listed = None;
+    }
     /// The command the live preview should run (a valid expression being edited).
     pub fn preview_commands(&self) -> Option<Vec<(String, Value)>> {
         let (n, e) = self.preview.as_ref()?;
@@ -91,20 +96,29 @@ struct Linked {
 }
 
 impl Linked {
-    /// The design's name (its file's name without `.solidcraft`), shown as the group's title.
     fn title(&self) -> &str {
-        let file = self.file.rsplit(['/', '\\']).next().unwrap_or(&self.file);
-        file.strip_suffix(".solidcraft").unwrap_or(file)
+        design_title(&self.file)
     }
 
     fn state_label(&self) -> &'static str {
-        match self.state.as_str() {
-            "up_to_date" => "Up to date",
-            "out_of_date" => "Changed since last update",
-            "missing" => "File not found: using the values last read",
-            "not_allowed" => "Outside the folders this agent may use: using the values last read",
-            _ => "Can't read the file: using the values last read",
-        }
+        state_label(&self.state)
+    }
+}
+
+/// A linked design's name (its file's name without `.solidcraft`), shown as its group's title.
+pub(crate) fn design_title(file: &str) -> &str {
+    let name = file.rsplit(['/', '\\']).next().unwrap_or(file);
+    name.strip_suffix(".solidcraft").unwrap_or(name)
+}
+
+/// What a linked design's state (`parameters.links`) means for the user, as a catalog label.
+pub(crate) fn state_label(state: &str) -> &'static str {
+    match state {
+        "up_to_date" => "Up to date",
+        "out_of_date" => "Changed since last update",
+        "missing" => "File not found: using the values last read",
+        "not_allowed" => "Outside the folders this agent may use: using the values last read",
+        _ => "Can't read the file: using the values last read",
     }
 }
 

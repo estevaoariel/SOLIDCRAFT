@@ -289,39 +289,69 @@ fn break_link(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"design": kept(s, &path), "parameters": names}))
 }
 
-/// Where a linked design stands against its file. Reading the file to compare values is the
-/// costly part, so it happens only when someone asks ([`list_links`]), not on open.
-fn state(s: &Session, design: &LinkedDesign) -> Value {
+/// Where a linked design stands against its file.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LinkedState {
+    /// The linked design's file (as resolved).
+    pub file: String,
+    /// `up_to_date`, `out_of_date`, `missing`, `unreadable` or `not_allowed` (outside the folders
+    /// this agent may use).
+    pub state: &'static str,
+    /// Parameters whose value differs in the file, or that it has and this design hasn't yet.
+    pub changed: Vec<String>,
+    pub error: Option<String>,
+}
+
+impl LinkedState {
+    /// Anything but up to date: the values in use are not the file's.
+    pub fn needs_attention(&self) -> bool {
+        self.state != "up_to_date"
+    }
+}
+
+/// Where each linked design stands against its file. Reading the files to compare values is
+/// the costly part, so it happens when someone asks (`parameters.links`, the desktop window's
+/// watcher on its own thread), never on open. It needs no session, so it can run anywhere.
+pub fn linked_design_states(designs: &[LinkedDesign]) -> Vec<LinkedState> {
+    designs.iter().map(linked_state).collect()
+}
+
+fn linked_state(design: &LinkedDesign) -> LinkedState {
     let file = Path::new(&design.path);
-    let mut out = json!({"design": kept(s, &design.path), "file": design.path, "scope": design.scope,
-        "parameters": design.params.len(), "changed": []});
+    let out = |state, changed, error| LinkedState { file: design.path.clone(), state, changed, error };
     if let Some((state, why)) = file_state(file) {
-        out["state"] = json!(state);
-        out["error"] = json!(why);
-        return out;
+        return out(state, Vec::new(), Some(why));
     }
     match read_design(file).and_then(|d| shared(&d, design.scope, &design.path)) {
         Ok(now) => {
-            let changed: Vec<&str> = design
+            let changed: Vec<String> = design
                 .params
                 .iter()
                 .filter(|o| now.iter().find(|x| x.name == o.name).is_none_or(|x| x.expr != o.expr))
-                .map(|o| o.name.as_str())
-                .chain(now.iter().filter(|x| !design.params.iter().any(|o| o.name == x.name)).map(|x| x.name.as_str()))
+                .map(|o| o.name.clone())
+                .chain(now.iter().filter(|x| !design.params.iter().any(|o| o.name == x.name)).map(|x| x.name.clone()))
                 .collect();
-            out["state"] = json!(if changed.is_empty() { "up_to_date" } else { "out_of_date" });
-            out["changed"] = json!(changed);
+            out(if changed.is_empty() { "up_to_date" } else { "out_of_date" }, changed, None)
         }
-        Err(e) => {
-            out["state"] = json!("unreadable");
-            out["error"] = json!(e.to_string());
-        }
+        Err(e) => out("unreadable", Vec::new(), Some(e.to_string())),
     }
-    out
 }
 
 fn list_links(s: &mut Session, _p: &Value) -> Result<Value> {
-    let designs: Vec<Value> = s.doc.linked_designs.iter().map(|x| state(s, x)).collect();
+    let designs: Vec<Value> = s
+        .doc
+        .linked_designs
+        .iter()
+        .zip(linked_design_states(&s.doc.linked_designs))
+        .map(|(d, st)| {
+            let mut v = json!({"design": kept(s, &d.path), "file": st.file, "scope": d.scope, "parameters": d.params.len(),
+                "state": st.state, "changed": st.changed});
+            if let Some(e) = st.error {
+                v["error"] = json!(e);
+            }
+            v
+        })
+        .collect();
     Ok(json!({"designs": designs}))
 }
 
