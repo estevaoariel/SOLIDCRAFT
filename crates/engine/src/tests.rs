@@ -3941,6 +3941,64 @@ fn renaming_an_imported_assembly_body_reads_nothing_again() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// #2467: renaming a body that later features change (a hole patterned over it, then a chamfer)
+/// evaluates nothing, and leaves the bodies, volumes and face names evaluating the renamed
+/// design gives; undo and redo do the same.
+#[test]
+fn renaming_a_body_later_features_change_evaluates_nothing() {
+    let mut s = Session::default();
+    run(&mut s, "sketch.create", json!({"plane": "XY"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [80, 50]}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"distance": 10}));
+    run(
+        &mut s,
+        "solid.hole",
+        json!({"position": [15, 12, 10], "diameter": 5, "type": "counterbore", "cb_diameter": 9, "cb_depth": 3, "name": "Hole1"}),
+    );
+    run(
+        &mut s,
+        "solid.pattern.rectangular",
+        json!({"features": ["Hole1"], "dir1": [1, 0, 0], "count1": 3, "spacing1": 25, "dir2": [0, 1, 0], "count2": 2, "spacing2": 25}),
+    );
+    run(&mut s, "solid.chamfer", json!({"edges": [[40, 0, 10], [80, 25, 10]], "distance": 1}));
+    let looks = |st: &solidcraft_doc::ModelState| {
+        st.bodies.iter().map(|b| (b.name.clone(), (*solidcraft_doc::naming::face_names(b)).clone())).collect::<Vec<_>>()
+    };
+    let before = looks(&s.model.state());
+    let v = body_volume(&s.model.state());
+    let old = before.first().map(|b| b.0.clone()).unwrap();
+    s.evaluations = 0;
+    run(&mut s, "body.rename", json!({"body": old, "name": "Plate"}));
+    assert_eq!(s.evaluations, 0, "a rename evaluates nothing");
+    let after = looks(&s.model.state());
+    assert_eq!(after.first().map(|b| b.0.as_str()), Some("Plate"));
+    let mut fresh = Session::new((*s.doc).clone());
+    fresh.refresh();
+    assert_eq!(looks(&fresh.model.state()), after, "the bodies and face names evaluating the renamed design gives");
+    assert!(rel(body_volume(&fresh.model.state()), v) < 1e-9);
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(looks(&s.model.state()), before);
+    run(&mut s, "edit.redo", json!({}));
+    assert_eq!(looks(&s.model.state()), after);
+    assert_eq!(s.evaluations, 0, "nor do its undo and redo");
+}
+
+/// A body whose name later bodies' names are worked out from (`X` patterned into `X (2)`) is still
+/// renamed by evaluating the design, so the copies follow it as they would on opening it.
+#[test]
+fn renaming_a_body_whose_copies_take_its_name_evaluates_the_design() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "body_name": "X"}));
+    run(&mut s, "solid.pattern.rectangular", json!({"bodies": ["X"], "dir1": [1, 0, 0], "count1": 3, "spacing1": 20}));
+    let names = |s: &Session| s.model.state().bodies.iter().map(|b| b.name.clone()).collect::<Vec<_>>();
+    assert!(names(&s).iter().any(|n| n.starts_with("X (")), "{:?}", names(&s));
+    run(&mut s, "body.rename", json!({"body": "X", "name": "First"}));
+    let mut fresh = Session::new((*s.doc).clone());
+    fresh.refresh();
+    assert_eq!(names(&fresh), names(&s));
+}
+
 /// #3044: on a design with thousands of bodies the cheap commands stay cheap: showing, hiding,
 /// selecting, colouring and renaming a body or a feature, and undoing them, recompute no feature
 /// (renames don't even look over the timeline) and leave every body's display mesh as it was, so
