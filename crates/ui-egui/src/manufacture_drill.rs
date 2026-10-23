@@ -47,6 +47,7 @@ pub fn open(app: &mut SolveApp, setup_name: &str, op_index: usize) {
     app.manufacture_workspace.twod_dialog = None;
     app.manufacture_workspace.hole_rec_dialog = None;
     app.manufacture_workspace.threed_dialog = None;
+    app.manufacture_workspace.multiaxis_dialog = None;
     app.manufacture_workspace.drill_dialog =
         Some(DrillDialogState { setup_name: setup_name.to_string(), op_index, draft: op, tab: DrillDialogTab::Tool });
     app.manufacture_workspace.tab = crate::manufacture_workspace::MfgTab::Drill;

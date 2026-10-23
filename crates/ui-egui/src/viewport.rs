@@ -3711,6 +3711,7 @@ fn overlays(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
     crate::manufacture_drill::paint_overlays(app, painter, proj);
     crate::manufacture_hole_recognition::paint_overlays(app, painter, proj);
     crate::manufacture_3d::paint_overlays(app, painter, proj);
+    crate::manufacture_multiaxis::paint_overlays(app, painter, proj);
     let t = Tokens::get();
     let st = crate::open_meshing::shown_world(app);
     for item in &app.session.selection {

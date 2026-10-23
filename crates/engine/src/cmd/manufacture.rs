@@ -146,6 +146,42 @@ pub static COMMANDS: &[CommandSpec] = &[
         .doc_only()
         .at("MANUFACTURE", "3D")
         .params("Opens a 3D Flat operation on the active Manufacture setup. Document writes go through manufacture.settings.set."),
+    CommandSpec::new("manufacture.multiaxis.swarf", "Swarf", twod_open)
+        .icon("settings")
+        .noundo()
+        .doc_only()
+        .at("MANUFACTURE", "MULTI-AXIS")
+        .params("Opens a Swarf operation on the active Manufacture setup. Document writes go through manufacture.settings.set."),
+    CommandSpec::new("manufacture.multiaxis.rough", "MA Rough", twod_open)
+        .icon("settings")
+        .noundo()
+        .doc_only()
+        .at("MANUFACTURE", "MULTI-AXIS")
+        .params("Opens Multi-Axis Roughing on the active Manufacture setup. Document writes go through manufacture.settings.set."),
+    CommandSpec::new("manufacture.multiaxis.rotary", "Rotary", twod_open)
+        .icon("settings")
+        .noundo()
+        .doc_only()
+        .at("MANUFACTURE", "MULTI-AXIS")
+        .params("Opens Rotary Parallel on the active Manufacture setup. Document writes go through manufacture.settings.set."),
+    CommandSpec::new("manufacture.multiaxis.finish", "MA Finish", twod_open)
+        .icon("settings")
+        .noundo()
+        .doc_only()
+        .at("MANUFACTURE", "MULTI-AXIS")
+        .params("Opens Multi-Axis Finishing on the active Manufacture setup. Document writes go through manufacture.settings.set."),
+    CommandSpec::new("manufacture.multiaxis.contour", "MA Contour", twod_open)
+        .icon("settings")
+        .noundo()
+        .doc_only()
+        .at("MANUFACTURE", "MULTI-AXIS")
+        .params("Opens Multi-Axis Contour on the active Manufacture setup. Document writes go through manufacture.settings.set."),
+    CommandSpec::new("manufacture.multiaxis.adv_swarf", "Adv. Swarf", twod_open)
+        .icon("settings")
+        .noundo()
+        .doc_only()
+        .at("MANUFACTURE", "MULTI-AXIS")
+        .params("Opens Advanced Swarf on the active Manufacture setup. Document writes go through manufacture.settings.set."),
 ];
 
 // ── Settings get ───────────────────────────────────────────────────────────────
@@ -341,6 +377,24 @@ mod tests {
             "manufacture.3d.steep",
             "manufacture.3d.contour",
             "manufacture.3d.flat",
+        ];
+        for id in IDS {
+            let mut s = Session::default();
+            let r = s.execute(id, &json!({})).unwrap();
+            assert_eq!(r["opened"], true, "{id}");
+            assert!(s.doc.manufacture.setups.is_empty(), "{id}");
+        }
+    }
+
+    #[test]
+    fn multiaxis_commands_are_display_only() {
+        const IDS: &[&str] = &[
+            "manufacture.multiaxis.swarf",
+            "manufacture.multiaxis.rough",
+            "manufacture.multiaxis.rotary",
+            "manufacture.multiaxis.finish",
+            "manufacture.multiaxis.contour",
+            "manufacture.multiaxis.adv_swarf",
         ];
         for id in IDS {
             let mut s = Session::default();
