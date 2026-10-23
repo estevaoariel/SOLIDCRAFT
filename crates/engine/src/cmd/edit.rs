@@ -1051,6 +1051,30 @@ fn newly_broken(before: &solidcraft_doc::Model, after: &solidcraft_doc::Model) -
         .collect()
 }
 
+/// [`newly_broken`] over the whole history, from `before` (the model of `before_doc`) to `after`
+/// (the model of `after_doc`). With the history rolled back, the features after the marker are
+/// evaluated too, on copies of the models (which share their cache): a delete made in the
+/// rolled-back history that breaks them says so before it is made, rather than leaving error marks
+/// that only show at the end of the timeline (#3471).
+pub(super) fn newly_broken_in_history(
+    before_doc: &solidcraft_doc::Document,
+    before: &solidcraft_doc::Model,
+    after_doc: &solidcraft_doc::Document,
+    after: &solidcraft_doc::Model,
+) -> Vec<(String, String)> {
+    if before_doc.marker.is_none() && after_doc.marker.is_none() {
+        return newly_broken(before, after);
+    }
+    let whole = |doc: &solidcraft_doc::Document, model: &solidcraft_doc::Model| {
+        let mut doc = doc.clone();
+        doc.marker = None;
+        let mut model = model.clone();
+        model.evaluate(&doc);
+        model
+    };
+    newly_broken(&whole(before_doc, before), &whole(after_doc, after))
+}
+
 fn reorder(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "timeline.reorder";
     let id = feature_id(s, p.get("feature"), cmd)?;
@@ -1341,7 +1365,7 @@ fn dependents(s: &mut Session, p: &Value) -> Result<Value> {
     let mut after = s.model.clone();
     after.evaluate(&next);
     let names = |ids: &[u64]| -> Vec<String> { ids.iter().filter(|x| **x != id).filter_map(|x| s.doc.feature(*x).map(|f| f.name.clone())).collect() };
-    let broken: Vec<String> = newly_broken(&s.model, &after).into_iter().map(|(n, _)| n).collect();
+    let broken: Vec<String> = newly_broken_in_history(&s.doc, &s.model, &next, &after).into_iter().map(|(n, _)| n).collect();
     Ok(json!({"deleted_with_it": names(&gone), "would_fail": broken}))
 }
 

@@ -61,6 +61,7 @@ fn apply(s: &mut Session, p: &Value) -> Result<Value> {
         }
     }
     let before = s.model.clone();
+    let before_doc = s.doc.clone();
     let mut joints = p
         .get("joints")
         .and_then(Value::as_array)
@@ -182,13 +183,9 @@ fn apply(s: &mut Session, p: &Value) -> Result<Value> {
     }
     s.refresh();
     let deleted: Vec<&String> = features_before.iter().filter(|(id, _)| s.doc.feature(*id).is_none()).map(|(_, n)| n).collect();
-    let would_fail: Vec<String> = s
-        .model
-        .results
-        .iter()
-        .filter(|r| r.error.is_some() && before.result(r.id).is_some_and(|b| b.error.is_none() && !b.skipped))
-        .map(|r| r.name.clone())
-        .collect();
+    // Features after a rolled-back marker count too (#3471).
+    let would_fail: Vec<String> =
+        super::edit::newly_broken_in_history(&before_doc, &before, &s.doc, &s.model).into_iter().map(|(name, _)| name).collect();
     Ok(json!({ "deleted": deleted, "deleted_joints": joints, "bodies": bodies, "would_fail": would_fail, "skipped": skipped }))
 }
 
@@ -233,6 +230,36 @@ mod tests {
         run(&mut s, "edit.undo", json!({}));
         assert_eq!(s.doc.features.len(), n);
         assert_eq!(bodies(&s), 2);
+    }
+
+    /// With the history rolled back, the checks before a delete look past the marker too (#3471):
+    /// deleting the plate (or its extrude) there breaks the hole cut after the marker, and the
+    /// confirmation must say so instead of the hole's error mark turning up only at the end.
+    #[test]
+    fn the_checks_before_a_delete_in_a_rolled_back_history_see_the_features_after_the_marker() {
+        let mut s = Session::default();
+        run(&mut s, "sketch.create", json!({"plane": "XY"}));
+        run(&mut s, "sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [40, 20]}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "solid.extrude", json!({"distance": 5, "name": "Plate"}));
+        run(&mut s, "solid.cylinder", json!({"base": [20, 10, -1], "radius": 2, "height": 10, "operation": "cut", "name": "Hole"}));
+        let body = s.model.state().bodies[0].name.clone();
+        let plate = s.doc.find_feature("Plate").unwrap().id;
+        for marker in [None, Some(2)] {
+            run(&mut s, "timeline.roll_to", marker.map_or(json!({}), |m| json!({"position": m})));
+            let doc = s.doc.clone();
+            let dry = run(&mut s, "selection.delete", json!({"items": [{"type": "body", "name": body}], "dry_run": true}));
+            // At the end the plate's Remove goes after the hole; rolled back, before it.
+            let breaks = if marker.is_some() { json!(["Hole"]) } else { json!([]) };
+            assert_eq!(dry["would_fail"], breaks, "marker {marker:?}: {dry}");
+            let deps = run(&mut s, "timeline.dependents", json!({"feature": plate}));
+            assert_eq!(deps["would_fail"], json!(["Hole"]), "marker {marker:?}: {deps}");
+            assert_eq!(*s.doc, *doc, "the checks change nothing");
+            assert!(s.model.result(s.doc.find_feature("Hole").unwrap().id).is_some_and(|r| r.skipped == marker.is_some() && r.error.is_none()));
+        }
+        // Deleting anyway (rolled back) still reports what it broke.
+        let done = run(&mut s, "selection.delete", json!({"items": [{"type": "body", "name": body}]}));
+        assert_eq!(done["would_fail"], json!(["Hole"]), "{done}");
     }
 
     #[test]
