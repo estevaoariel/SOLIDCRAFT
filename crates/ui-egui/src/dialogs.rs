@@ -2078,7 +2078,7 @@ fn error_rows(app: &mut SolveApp, ctx: &egui::Context, d: &mut Dialog, ui: &mut 
             return;
         }
         ui.vertical(|ui| {
-            crate::ui_kit::text(ui, &error, crate::ui_kit::Text::Report("error", true));
+            crate::ui_kit::text(ui, &shown_error(&error), crate::ui_kit::Text::Report("error", true));
             let response = crate::ui_kit::button(ui, "Create Issue…", crate::ui_kit::Button::Normal);
             crate::scenario::publish_handle("dialog:create_issue", response.rect.center());
             if response.clicked() {
@@ -2086,6 +2086,14 @@ fn error_rows(app: &mut SolveApp, ctx: &egui::Context, d: &mut Dialog, ui: &mut 
             }
         });
     }
+}
+
+/// A refusal as the dialog shows it: without the engine's "invalid parameters for `id`: "
+/// prefix (the dialog already names the command), and in the interface language when the
+/// message is in the catalogs.
+fn shown_error(error: &str) -> String {
+    let msg = error.strip_prefix("invalid parameters for `").and_then(|rest| rest.split_once("`: ")).map_or(error, |(_, msg)| msg);
+    crate::i18n::tr_label(msg).to_string()
 }
 
 /// Find the Boundary Fill cells again when the tool bodies changed (keeping the choices of
@@ -4945,6 +4953,15 @@ mod refused_ok_tests {
         set_depth(h, "-5");
         steps(h, &[json!({"key": "Enter"})]);
         assert_eq!(h.app.dialog.as_ref().and_then(|d| d.error.as_deref()), Some("hole depth must be positive"));
+    }
+
+    #[test]
+    fn a_refusal_is_shown_without_the_engine_prefix() {
+        assert_eq!(
+            super::shown_error("invalid parameters for `sheet.flange`: there is no sheet metal body: start one with Flange > Base"),
+            "there is no sheet metal body: start one with Flange > Base"
+        );
+        assert_eq!(super::shown_error("hole depth must be positive"), "hole depth must be positive");
     }
 
     #[test]

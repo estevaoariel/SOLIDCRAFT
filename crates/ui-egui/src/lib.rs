@@ -1873,12 +1873,13 @@ pub fn command_label(id: &str) -> &str {
     solidcraft_engine::find_command(id).map_or(id, |c| c.label)
 }
 
-/// An engine error with the command's label instead of its id: "Shell: offset must be …". The
-/// label follows the interface language; the engine's sentence stays as the engine wrote it.
+/// An engine error with the command's label instead of its id: "Shell: offset must be …".
+/// The command label and catalogued engine messages follow the interface language.
 pub fn friendly_error(id: &str, e: &str) -> String {
     let label = i18n::tr_label(command_label(id));
     let msg = e.replace(&format!("invalid parameters for `{id}`: "), "").replace(&format!("{id}: "), "").replace(&format!("`{id}`"), label);
-    if msg.starts_with(label) { msg } else { format!("{label}: {msg}") }
+    let msg = i18n::tr_label(&msg);
+    if msg.starts_with(label) { msg.to_string() } else { format!("{label}: {msg}") }
 }
 
 pub fn now_ms() -> f64 {

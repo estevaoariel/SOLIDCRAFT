@@ -1362,6 +1362,7 @@
   "settings.reset_intro": "这些设置在此计算机上无法正常工作，会导致 SolidCraft 无法启动，因此已更改：",
   "settings.reset_title": "设置已更改",
   "settings.supersampling_note": "以更高分辨率绘制视图再缩小：在低于 4K 的屏幕上边、线和网格更平滑。会消耗 GPU 时间：1.5× 时约 2.25 倍像素，2× 时 4 倍。",
+  "sheet.no_body": "没有钣金实体：请使用法兰 > Base 创建，或使用转换为钣金将板材转换为钣金（选择其较大的平面）。",
   "shortcut.json_error": "参数必须采用 JSON 格式：{error}",
   "shortcut.no_command": "没有命令 `{id}`；JSON 前的文本必须是命令 ID",
   "shortcut.pin": "固定到 S 框顶部",
