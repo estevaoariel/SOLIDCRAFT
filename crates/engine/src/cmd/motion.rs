@@ -10,7 +10,7 @@ use solidcraft_geom::{Aabb3, Vec3};
 use solidcraft_kernel::Body;
 
 use super::CommandSpec;
-use super::joints::{cannot_move, effective_values, joint_id, occurrence_id, resolve_holding, value};
+use super::joints::{cannot_move, effective_values, joint_id, occurrence_id, place_holding, value};
 use crate::params::{bad, bool_, str_, vec3};
 use crate::{EngineError, Result, Session};
 
@@ -370,7 +370,7 @@ fn drive_with_contact(s: &mut Session, want: &[(u64, Vec<f64>)], given: &BTreeSe
                 j.values = q;
             }
         }
-        resolve_holding(s, &held)
+        place_holding(s, &held)
     };
     // Loops already open at the start stay as they are; a loop the motion opens stops it.
     let open_at_start: BTreeSet<u64> = set(s, 0.0).conflicts.iter().map(|c| c.0).collect();

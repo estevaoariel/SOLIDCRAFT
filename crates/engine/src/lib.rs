@@ -651,7 +651,7 @@ impl Session {
         self.prune_occurrence_state();
         // Joints follow the geometry their origins snap to.
         if !self.doc.assembly.joints.is_empty() {
-            cmd::joints::resolve(self);
+            cmd::joints::place(self);
         }
         if let Some(id) = self.active_sketch
             && self.doc.feature(id).is_none()
@@ -669,7 +669,7 @@ impl Session {
         {
             self.revision += 1;
             if !self.doc.assembly.joints.is_empty() {
-                cmd::joints::resolve(self);
+                cmd::joints::place(self);
             }
             return;
         }

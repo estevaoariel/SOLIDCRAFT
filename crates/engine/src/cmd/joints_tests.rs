@@ -977,6 +977,9 @@ fn a_part_at_a_dead_point_of_its_loop_keeps_its_mobility() {
     pin(&mut s, "revolute", "Root pin", "Ground", "Barrel", root, Vec3::Z);
     pin(&mut s, "slider", "Stroke", "Barrel", "Rod", root, Vec3::Y);
     pin(&mut s, "revolute", "Tip pin", "Rod", "Panel", tip, Vec3::Z);
+    super::solve_counts::take();
+    s.refresh();
+    assert_eq!(super::solve_counts::take().1, 0, "refresh must not repeat the singular-pose analysis");
     for part in ["Panel", "Barrel", "Rod"] {
         assert_eq!(dof_of(&mut s, part), 1, "dead point: {part}");
     }
@@ -1759,4 +1762,64 @@ fn joint_inspect_reads_only() {
     run(&mut s, "joint.inspect", json!({"joint": "Fix"}));
     assert_eq!(run(&mut s, "document.inspect", json!({}))["undo"], undo);
     assert_eq!(serde_json::to_value(&s.doc).unwrap_or_default(), before);
+}
+
+/// Trial placements use exactly the same constraints as a full solve. Only the expensive DOF
+/// report is optional: loop stops, errors and the resulting pose must not depend on it.
+#[test]
+fn placement_analysis_preserves_held_loop_constraints_and_diagnostics() {
+    use solidcraft_doc::joints::{self, Analysis};
+    use std::collections::BTreeMap;
+
+    let (s, _, _) = four_bar();
+    let rocker = s.doc.assembly.joints.iter().find(|j| j.name == "Rocker").unwrap().id;
+    let held = BTreeMap::from([((rocker, 0), 0.0)]);
+    for angle in [-10.0_f64, 40.0, 100.0] {
+        let mut doc = (*s.doc).clone();
+        doc.assembly.joints.iter_mut().find(|j| j.id == rocker).unwrap().values[0] = angle.to_radians();
+        let full = joints::solve_holding(&doc, &s.model.state(), &held);
+        let placement = joints::solve_holding_with_analysis(&doc, &s.model.state(), &held, Analysis::Placement);
+        assert!(placement.dof.is_empty(), "trial placement must not compute DOF");
+        assert_eq!(placement.world, full.world);
+        assert_eq!(placement.values, full.values);
+        assert_eq!(placement.fixed, full.fixed);
+        assert_eq!(placement.conflicts, full.conflicts);
+        assert_eq!(placement.errors, full.errors);
+        let mut placed = doc.clone();
+        placed.apply_joint_solution(&placement);
+        let mut reference = doc;
+        reference.apply_joint_solution(&full);
+        assert_eq!(placed, reference);
+        assert_eq!(joints::solve(&placed, &s.model.state()).dof, joints::solve(&reference, &s.model.state()).dof);
+    }
+    // A degenerate origin remains an error even in a placement-only trial.
+    let mut broken = (*s.doc).clone();
+    broken.assembly.joints[0].b.snap = solidcraft_doc::joints::Snap::Point { point: Vec3::ZERO, z: Some(Vec3::ZERO), x: None };
+    let full = joints::solve(&broken, &s.model.state());
+    let placement = joints::solve_holding_with_analysis(&broken, &s.model.state(), &BTreeMap::new(), Analysis::Placement);
+    assert!(!full.errors.is_empty());
+    assert_eq!(placement.errors, full.errors);
+    assert_eq!(placement.conflicts, full.conflicts);
+}
+
+/// Ordinary commands publish one complete report; refresh only updates constraint placements.
+/// Counts are deterministic work assertions, not timing thresholds tied to a test machine.
+#[test]
+fn joint_drive_and_refresh_do_not_repeat_dof_analysis() {
+    let (mut s, _, _) = four_bar();
+    for (angle, quiet) in [(17, false), (58, true), (105, false)] {
+        super::solve_counts::take();
+        let r = run(&mut s, "joint.drive", json!({"joint":"Crank", "value":angle, "quiet":quiet}));
+        let (all, full) = super::solve_counts::take();
+        assert!(all > full, "placement trials must still run");
+        assert_eq!(full, usize::from(!quiet), "only a published DOF report needs full analysis");
+        let expected = super::sol_json(&solidcraft_doc::joints::solve(&s.doc, &s.model.state()), &json!({"quiet":quiet}));
+        for key in ["dof", "fixed", "errors", "conflicts"] {
+            assert_eq!(r.get(key), expected.get(key), "{key}: {r}");
+        }
+        let before = s.doc.clone();
+        s.refresh();
+        assert_eq!(super::solve_counts::take().1, 0, "refresh discards the DOF report");
+        assert_eq!(*s.doc, *before);
+    }
 }
