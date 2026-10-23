@@ -3546,6 +3546,36 @@ fn a_pattern_repeats_a_fillet_on_the_edges_it_found() {
     assert!(rel(volume(&mut s), expect) < 1e-5, "{} vs {expect}", volume(&mut s));
 }
 
+/// A body renamed after a join: the next new body does not take the name the rename freed
+/// (#4957). The join changed the body, so the rename is followed by a full evaluation of the
+/// design; the numbers the design handed out must not go back with it, or a script that names
+/// a body finds another one.
+#[test]
+fn a_renamed_body_keeps_its_number_from_the_next_body() {
+    for join in [false, true] {
+        let mut s = Session::default();
+        run(&mut s, "sketch.create", json!({"plane": "XY"}));
+        run(&mut s, "sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [10, 10]}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "solid.extrude", json!({"distance": 5, "operation": "new"}));
+        if join {
+            // A second box joined to the first: the join changes the body, so the rename
+            // cannot be followed without evaluating the design again.
+            run(&mut s, "sketch.create", json!({"plane": "XY"}));
+            run(&mut s, "sketch.rectangle.two_point", json!({"p0": [5, 0], "p1": [15, 10]}));
+            run(&mut s, "sketch.finish", json!({}));
+            run(&mut s, "solid.extrude", json!({"distance": 5, "operation": "join"}));
+        }
+        run(&mut s, "body.rename", json!({"body": "Body1", "name": "First"}));
+        run(&mut s, "sketch.create", json!({"plane": "XY"}));
+        run(&mut s, "sketch.rectangle.two_point", json!({"p0": [20, 0], "p1": [30, 10]}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "solid.extrude", json!({"distance": 5, "operation": "new"}));
+        let names: Vec<String> = s.model.state().bodies.iter().map(|b| b.name.clone()).collect();
+        assert_eq!(names, ["First", "Body2"], "with a join: {join}");
+    }
+}
+
 /// A copy added by raising the count after a rename takes the next number, not the freed one (#372).
 #[test]
 fn raising_a_pattern_count_after_a_rename_numbers_the_new_copy_after_the_others() {

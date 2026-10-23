@@ -181,6 +181,7 @@ impl Writer {
         let sketches = st.sketches.iter().map(|s| self.sketch(s)).collect::<Option<Vec<_>>>()?;
         let r = json!({
             "bodies": runs(&bodies), "sketches": runs(&sketches), "body_counter": st.body_counter,
+            "reserved_body_names": st.reserved_body_names.iter().collect::<Vec<_>>(),
             "sheets": serde_json::to_value(&st.sheets).ok()?, "construct": serde_json::to_value(&st.construct).ok()?,
             "threads": serde_json::to_value(&st.threads).ok()?,
             "sketch_keys": st.sketch_keys.iter().map(|(f, k)| json!([f, hex(*k)])).collect::<Vec<_>>(),
@@ -320,6 +321,11 @@ impl SavedModel {
                 bodies: ids("bodies", model_bodies.len())?.into_iter().filter_map(|i| model_bodies.get(i).cloned()).collect(),
                 sketches: ids("sketches", sketches.len())?.into_iter().filter_map(|i| sketches.get(i).cloned()).collect(),
                 body_counter: index(s.get("body_counter"), usize::MAX)?,
+                reserved_body_names: s
+                    .get("reserved_body_names")
+                    .and_then(Json::as_array)
+                    .map(|a| a.iter().filter_map(|n| n.as_str().map(str::to_string)).collect())
+                    .unwrap_or_default(),
                 sheets: serde_json::from_value(field("sheets")?).map_err(invalid)?,
                 construct: serde_json::from_value(field("construct")?).map_err(invalid)?,
                 threads: serde_json::from_value(field("threads")?).map_err(invalid)?,
