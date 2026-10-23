@@ -1060,7 +1060,7 @@
   "search.try": "Escribe o nome dunha orde, unha operación deste deseño ou un parámetro. Para executar unha orde con valores, escribe o seu id e un obxecto JSON: {example}",
   "search.valid": "Válido",
   "settings.display_quality_note": "Os niveis máis finos debuxan as caras e arestas curvas máis suaves e tardan máis en xerar a malla. Só cambia a vista, nunca o deseño nin as exportacións.",
-  "settings.frame_rate_note": "Mostra as imaxes por segundo na esquina inferior dereita da vista. Mentres está activado, a vista redebúxase continuamente.",
+  "settings.frame_rate_note": "Mostra as imaxes por segundo na esquina inferior dereita da vista.",
   "settings.measure_axis_distances": "Mostrar as distancias en X/Y/Z",
   "settings.measure_axis_distances_help": "Mostra as compoñentes da distancia segundo os eixes do mundo xunto á distancia total mentres Medir está aberto.",
   "settings.msaa_applies_on_restart": "O antialiasing aplicarase a próxima vez que se inicie SolidCraft",

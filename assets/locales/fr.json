@@ -1066,7 +1066,7 @@
   "search.try": "Saisissez un nom de commande, une entité de cette conception ou un paramètre. Pour exécuter une commande avec des valeurs, saisissez son id et un objet JSON : {example}",
   "search.valid": "Valide",
   "settings.display_quality_note": "Les niveaux plus fins affichent plus lisses les faces et arêtes courbes, mais leur maillage prend plus de temps. Seule la vue change, jamais la conception ni les exports.",
-  "settings.frame_rate_note": "Affiche les images par seconde dans le coin inférieur droit de la vue. Tant qu'elle est activée, la vue est redessinée en continu.",
+  "settings.frame_rate_note": "Affiche les images par seconde dans le coin inférieur droit de la vue.",
   "settings.measure_axis_distances": "Afficher les cotes X/Y/Z",
   "settings.measure_axis_distances_help": "Afficher les cotes suivant les axes du repère global en plus de la distance totale pendant la mesure.",
   "settings.msaa_applies_on_restart": "L'anticrénelage s'appliquera au prochain démarrage de SolidCraft",
