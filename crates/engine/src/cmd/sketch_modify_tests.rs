@@ -1871,3 +1871,39 @@ fn fillet_refuses_an_offsets_corners_until_its_association_is_broken() {
         assert!((sk.radius(ai).unwrap() - 2.0).abs() < 1e-7);
     }
 }
+
+/// #5019: Offset joins curves whose ends are held together by Coincident constraints (as Trim
+/// leaves them), not only ends that share one point: a rectangle drawn as four separate lines
+/// tied at its corners offsets as one closed loop.
+#[test]
+fn offset_chains_through_coincident_corners() {
+    let mut s = new_sketch();
+    for (id, a, b) in [("e1", [0, 0], [20, 0]), ("e2", [20, 0], [20, 10]), ("e3", [20, 10], [0, 10]), ("e4", [0, 10], [0, 0])] {
+        run(&mut s, "sketch.line", json!({"points": [a, b], "ids": [id]}));
+    }
+    let shared = |s: &Session| {
+        let sk = sketch(s);
+        let ends = |id: &str| sk.curves.iter().find(|c| c.id == id).and_then(|c| c.kind.ends()).unwrap();
+        ends("e1").1 == ends("e2").0
+    };
+    assert!(!shared(&s), "the lines are separate, joined only by constraints below");
+    for (a, b) in [("e1.end", "e2.start"), ("e2.end", "e3.start"), ("e3.end", "e4.start"), ("e4.end", "e1.start")] {
+        run(&mut s, "sketch.constraint.coincident", json!({"a": a, "b": b}));
+    }
+    let o = run(&mut s, "sketch.offset", json!({"curves": ["e1"], "distance": 1.0, "side": [10, 5]}));
+    let made = ids(&o["curves"]);
+    assert_eq!(made.len(), 4, "the whole loop is offset: {o}");
+    let sk = sketch(&s);
+    let lens: Vec<f64> = made
+        .iter()
+        .map(|id| {
+            let (a, b) = sk.curves.iter().find(|c| c.id == *id).and_then(|c| c.kind.ends()).unwrap();
+            sk.point(a).unwrap().dist(sk.point(b).unwrap())
+        })
+        .collect();
+    // 1 mm inside a 20 x 10 rectangle: 18 x 8, every corner met.
+    let mut sorted = lens.clone();
+    sorted.sort_by(f64::total_cmp);
+    assert!((sorted[0] - 8.0).abs() < 1e-6 && (sorted[1] - 8.0).abs() < 1e-6, "{lens:?}");
+    assert!((sorted[2] - 18.0).abs() < 1e-6 && (sorted[3] - 18.0).abs() < 1e-6, "{lens:?}");
+}

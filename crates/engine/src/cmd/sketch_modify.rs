@@ -1153,9 +1153,26 @@ fn chamfer_dist_angle(s: &mut Session, p: &Value) -> Result<Value> {
 // Offset
 
 /// Curves of the connected chain through `start` (joined where exactly two curves meet), in
-/// order, with whether each is walked from its stored start (`a`) to its end (`b`).
+/// order, with whether each is walked from its stored start (`a`) to its end (`b`). Ends held
+/// together by a Coincident constraint, as Trim leaves them, join as a shared point does (#5019),
+/// as they do for the double-click chain (`Sketch::chain`).
 fn chain(sk: &Sketch, start: usize, pool: &[usize]) -> (Vec<(usize, bool)>, bool) {
-    let ends = |c: usize| sk.curves.get(c).and_then(|c| c.kind.ends());
+    let mut root: Vec<usize> = (0..sk.points.len()).collect();
+    let find = |root: &[usize], mut i: usize| {
+        while let Some(&up) = root.get(i).filter(|up| **up != i) {
+            i = up;
+        }
+        i
+    };
+    for c in &sk.constraints {
+        if let ConstraintKind::Coincident { p, q } = c.kind {
+            let (a, b) = (find(&root, p), find(&root, q));
+            if let Some(r) = root.get_mut(a) {
+                *r = b;
+            }
+        }
+    }
+    let ends = |c: usize| sk.curves.get(c).and_then(|c| c.kind.ends()).map(|(a, b)| (find(&root, a), find(&root, b)));
     let Some((s0, s1)) = ends(start) else { return (vec![(start, true)], true) };
     let next = |from: usize, at: usize, used: &[usize]| -> Option<usize> {
         let users: Vec<usize> = pool.iter().copied().filter(|c| ends(*c).is_some_and(|(a, b)| a == at || b == at)).collect();
