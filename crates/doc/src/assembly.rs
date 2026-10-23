@@ -276,6 +276,14 @@ impl Document {
         self.occurrences.iter().find(|o| o.component == component)
     }
 
+    /// The bill of materials type each occurrence counts as, in the order of `occurrences`: its
+    /// own ([`Occurrence::bom_type`]), else its component's. Components are looked up once.
+    pub fn occurrence_bom_types(&self) -> Vec<BomType> {
+        let types: std::collections::HashMap<u64, BomType> =
+            self.components.iter().map(|c| (c.id, c.metadata.bom_type())).filter(|(_, t)| *t != BomType::Normal).collect();
+        self.occurrences.iter().map(|o| o.bom_type.or_else(|| types.get(&o.component).copied()).unwrap_or_default()).collect()
+    }
+
     /// World transform of a component's frame (through its first occurrence and its parents').
     pub fn component_transform(&self, component: u64) -> Mat {
         let mut m = IDENTITY;

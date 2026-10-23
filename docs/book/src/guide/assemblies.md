@@ -317,7 +317,9 @@ Right-click a component in the Browser and choose **Properties** to inspect
 material-aware mass, volume, surface area, centre of mass and world bounds. Descendants and
 repeated instances contribute to assembly totals; pending moves are included. A component
 uses its first placement; `occurrence.properties` selects a specific instance. Root Properties
-measures the complete assembly. Volumes are summed, including overlapping bodies, rather than
+measures the complete assembly. A placement that counts as a reference (a bill of materials
+type, below) adds nothing, nor does anything inside it; the component or occurrence measured
+counts whatever its type. Volumes are summed, including overlapping bodies, rather than
 measuring their union. The same workflow is available through `component.properties` and
 `occurrence.properties`; see
 [placement and measurement details](https://github.com/bherbruck/solidcraft/blob/main/docs/assembly-properties.md).

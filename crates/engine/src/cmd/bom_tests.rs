@@ -825,6 +825,9 @@ fn the_rows_of_every_list_add_up_to_the_assembly() {
     check(&mut s, "an inseparable frame with purchased brackets", &[&flat, &top, &folded]);
     let frame = run(&mut s, "assembly.bom", json!({"mass": true}));
     assert_eq!(weights(&frame)[1], weight("Frame", "", Some(785.0)), "{frame}");
+    // A placement kept for reference adds nothing to the assembly either.
+    set_occurrence(&mut s, "Block:2", json!("reference"));
+    check(&mut s, "a block kept for reference", &[&flat, &top, &folded]);
 }
 
 #[test]

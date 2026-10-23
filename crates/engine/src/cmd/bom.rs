@@ -203,14 +203,13 @@ fn occurrence_type(s: &mut Session, p: &Value) -> Result<Value> {
         Some(Value::String(w)) => Some(BomType::parse(w).ok_or_else(|| bad(cmd, format!("`bom_type` is one of {}", words())))?),
         _ => return Err(bad(cmd, format!("give `bom_type`: {}", words()))),
     };
-    let o = s.doc.occurrences.iter().find(|o| o.id == id).ok_or_else(|| bad(cmd, "no occurrence"))?;
-    let (component, changed) = (o.component, o.bom_type != want);
+    let changed = s.doc.occurrences.iter().find(|o| o.id == id).ok_or_else(|| bad(cmd, "no occurrence"))?.bom_type != want;
     // Only a real change touches the design (an undo step, unsaved changes).
     if changed && let Some(o) = s.doc_mut().occurrences.iter_mut().find(|o| o.id == id) {
         o.bom_type = want;
     }
-    let own = s.doc.components.iter().find(|c| c.id == component).map(|c| c.metadata.bom_type()).unwrap_or_default();
-    Ok(json!({"occurrence": id, "bom_type": want.map_or(SAME_AS_COMPONENT, BomType::as_str), "effective": want.unwrap_or(own).as_str(),
+    let effective = s.doc.occurrences.iter().zip(s.doc.occurrence_bom_types()).find(|(o, _)| o.id == id).map(|(_, t)| t).unwrap_or_default();
+    Ok(json!({"occurrence": id, "bom_type": want.map_or(SAME_AS_COMPONENT, BomType::as_str), "effective": effective.as_str(),
         "changed": changed}))
 }
 
@@ -298,11 +297,8 @@ struct Index {
 
 impl Index {
     fn new(s: &Session) -> Index {
-        let types: BTreeMap<u64, BomType> =
-            s.doc.components.iter().map(|c| (c.id, c.metadata.bom_type())).filter(|(_, t)| *t != BomType::Normal).collect();
         let mut children: BTreeMap<u64, Vec<Placed>> = BTreeMap::new();
-        for o in &s.doc.occurrences {
-            let bom_type = o.bom_type.or_else(|| types.get(&o.component).copied()).unwrap_or_default();
+        for (o, bom_type) in s.doc.occurrences.iter().zip(s.doc.occurrence_bom_types()) {
             children.entry(o.parent).or_default().push((o.component, bom_type));
         }
         let numbered = s.doc.components.iter().filter(|c| c.metadata.part_number().is_some_and(|n| !n.is_empty())).map(|c| c.id).collect();
