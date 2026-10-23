@@ -1523,7 +1523,14 @@ impl SolveApp {
                 )
             })
             .map_or(self.synthetic.len(), |i| i + 1);
+        let follow = self.ui.agent_cursor.show;
         for event in self.synthetic.drain(..n) {
+            // The agent cursor shows the agent's own pointer input too, not only its commands.
+            match &event {
+                egui::Event::PointerMoved(at) if follow => self.agent.follow_input(*at, false, self.now),
+                egui::Event::PointerButton { pos, pressed, .. } if follow => self.agent.follow_input(*pos, *pressed, self.now),
+                _ => {}
+            }
             match &event {
                 egui::Event::ModifiersChanged(modifiers) => self.synthetic_mods = *modifiers,
                 egui::Event::PointerButton { pos, modifiers, pressed, .. } => {
