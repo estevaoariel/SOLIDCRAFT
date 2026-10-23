@@ -189,3 +189,50 @@ fn pulling_a_face_down_into_the_body_cuts() {
     h.frames(4);
     assert_eq!(state(&h).1, CUT, "pushed into the box: Cut");
 }
+
+/// The Fillet window's radius, whether it is a chamfer, and whether the pull opened it.
+fn blend(h: &Harness) -> (String, bool, bool) {
+    let Some(Dialog { kind: Kind::Fillet { radius, chamfer, .. }, extra, .. }) = &h.app.dialog else { panic!("fillet dialog: {:?}", h.app.dialog) };
+    (radius.clone(), *chamfer, extra.contains_key(crate::drag_blend::MARK))
+}
+
+fn pull_an_edge(shift: bool, enabled: bool) -> Harness {
+    let mut h = Harness::new();
+    h.app.preferences.direct_interaction = enabled;
+    h.app.run("solid.box", json!({"length":20,"width":20,"height":10,"corner":[0,0,0]})).unwrap();
+    h.step(&json!({"call":"ui.view","params":{"view":"home"}})).unwrap();
+    h.step(&json!({"call":"ui.view","params":{"view":"fit"}})).unwrap();
+    h.settle();
+    h.step(&json!({"drag":[{"world":[20,10,10]},{"world":[26,10,10]}],"shift":shift})).unwrap();
+    h.frames(4);
+    h
+}
+
+/// Pulling an edge away from where it was pressed rounds it by that far, and the window waits
+/// for OK.
+#[test]
+fn pulling_an_edge_rounds_it() {
+    let mut h = pull_an_edge(false, true);
+    let (radius, chamfer, marked) = blend(&h);
+    assert!(marked && !chamfer, "a round, opened by the pull");
+    let r: f64 = radius.trim_end_matches(" mm").parse().unwrap_or(0.0);
+    assert!(r > 0.5, "the pull set a radius: {radius}");
+    let before = volume(&h);
+    h.step(&json!({"key":"Enter"})).unwrap();
+    assert!(h.app.dialog.is_none(), "OK applied the round");
+    assert!(volume(&h) < before - 1e-6, "material came off the edge");
+}
+
+/// Shift while pulling makes the edge a chamfer; the window can switch it back.
+#[test]
+fn shift_while_pulling_an_edge_chamfers_it() {
+    let h = pull_an_edge(true, true);
+    assert!(blend(&h).1, "a chamfer");
+}
+
+/// Without the setting an edge press-drag is a box selection as before.
+#[test]
+fn pulling_an_edge_does_nothing_until_direct_interaction_is_on() {
+    let h = pull_an_edge(false, false);
+    assert!(h.app.dialog.is_none());
+}
