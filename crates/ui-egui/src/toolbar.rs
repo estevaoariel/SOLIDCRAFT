@@ -1424,7 +1424,8 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                             }
                             for c in cmds {
                                 let info = c.info(&app.session);
-                                let response = crate::ui_kit::command_menu_button(ui, c.id, c.label, c.icon, c.shortcut.unwrap_or(""), info.enabled);
+                                let key = crate::keymap::effective(app, c.id).unwrap_or_default();
+                                let response = crate::ui_kit::command_menu_button(ui, c.id, c.label, c.icon, &key, info.enabled);
                                 crate::scenario::publish_handle(&format!("toolbar:{}", c.id), response.rect.center());
                                 if response.clicked() {
                                     app.start(c.id);
@@ -1519,8 +1520,9 @@ fn ribbon_tooltip(app: &SolveApp, response: egui::Response, command: &solidcraft
         let name = app.tr_label(command.label);
         let name_width =
             ui.painter().layout_no_wrap(name.to_string(), crate::fonts::semibold(crate::theme::Tokens::get().font_heading), t.text).size().x;
-        let key_width = command
-            .shortcut
+        let shortcut = crate::keymap::effective(app, command.id);
+        let key_width = shortcut
+            .as_deref()
             .map(|key| {
                 ui.painter().layout_no_wrap(key.to_string(), FontId::monospace(crate::theme::Tokens::get().font_body), t.text_dim).size().x + 24.0
             })
@@ -1529,7 +1531,7 @@ fn ribbon_tooltip(app: &SolveApp, response: egui::Response, command: &solidcraft
         ui.horizontal(|ui| {
             let (rect, _) = ui.allocate_exact_size(vec2(name_width, 20.0), Sense::hover());
             ribbon_text(ui, rect.center(), name, t.font_heading, t.text, true);
-            if let Some(key) = command.shortcut {
+            if let Some(key) = shortcut.as_deref() {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     egui::Frame::NONE
                         .fill(t.panel_header)
@@ -1600,8 +1602,7 @@ fn dropdown_width(app: &SolveApp, ui: &egui::Ui, cmds: &[&'static solidcraft_eng
     cmds.iter()
         .map(|c| {
             let label = ui.painter().layout_no_wrap(app.tr_label(c.label).to_string(), font.clone(), t.text).size().x;
-            let key = c
-                .shortcut
+            let key = crate::keymap::effective(app, c.id)
                 .map(|k| ui.painter().layout_no_wrap(k.to_string(), FontId::monospace(t.font_button), t.text).size().x + 24.0)
                 .unwrap_or(0.0);
             6.0 + 20.0 + 8.0 + label + key + 30.0
@@ -1638,7 +1639,8 @@ fn dropdown_row(app: &SolveApp, ui: &mut egui::Ui, c: &'static solidcraft_engine
     let mut row = crate::ui_kit::MenuItem::new(c.id, &label, c.icon);
     row.enabled = info.enabled;
     row.highlighted = hot;
-    row.shortcut = c.shortcut.unwrap_or("");
+    let key = crate::keymap::effective(app, c.id);
+    row.shortcut = key.as_deref().unwrap_or("");
     row.paint(ui, rect, &resp, 26.0);
     if hot {
         crate::scenario::publish_handle(&format!("dropdown_hot:{}", c.id), rect.center());
@@ -1657,7 +1659,7 @@ fn dropdown_row(app: &SolveApp, ui: &mut egui::Ui, c: &'static solidcraft_engine
     }
     // A disabled row says why; a documented command also shows its help (#2758).
     let reason = info.disabled_reason.as_deref().filter(|_| !info.enabled);
-    let resp = match crate::command_help::row_tip(c.id, &label, c.shortcut, reason) {
+    let resp = match crate::command_help::row_tip(c.id, &label, key.as_deref(), reason) {
         Some(tip) => crate::command_help::tooltip(resp, c.id, tip),
         None => resp,
     };
@@ -1827,10 +1829,15 @@ pub fn shortcuts(app: &mut SolveApp, ctx: &egui::Context) {
         return;
     }
     let (keys, mods) = ctx.input(|i| {
-        let keys: Vec<(egui::Key, bool)> = i
+        let keys: Vec<(egui::Key, Option<egui::Key>, bool)> = i
             .events
             .iter()
-            .filter_map(|e| if let egui::Event::Key { key, pressed: true, repeat, .. } = e { Some((*key, *repeat)) } else { None })
+            .filter_map(|e| match e {
+                egui::Event::Key { key, physical_key, pressed: true, repeat, .. } => {
+                    Some((crate::keymap::layout_key(*key, *physical_key), crate::keymap::layout_alias(*key, *physical_key), *repeat))
+                }
+                _ => None,
+            })
             .collect();
         (keys, i.modifiers)
     });
@@ -1841,7 +1848,7 @@ pub fn shortcuts(app: &mut SolveApp, ctx: &egui::Context) {
     } else {
         crate::edit_clipboard::flush(ctx);
     }
-    for (k, repeat) in keys {
+    for (k, alias, repeat) in keys {
         use egui::Key;
         // Only Esc pressed twice in a row finishes a sketch: any other key in between resets it.
         if k != Key::Escape {
@@ -1867,7 +1874,7 @@ pub fn shortcuts(app: &mut SolveApp, ctx: &egui::Context) {
                 // Copy, Cut and Paste (`edit_clipboard::handle`).
                 Key::C | Key::X | Key::V if !mods.shift && !mods.alt => {}
                 Key::S => save(app),
-                _ => crate::keymap::press(app, &crate::keymap::key_name(k, mods)),
+                _ => crate::keymap::press_event(app, k, alias, mods),
             }
             continue;
         }
@@ -1933,7 +1940,7 @@ pub fn shortcuts(app: &mut SolveApp, ctx: &egui::Context) {
                     crate::viewport::delete_selection(app);
                 }
             }
-            _ => crate::keymap::press(app, &crate::keymap::key_name(k, mods)),
+            _ => crate::keymap::press_event(app, k, alias, mods),
         }
     }
 }

@@ -815,6 +815,28 @@ fn design_camera_is_unchanged_while_the_flat_pattern_has_focus() {
     }
 }
 
+/// The Onshape set's view keys act on the flat pattern shown: Z zooms its view, Shift+1 and N
+/// turn nothing, and the Design camera underneath stays put.
+#[test]
+fn set_view_keys_act_on_the_flat_pattern() {
+    let ctx = crate::fonts::test_context();
+    let mut app = flat_app("fusion", crate::shell::LayoutMode::Floating);
+    app.preferences.shortcut_set = crate::keymap::ONSHAPE_SET.into();
+    let mut t = 0.0;
+    frame(&mut app, &ctx, &mut t, egui::Modifiers::NONE, vec![]);
+    let (design, flat) = (app.cam, app.flat_view.cam);
+    assert!(crate::navigation::view_key(&mut app, &ctx, egui::Key::Z, egui::Modifiers::NONE, false));
+    assert!((app.flat_view.cam.distance / flat.distance - 1.25).abs() < 1e-9, "Z zooms the flat view out");
+    for (key, mods) in [(egui::Key::Num1, egui::Modifiers::SHIFT), (egui::Key::N, egui::Modifiers::NONE)] {
+        assert!(crate::navigation::view_key(&mut app, &ctx, key, mods, false));
+    }
+    for _ in 0..30 {
+        frame(&mut app, &ctx, &mut t, egui::Modifiers::NONE, vec![]);
+    }
+    assert_eq!(app.cam, design, "the Design camera stays put");
+    assert_eq!((app.flat_view.cam.yaw, app.flat_view.cam.pitch), (flat.yaw, flat.pitch), "the flat view never turns");
+}
+
 /// Fit and Home frame the flat pattern (not the model), and leave the Design camera alone.
 #[test]
 fn fit_and_home_frame_the_flat_pattern() {
