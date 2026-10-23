@@ -3,9 +3,11 @@
 //! any wgpu device. The desktop and web viewport draws through it (an `egui_wgpu` paint callback
 //! hands it the device and the pass); headless pictures draw through it offscreen
 //! ([`crate::capture`]). Geometry is uploaded when a scene changes; each frame only the camera
-//! uniform changes. Where the device runs compute shaders, opaque bodies are drawn straight from
-//! their display plans: the plan is evaluated on the GPU into the vertex buffer the pass draws
-//! (see [`PlannedBody`]), with nothing built or read back on the CPU.
+//! uniform changes. A frame that would draw the same picture as the last is blitted from that
+//! picture's texture instead, so a still view costs nothing to show again. Where the device runs
+//! compute shaders, opaque bodies are drawn straight from their display plans: the plan is
+//! evaluated on the GPU into the vertex buffer the pass draws (see [`PlannedBody`]), with nothing
+//! built or read back on the CPU.
 
 use std::sync::{Arc, Mutex};
 
@@ -1106,6 +1108,9 @@ pub struct Renderer {
     max_texture: u32,
     /// Supersampling (#1288): the filter that draws the supersampled frame into the viewport.
     ss_blit: wgpu::RenderPipeline,
+    /// The same filter into an offscreen texture of its own (no depth, one sample): the picture
+    /// [`Renderer::cached`] keeps for still frames.
+    ss_filter: wgpu::RenderPipeline,
     /// The frame drawn offscreen at the viewport's own size (for the see-through surfaces' order-
     /// independent transparency), copied as it is.
     copy_blit: wgpu::RenderPipeline,
@@ -1120,6 +1125,12 @@ pub struct Renderer {
     ss: Option<Supersampled>,
     /// This frame was drawn supersampled (in `prepare`): `paint` only filters it down.
     ss_ready: bool,
+    /// What the picture in `ss` shows ([`frame_key`]): a frame whose key matches is blitted, not
+    /// drawn again.
+    ss_key: Option<u64>,
+    /// The filtered picture at the viewport's own size, made on the first still frame and blitted
+    /// as it is until the content changes: a still view does not pay for the filter every frame.
+    cached: Option<CachedPicture>,
     /// Reversed depth drawn into the window's pass: egui clears its depth to 1, which is the near
     /// plane then, so the viewport first sets its rectangle to the far plane (0).
     depth_reset: Option<wgpu::RenderPipeline>,
@@ -1149,6 +1160,13 @@ struct Supersampled {
     resolve: Option<wgpu::TextureView>,
     depth: Option<wgpu::TextureView>,
     /// The single-sampled colour, for the filter.
+    bind: wgpu::BindGroup,
+}
+
+/// A frame filtered down to the viewport's own pixels, for a still view to blit as it is.
+struct CachedPicture {
+    /// Kept for the bind group, which samples it.
+    _view: wgpu::TextureView,
     bind: wgpu::BindGroup,
 }
 
@@ -1662,14 +1680,14 @@ impl Renderer {
         });
         // The frame is premultiplied (drawn over transparent black), so it goes over the
         // viewport's background premultiplied; the viewport's depth is left as it is.
-        let blit = |entry: &str| {
+        let blit = |entry: &str, samples: u32, depth_stencil: Option<wgpu::DepthStencilState>| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("sc_ssaa"),
                 layout: Some(&ss_layout),
                 vertex: wgpu::VertexState { module: &ss_module, entry_point: Some("vs"), buffers: &[], compilation_options: Default::default() },
                 primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleList, ..Default::default() },
-                depth_stencil: depth(wgpu::CompareFunction::Always, false),
-                multisample: wgpu::MultisampleState { count: t.samples.max(1), mask: !0, alpha_to_coverage_enabled: false },
+                depth_stencil,
+                multisample: wgpu::MultisampleState { count: samples, mask: !0, alpha_to_coverage_enabled: false },
                 fragment: Some(wgpu::FragmentState {
                     module: &ss_module,
                     entry_point: Some(entry),
@@ -1684,7 +1702,10 @@ impl Renderer {
                 cache: None,
             })
         };
-        let (ss_blit, copy_blit) = (blit("fs"), blit("fs_copy"));
+        let pass_depth = depth(wgpu::CompareFunction::Always, false);
+        let (ss_blit, copy_blit) = (blit("fs", t.samples.max(1), pass_depth.clone()), blit("fs_copy", t.samples.max(1), pass_depth));
+        // Into the cached picture's own texture: no depth, one sample.
+        let ss_filter = blit("fs", 1, None);
         let oit = oit::Pipelines::new(device, &module, &layout, t.format, t.depth, t.samples);
         let depth_reset = t.depth.filter(|_| reversed).map(|format| {
             let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -1725,6 +1746,7 @@ impl Renderer {
             target: t,
             max_texture: device.limits().max_texture_dimension_2d,
             ss_blit,
+            ss_filter,
             copy_blit,
             ss_scaled: false,
             oit,
@@ -1732,6 +1754,8 @@ impl Renderer {
             ss_bgl,
             ss: None,
             ss_ready: false,
+            ss_key: None,
+            cached: None,
             image,
             image_bgl,
             sampler,
@@ -1915,14 +1939,77 @@ pub fn hangs_on_gpu_tessellation(backend: wgpu::Backend, name: &str) -> bool {
     backend == wgpu::Backend::Metal && name.contains("FirePro")
 }
 
+/// Whether [`Renderer::prepare`] may blit the picture it drew last instead of drawing the frame
+/// again: the content is the same and that picture is a texture frame (the direct path has none
+/// to blit).
+fn can_reuse(product: bool, ss_ready: bool, cached: Option<u64>, key: u64) -> bool {
+    !product && ss_ready && cached == Some(key)
+}
+
+/// Everything the drawn picture depends on: the scene keys and camera, the viewport's size, the
+/// section, images, analysis, accessibility map and ambient occlusion. The same key draws the
+/// same picture (pipelines and shaders are fixed for the renderer).
+fn frame_key(cb: &Frame) -> u64 {
+    use std::hash::Hash as _;
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    cb.product.hash(&mut h);
+    cb.key.hash(&mut h);
+    cb.sketch_key.hash(&mut h);
+    cb.hl_key.hash(&mut h);
+    cb.pv_key.hash(&mut h);
+    cb.pv_hide.hash(&mut h);
+    cb.view_proj.iter().flatten().for_each(|v| v.to_bits().hash(&mut h));
+    cb.back.map(f32::to_bits).hash(&mut h);
+    cb.eye.map(f32::to_bits).hash(&mut h);
+    cb.size_px.map(f32::to_bits).hash(&mut h);
+    cb.clip.map(f32::to_bits).hash(&mut h);
+    cb.cap.map(f32::to_bits).hash(&mut h);
+    cb.analysis.map(f32::to_bits).hash(&mut h);
+    cb.analysis_colors.map(f32::to_bits).hash(&mut h);
+    cb.outline.hash(&mut h);
+    cb.ao_radius.to_bits().hash(&mut h);
+    cb.ssaa.to_bits().hash(&mut h);
+    for img in &cb.images {
+        img.id.hash(&mut h);
+        img.version.hash(&mut h);
+        img.size.hash(&mut h);
+        img.corners.iter().flatten().for_each(|v| v.to_bits().hash(&mut h));
+        img.opacity.to_bits().hash(&mut h);
+    }
+    match &cb.access {
+        Some(a) => {
+            true.hash(&mut h);
+            a.version.hash(&mut h);
+            a.size.hash(&mut h);
+            a.u.map(f32::to_bits).hash(&mut h);
+            a.v.map(f32::to_bits).hash(&mut h);
+            a.scale.to_bits().hash(&mut h);
+        }
+        None => false.hash(&mut h),
+    }
+    std::hash::Hasher::finish(&h)
+}
+
 impl Renderer {
     /// Before the frame's render pass: upload the scenes that changed (planned bodies not yet on
     /// the GPU are evaluated by dispatches recorded into `encoder`), the uniform, the images and
-    /// the accessibility map, and draw the frame supersampled when it asks for that.
+    /// the accessibility map, and draw the frame supersampled when it asks for that. A frame whose
+    /// content is the same as the picture drawn last is not drawn again: that picture is blitted
+    /// instead, so pointer moves and UI animations over a still view cost no scene work.
     pub fn prepare(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, encoder: &mut wgpu::CommandEncoder, frame: &Frame) {
         let res = self;
         let cb = frame;
+        let key = frame_key(cb);
+        if can_reuse(cb.product, res.ss_ready && res.ss.is_some(), res.ss_key, key) {
+            // A still frame shows the picture as it is; the first one filters it down once.
+            if res.ss_scaled && res.cached.is_none() {
+                res.cache_picture(device, encoder, cb.size_px);
+            }
+            return;
+        }
+        res.cached = None;
         if cb.product {
+            res.ss_key = None;
             res.product.take(device, cb.key, &cb.slot, None);
             res.product.sort_glass(queue, cb.back);
             queue.write_buffer(&res.uniform, 0, &uniform_bytes(cb, cb.size_px[0], cb.size_px[1], res.linear_out, res.target.reversed_depth()));
@@ -1997,6 +2084,7 @@ impl Renderer {
             }
         }
         res.ss_ready = (cb.ssaa != 1.0 || see_through) && res.supersample(device, encoder, cb, see_through);
+        res.ss_key = res.ss_ready.then_some(key);
     }
 
     /// Draw the frame into `pass` within `viewport` (x, y, width, height in physical pixels):
@@ -2010,8 +2098,14 @@ impl Renderer {
         if self.ss_ready
             && let Some(ss) = &self.ss
         {
-            pass.set_pipeline(if self.ss_scaled { &self.ss_blit } else { &self.copy_blit });
-            pass.set_bind_group(0, &ss.bind, &[]);
+            // A still view's picture is already at the viewport's size: blit it as it is.
+            if let Some(cached) = &self.cached {
+                pass.set_pipeline(&self.copy_blit);
+                pass.set_bind_group(0, &cached.bind, &[]);
+            } else {
+                pass.set_pipeline(if self.ss_scaled { &self.ss_blit } else { &self.copy_blit });
+                pass.set_bind_group(0, &ss.bind, &[]);
+            }
             pass.draw(0..3, 0..1);
             return;
         }
@@ -2187,6 +2281,58 @@ impl Renderer {
 }
 
 impl Renderer {
+    /// Filter the supersampled picture down to the viewport's own pixels once, into the texture
+    /// [`Renderer::cached`] keeps: still frames then blit it as it is instead of filtering it every
+    /// time.
+    fn cache_picture(&mut self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder, size_px: [f32; 2]) {
+        let Some(ss) = &self.ss else { return };
+        let [w, h] = size_px;
+        if !(w >= 1.0 && h >= 1.0) {
+            return;
+        }
+        let max = self.max_texture.max(1);
+        let size = [(w.round() as u32).clamp(1, max), (h.round() as u32).clamp(1, max)];
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("sc_ssaa_cached"),
+            size: wgpu::Extent3d { width: size[0], height: size[1], depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: self.target.format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&Default::default());
+        let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("sc_ssaa_cached"),
+            layout: &self.ss_bgl,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.sampler) },
+            ],
+        });
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("sc_ssaa_cached"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&self.ss_filter);
+            pass.set_bind_group(0, &ss.bind, &[]);
+            pass.set_viewport(0.0, 0.0, size[0] as f32, size[1] as f32, 0.0, 1.0);
+            pass.draw(0..3, 0..1);
+        }
+        self.cached = Some(CachedPicture { _view: view, bind });
+    }
+
     /// Draw the frame supersampled (`cb.ssaa` times the viewport's pixels each way, within the
     /// device's texture limit and the memory budget) into textures of the viewport's kind.
     /// `false` when it cannot be (too small a gain, a zero-sized viewport): drawn as usual.
@@ -2469,6 +2615,98 @@ mod tests {
         naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::empty()).validate(&module).unwrap();
     }
 
+    /// A frame with a fixed picture, and a key that names everything it shows.
+    fn cached_frame() -> super::Frame {
+        use std::sync::{Arc, Mutex};
+        let slot = || Arc::new(Mutex::new(None));
+        super::Frame {
+            product: false,
+            key: 1,
+            slot: slot(),
+            sketch_key: 2,
+            sketch_slot: slot(),
+            hl_key: 3,
+            hl_slot: slot(),
+            pv_key: 4,
+            pv_slot: slot(),
+            pv_hide: false,
+            view_proj: [[0.0; 4]; 4],
+            back: [0.0; 3],
+            size_px: [800.0, 600.0],
+            clip: [0.0; 4],
+            cap: [0.0; 4],
+            images: Vec::new(),
+            analysis: [0.0; 8],
+            analysis_colors: [0.0; 36],
+            access: None,
+            outline: false,
+            eye: [0.0; 4],
+            ao_radius: 0.0,
+            ssaa: 1.0,
+        }
+    }
+
+    fn image(version: u64) -> super::GpuImage {
+        super::GpuImage { id: 1, version, size: [2, 2], rgba: std::sync::Arc::new(vec![0; 16]), corners: [[0.0; 3]; 4], opacity: 1.0 }
+    }
+
+    fn access(version: u64) -> super::AccessMap {
+        super::AccessMap { version, size: 2, depth: std::sync::Arc::new(vec![0.0; 4]), u: [1.0, 0.0, 0.0, 0.0], v: [0.0, 1.0, 0.0, 0.0], scale: 1.0 }
+    }
+
+    /// A picture is drawn again when anything in it changes; only an identical frame reuses it.
+    #[test]
+    fn a_frame_is_redrawn_when_anything_it_shows_changes() {
+        let key = |change: fn(&mut super::Frame)| {
+            let mut f = cached_frame();
+            change(&mut f);
+            super::frame_key(&f)
+        };
+        let base = key(|_| {});
+        assert_eq!(base, key(|_| {}), "the same frame draws the same picture");
+        for (what, changed) in [
+            ("product", key(|f| f.product = true)),
+            ("model", key(|f| f.key += 1)),
+            ("sketch", key(|f| f.sketch_key += 1)),
+            ("highlight", key(|f| f.hl_key += 1)),
+            ("preview", key(|f| f.pv_key += 1)),
+            ("preview hidden", key(|f| f.pv_hide = true)),
+            ("camera", key(|f| f.view_proj[0][0] += 1.0)),
+            ("lighting", key(|f| f.back[0] += 1.0)),
+            ("eye", key(|f| f.eye[0] += 1.0)),
+            ("size", key(|f| f.size_px[0] += 1.0)),
+            ("section", key(|f| f.clip[0] = 1.0)),
+            ("section cap", key(|f| f.cap[0] = 0.5)),
+            ("analysis", key(|f| f.analysis[0] = 1.0)),
+            ("analysis colours", key(|f| f.analysis_colors[0] = 1.0)),
+            ("outline", key(|f| f.outline = true)),
+            ("ambient occlusion", key(|f| f.ao_radius = 1.0)),
+            ("supersampling", key(|f| f.ssaa = 2.0)),
+            ("image", key(|f| f.images.push(image(1)))),
+            ("image pixels", key(|f| f.images.push(image(2)))),
+            (
+                "image opacity",
+                key(|f| {
+                    f.images.push(image(1));
+                    if let Some(i) = f.images.first_mut() {
+                        i.opacity = 0.5;
+                    }
+                }),
+            ),
+            ("accessibility", key(|f| f.access = Some(access(1)))),
+            ("accessibility map", key(|f| f.access = Some(access(2)))),
+        ] {
+            assert_ne!(base, changed, "{what} must draw again");
+        }
+        // The comparison a frame makes: a product frame never blits the viewport's picture, and
+        // only a frame drawn into a texture has one to blit.
+        assert!(super::can_reuse(false, true, Some(base), base));
+        assert!(!super::can_reuse(false, true, Some(base), base + 1));
+        assert!(!super::can_reuse(false, false, Some(base), base));
+        assert!(!super::can_reuse(false, true, None, base));
+        assert!(!super::can_reuse(true, true, Some(base), base));
+    }
+
     /// Derivatives and implicit-lod sampling run only in uniform control flow: browsers' WGSL
     /// compilers (Tint) reject them after a branch, and the whole viewport shader then fails,
     /// a black screen on the web (naga accepts it). Every fragment entry point makes such calls
@@ -2670,6 +2908,129 @@ mod glass_tests {
         let bytes = read.slice(..).get_mapped_range().ok()?.to_vec();
         let at = ((SIZE / 2 * SIZE + SIZE / 2) * 4) as usize;
         bytes.get(at..at + 4).and_then(|p| p.try_into().ok())
+    }
+
+    /// Render `frame` through `r` into a fresh 64 × 64 target and read the pixels back.
+    fn render_frame(r: &mut Renderer, device: &wgpu::Device, queue: &wgpu::Queue, frame: &Frame) -> Vec<u8> {
+        const SIZE: u32 = 64;
+        let depth = crate::depth_format(device, true);
+        let format = wgpu::TextureFormat::Rgba8Unorm;
+        let texture = |format, usage| {
+            device.create_texture(&wgpu::TextureDescriptor {
+                label: None,
+                size: wgpu::Extent3d { width: SIZE, height: SIZE, depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage,
+                view_formats: &[],
+            })
+        };
+        let color = texture(format, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC);
+        let depth_tex = texture(depth, wgpu::TextureUsages::RENDER_ATTACHMENT);
+        let (color_view, depth_view) = (color.create_view(&Default::default()), depth_tex.create_view(&Default::default()));
+        let mut encoder = device.create_command_encoder(&Default::default());
+        r.prepare(device, queue, &mut encoder, frame);
+        {
+            let mut pass = encoder
+                .begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: None,
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &color_view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::WHITE), store: wgpu::StoreOp::Store },
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &depth_view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(far_depth(reversed_depth(Some(depth)))),
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: depth
+                            .has_stencil_aspect()
+                            .then_some(wgpu::Operations { load: wgpu::LoadOp::Clear(0), store: wgpu::StoreOp::Store }),
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                })
+                .forget_lifetime();
+            r.paint(frame, &mut pass, [0.0, 0.0, SIZE as f32, SIZE as f32]);
+        }
+        let read = device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: u64::from(SIZE * SIZE * 4),
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        encoder.copy_texture_to_buffer(
+            color.as_image_copy(),
+            wgpu::TexelCopyBufferInfo {
+                buffer: &read,
+                layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(SIZE * 4), rows_per_image: Some(SIZE) },
+            },
+            wgpu::Extent3d { width: SIZE, height: SIZE, depth_or_array_layers: 1 },
+        );
+        queue.submit([encoder.finish()]);
+        read.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+        device.poll(wgpu::PollType::wait_indefinitely()).ok();
+        read.slice(..).get_mapped_range().map(|b| b.to_vec()).unwrap_or_default()
+    }
+
+    /// A still view shows the picture it drew last: a reused frame (whose filtered picture is
+    /// cached once) draws the same pixels as the frame before it, and changing the camera draws
+    /// again rather than keeping the cached picture.
+    #[test]
+    fn a_still_frame_blits_the_cached_picture() {
+        const SIZE: u32 = 64;
+        let Some((_, device, queue)) = crate::open_headless().ok() else { return };
+        let depth = crate::depth_format(&device, true);
+        let format = wgpu::TextureFormat::Rgba8Unorm;
+        let mut r = Renderer::new(&device, GpuTarget { format, depth: Some(depth), samples: 1, tess: false }, None);
+        let mut scene = GpuScene::default();
+        scene.tri([-5.0, -5.0, 0.0], [0.0, 0.0, 1.0], [255, 0, 0, 255]);
+        scene.tri([5.0, -5.0, 0.0], [0.0, 0.0, 1.0], [255, 0, 0, 255]);
+        scene.tri([0.0, 5.0, 0.0], [0.0, 0.0, 1.0], [255, 0, 0, 255]);
+        let none = || Arc::new(Mutex::new(None));
+        let mut frame = Frame {
+            product: false,
+            key: 1,
+            slot: Arc::new(Mutex::new(Some(scene))),
+            sketch_key: 0,
+            sketch_slot: none(),
+            hl_key: 0,
+            hl_slot: none(),
+            pv_key: 0,
+            pv_slot: none(),
+            pv_hide: false,
+            view_proj: [[0.1, 0.0, 0.0, 0.0], [0.0, 0.1, 0.0, 0.0], [0.0, 0.0, -0.01, 0.0], [0.0, 0.0, 0.5, 1.0]],
+            back: [0.0, 0.0, 1.0],
+            size_px: [SIZE as f32; 2],
+            clip: [0.0; 4],
+            cap: [0.0; 4],
+            images: Vec::new(),
+            analysis: [0.0; 8],
+            analysis_colors: [0.0; 36],
+            access: None,
+            outline: false,
+            eye: [0.0, 0.0, 100.0, 0.0],
+            ao_radius: 0.0,
+            // Supersampled: the picture is drawn into a texture, so it can be cached.
+            ssaa: 2.0,
+        };
+        let first = render_frame(&mut r, &device, &queue, &frame);
+        assert!(r.ss_ready && r.ss_scaled, "the first frame is drawn supersampled");
+        let again = render_frame(&mut r, &device, &queue, &frame);
+        assert!(r.cached.is_some(), "the still frame's filtered picture is cached");
+        // The cached picture goes through one more 8-bit texture than the direct filter.
+        assert!(first.iter().zip(&again).all(|(a, b)| a.abs_diff(*b) <= 1), "a reused frame draws the same picture");
+        // A moved camera is a new picture: the cache is dropped and the scene drawn again.
+        frame.view_proj[3][0] += 0.5;
+        let moved = render_frame(&mut r, &device, &queue, &frame);
+        assert!(r.cached.is_none(), "a changed view cannot show the cached picture");
+        assert_ne!(first, moved, "the changed view is drawn");
     }
 
     /// Two see-through squares, one at z = 5 (near) and one at z = -5, in `near` and `far`
