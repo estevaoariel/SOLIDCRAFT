@@ -234,6 +234,10 @@ association is detached. Changes and their generated curves undo and redo togeth
 A trace takes 2 to 500
 samples: 100 by default for a joint, one per step for a study.
 
+The [Chebyshev linkage demo](https://github.com/tangency-labs/solidcraft/blob/main/docs/chebyshev-motion-trace.md)
+builds a complete four-joint mechanism, plays a saved study and demonstrates the
+same retained trajectory updating after a link-length or driving-range edit.
+
 **Export Animation…** in the **Motion Study** dialog saves the study as an animated GIF, drawn
 from the viewport's camera as the study plays (the keys in the dialog count, even before OK).
 `motion.export_animation` does the same for scripts, the CLI and agents, without a window: give a

@@ -1382,6 +1382,52 @@ fn kept_trace_fit(s: &Session, id: u64) -> Vec<Vec3> {
 }
 
 #[test]
+fn chebyshev_demo_regenerates_its_analytic_trajectory_without_resampling_playback() {
+    let mut s = Session::default();
+    s.run_script(&serde_json::from_str(include_str!("../../../../examples/chebyshev-motion-trace.json")).unwrap()).unwrap();
+    let trace = s.doc.assembly.traces.first().unwrap().clone();
+    let original = kept_trace_fit(&s, trace.sketch);
+    assert_eq!(original.len(), 145);
+    assert_eq!(s.doc.assembly.joints.len(), 4);
+    assert!(s.model.results.iter().all(|r| r.error.is_none()), "{:?}", s.model.results);
+    // Independent circle-intersection construction: P is the crank end, Q the
+    // coupler/rocker pin, and the tracer extends the coupler by another PQ.
+    let mut q = Vec3::new(40.0, 50.0, 0.0);
+    for (i, got) in original.iter().enumerate() {
+        let theta = (90.0 + 2.5 * i as f64).to_radians();
+        let p = Vec3::new(20.0 * theta.cos(), 20.0 * theta.sin(), 0.0);
+        let [a, b] = meet(p, 50.0, Vec3::new(40.0, 0.0, 0.0), 50.0);
+        q = if a.dist(q) < b.dist(q) { a } else { b };
+        let want = q * 2.0 - p + Vec3::Z * 10.0;
+        assert!(near(*got, want), "sample {i}: {got:?} wants {want:?}");
+    }
+    let count = s.motion_traces.recomputations;
+    for angle in [30, 90, 180, 270, 0] {
+        let result = run(&mut s, "joint.drive", json!({"joint":"Crank drive","value":angle,"quiet":true}));
+        assert!(result["stopped_by_loop"].is_null(), "{result}");
+    }
+    assert_eq!(s.motion_traces.recomputations, count);
+    assert_eq!(kept_trace_fit(&s, trace.sketch), original);
+
+    run(&mut s, "parameters.change", json!({"name":"coupler_length","expression":"55 mm"}));
+    let updated = kept_trace_fit(&s, trace.sketch);
+    let [q, _] = meet(Vec3::new(0.0, 20.0, 0.0), 55.0, Vec3::new(40.0, 0.0, 0.0), 50.0);
+    assert!(near(updated[0], q * 2.0 - Vec3::new(0.0, 20.0, 0.0) + Vec3::Z * 10.0));
+    assert_ne!(updated, original);
+    assert_eq!(s.doc.assembly.traces[0].wire, trace.wire);
+    assert_eq!(s.motion_traces.recomputations, count + 1, "a dimension edit resamples once");
+    assert!(s.model.result(trace.sketch).unwrap().warning.is_none());
+
+    run(&mut s, "parameters.change", json!({"changes":{"coupler_length":"2.5 * unit_length","unit_length":"24 mm"}}));
+    let scaled = kept_trace_fit(&s, trace.sketch);
+    assert!(scaled.iter().zip(&original).all(|(a, b)| near(*a, Vec3::new(b.x * 1.2, b.y * 1.2, 10.0))));
+    run(&mut s, "parameters.change", json!({"name":"trace_sweep","expression":"180 deg"}));
+    let half = kept_trace_fit(&s, trace.sketch);
+    assert!(near(half[0], scaled[0]) && near(*half.last().unwrap(), scaled[72]));
+    assert!(s.model.results.iter().all(|r| r.error.is_none()), "{:?}", s.model.results);
+}
+
+#[test]
 fn associative_trace_reuses_pose_and_unrelated_edits_but_follows_drive_expressions() {
     let (mut s, p0, q0) = four_bar();
     let mid = (p0 + q0) * 0.5;
