@@ -76,6 +76,25 @@ fn reassigned_body_is_an_independent_base_feature() {
 }
 
 #[test]
+fn deleting_an_independent_base_keeps_the_copied_component() {
+    let mut s = Session::default();
+    box2(&mut s);
+    let part = component(&mut s, "Part");
+    run(&mut s, "component.move_bodies", json!({"component":part,"bodies":["Cube"]}));
+    let new = copy(&mut s, part)["component"].as_u64().unwrap();
+    let base = s.doc.features.iter().find(|f| f.component == new && matches!(f.kind, solidcraft_doc::FeatureKind::Import { .. })).unwrap();
+    assert!(!base.inserted && !s.doc.feature_owns_component(base));
+    let (base, others) = (base.id, s.doc.features.iter().filter(|f| f.component == new).count() - 1);
+    let (components, occurrences, joints) = (s.doc.components.clone(), s.doc.occurrences.clone(), s.doc.assembly.joints.clone());
+    let reply = run(&mut s, "timeline.delete", json!({"feature": base.to_string()}));
+    assert_eq!(reply["deleted"], json!([base]));
+    assert_eq!(s.doc.components, components);
+    assert_eq!(s.doc.occurrences, occurrences);
+    assert_eq!(s.doc.assembly.joints, joints);
+    assert_eq!(s.doc.features.iter().filter(|f| f.component == new).count(), others);
+}
+
+#[test]
 fn clone_preserves_physical_material_and_independent_styles() {
     let mut s = Session::default();
     let part = component(&mut s, "Part");

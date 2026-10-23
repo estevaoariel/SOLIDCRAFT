@@ -168,6 +168,10 @@ fn delete(s: &mut Session, p: &Value) -> Result<Value> {
     if s.active_sketch.is_some_and(|a| gone.contains(&a)) {
         s.active_sketch = None;
     }
+    // An inserted file's feature takes its components with it.
+    if s.active_component != 0 && !s.doc.components.iter().any(|c| c.id == s.active_component) {
+        s.active_component = 0;
+    }
     s.selection.clear();
     s.refresh();
     let failing: Vec<Value> = s

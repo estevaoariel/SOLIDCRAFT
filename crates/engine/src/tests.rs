@@ -1254,6 +1254,55 @@ fn body_volume(st: &solidcraft_doc::ModelState) -> f64 {
     st.bodies.iter().map(|b| solidcraft_kernel::measure(&b.body).unwrap().volume).sum()
 }
 
+/// Deleting an inserted assembly frees its body names without leaving assembly ownership behind.
+#[test]
+fn step_insert_delete_removes_assembly_and_undo_restores_it() {
+    let dir = std::env::temp_dir().join(format!("solidcraft-step-delete-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("parts.step");
+    let mut source = Session::default();
+    for (name, x) in [("Part", 0), ("Other", 20)] {
+        run(&mut source, "solid.box", json!({"length": 10, "width": 10, "height": 10, "corner": [x, 0, 0], "operation": "new", "body_name": name}));
+    }
+    run(&mut source, "component.from_bodies", json!({"bodies": ["Part", "Other"]}));
+    run(&mut source, "file.export", json!({"path": path.to_string_lossy()}));
+
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "body_name": "Part"}));
+    let kept = s.doc_mut().add_component(Some("Kept"), 0).unwrap();
+    let kept_occurrence = s.doc.occurrence_of(kept).unwrap().clone();
+    run(&mut s, "file.insert_step", json!({"path": path.to_string_lossy(), "name": "Imported"}));
+    let reopened = solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap();
+    assert!(reopened.find_feature("Imported").unwrap().inserted, "the insert keeps its mark through save");
+    run(&mut s, "solid.mirror", json!({"bodies": ["Part"], "plane": {"origin": [0, 30, 0], "normal": [0, 1, 0]}}));
+    assert!(s.model.state().body("Part (3)").is_some());
+    assert!(!s.doc.assembly.joints.is_empty());
+    assert!(!s.doc.body_components.is_empty());
+    let before = s.doc.clone();
+    let history = s.undo.len();
+
+    run(&mut s, "timeline.delete", json!({"feature": "Imported"}));
+    assert_eq!(s.undo.len(), history + 1);
+    assert_eq!(s.doc.components.iter().map(|c| c.id).collect::<Vec<_>>(), [kept]);
+    assert_eq!(s.doc.occurrences, [kept_occurrence]);
+    assert!(s.doc.assembly.joints.is_empty());
+    assert!(s.doc.body_components.is_empty());
+    assert!(s.doc.body_offsets.is_empty());
+    let state = s.model.state();
+    let mirrored = state.body("Part (2)").unwrap();
+    assert_eq!(s.doc.model_body_component(mirrored), 0);
+    run(&mut s, "solid.box", json!({"length": 5, "width": 5, "height": 5, "corner": [40, 0, 0], "operation": "new", "body_name": "Other"}));
+    assert_eq!(s.doc.model_body_component(s.model.state().body("Other").unwrap()), 0);
+    run(&mut s, "edit.undo", json!({}));
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(s.doc, before);
+    assert!(s.model.state().body("Part (3)").is_some());
+    run(&mut s, "edit.redo", json!({}));
+    assert!(s.doc.body_components.is_empty());
+    assert!(s.doc.assembly.joints.is_empty());
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 /// Previews evaluate on a scratch copy: the document, undo history and model are untouched.
 #[test]
 fn preview_has_no_side_effects() {
