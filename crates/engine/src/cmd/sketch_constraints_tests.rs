@@ -888,3 +888,95 @@ fn undoing_a_defining_dimension_removes_the_parameter_too() {
     assert_eq!(param_row(&mut s, "w")["expression"], "20");
     assert!((line_length(&s, "la") - 20.0).abs() < 1e-6);
 }
+
+#[test]
+fn midpoint_edge_dimensions_track_the_midpoint_and_reuse_it() {
+    for reverse in [false, true] {
+        let mut s = new_sketch();
+        run(&mut s, "sketch.line", json!({"points":[[0,10],[20,10]]}));
+        run(&mut s, "sketch.line", json!({"points":[[-10,-10],[-10,40]]}));
+        run(&mut s, "sketch.constraint.fix", json!({"entity":"l2"}));
+        let length = run(&mut s, "sketch.dimension", json!({"entities":["l1"],"value":20}))["param"].as_str().unwrap().to_string();
+        let baseline = s.doc.to_json();
+        let entities = if reverse { json!(["l2", "mid:l1"]) } else { json!(["mid:l1", "l2"]) };
+        let d = run(&mut s, "sketch.dimension", json!({"entities":entities,"value":25}));
+        assert_eq!(d["unit"], "mm");
+        assert!((d["measured"].as_f64().unwrap() - 25.).abs() < 1e-6);
+        let param = d["param"].as_str().unwrap().to_string();
+        let accepted = s.doc.to_json();
+        run(&mut s, "edit.undo", json!({}));
+        assert_eq!(s.doc.to_json(), baseline, "the helper and dimension undo together");
+        run(&mut s, "edit.redo", json!({}));
+        assert_eq!(s.doc.to_json(), accepted);
+        run(&mut s, "parameters.change", json!({"name":length,"expression":"40 mm"}));
+        run(&mut s, "parameters.change", json!({"name":param,"expression":"30 mm"}));
+        run(&mut s, "sketch.dimension", json!({"entities":entities,"driven":true}));
+        let sk = sketch(&s);
+        let mids: Vec<_> = sk
+            .constraints
+            .iter()
+            .filter_map(|c| match c.kind {
+                solidcraft_sketch::ConstraintKind::Midpoint { p, l } if l == sk.curve_index("l1").unwrap() => Some(p),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(mids.len(), 1, "another dimension reuses the constrained midpoint");
+        let mid = sk.point(mids[0]).unwrap();
+        let a = sk.point(sk.resolve_point("l1.start").unwrap()).unwrap();
+        let b = sk.point(sk.resolve_point("l1.end").unwrap()).unwrap();
+        assert!(mid.dist((a + b) * 0.5) < 1e-6);
+        assert!((mid.x - 20.).abs() < 1e-6, "distance from the fixed x=-10 edge is 30 mm");
+        assert!((a.dist(b) - 40.).abs() < 1e-6);
+        let mut reopened = Session::new(solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap());
+        reopened.active_sketch = s.active_sketch;
+        assert_eq!(sketch(&reopened), sk);
+    }
+}
+
+#[test]
+fn invalid_midpoint_dimension_references_leave_the_design_unchanged() {
+    let mut s = new_sketch();
+    run(&mut s, "sketch.line", json!({"points":[[0,10],[20,10]]}));
+    run(&mut s, "sketch.circle.center", json!({"center":[30,30],"radius":5}));
+    let baseline = s.doc.to_json();
+    for entities in [json!(["mid:missing", "l1"]), json!(["mid:c1", "l1"]), json!(["mid:l1", "missing"])] {
+        assert!(s.execute("sketch.dimension", &json!({"entities":entities,"value":10})).is_err());
+        assert_eq!(s.doc.to_json(), baseline);
+    }
+}
+
+#[test]
+fn midpoint_pair_orientation_uses_the_text_box_and_respects_explicit_types() {
+    use solidcraft_sketch::ConstraintKind as K;
+    let mut s = new_sketch();
+    run(&mut s, "sketch.line", json!({"points":[[0,10],[20,10]],"infer":false}));
+    run(&mut s, "sketch.line", json!({"points":[[40,20],[40,40]],"infer":false}));
+    for (ty, at, axis) in [
+        ("auto", [25., 33.], 'x'),
+        ("auto", [43., 20.], 'y'),
+        ("auto", [25., 20.], 'd'),
+        ("distance", [25., 33.], 'd'),
+        ("horizontal", [43., 20.], 'x'),
+        ("vertical", [25., 33.], 'y'),
+    ] {
+        let mut trial = s.scratch();
+        run(&mut trial, "sketch.dimension", json!({"entities":["mid:l1","mid:l2"],"type":ty,"text_at":at,"driven":true}));
+        let sk = sketch(&trial);
+        let c = sk.constraints.iter().rev().find(|c| c.kind.is_dimension()).unwrap();
+        assert!(
+            match axis {
+                'x' => matches!(c.kind, K::DistanceX { .. }),
+                'y' => matches!(c.kind, K::DistanceY { .. }),
+                _ => matches!(c.kind, K::Distance { .. }),
+            },
+            "{ty} at {at:?}: {:?}",
+            c.kind
+        );
+        let expected = match axis {
+            'x' => 30.,
+            'y' => 20.,
+            _ => 1300_f64.sqrt(),
+        };
+        assert!((solidcraft_sketch::measure_dimension(&sk, &c.kind).unwrap() - expected).abs() < 1e-6);
+    }
+}
