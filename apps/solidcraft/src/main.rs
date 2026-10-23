@@ -604,9 +604,11 @@ fn main() -> eframe::Result {
     solidcraft_engine::crash::phase("window");
     let options = eframe::NativeOptions {
         viewport: app_viewport()?,
-        depth_buffer: depth_bits,
-        stencil_buffer: STENCIL_BITS,
-        multisampling: samples,
+        // The window's pass (egui's) has no depth and one sample: the viewport draws its scene
+        // offscreen with its own depth and MSAA, then blits it, so the UI pass pays for neither.
+        depth_buffer: 0,
+        stencil_buffer: 0,
+        multisampling: 1,
         // Kept with the other settings, not in a folder named after the app id. Safe mode reads
         // and writes a scratch copy, leaving the user's settings as they were.
         persistence_path: if safe_mode {
@@ -670,9 +672,19 @@ fn main() -> eframe::Result {
             }
             mark("app state and prefs");
             if let Some(rs) = &cc.wgpu_render_state {
-                eprintln!("SolidCraft graphics: {:?}, MSAA {}x (requested {}x)", rs.adapter.get_info().backend, rs.msaa_samples, samples);
+                // The viewport's scene keeps the app's anti-aliasing; the window's pass is 1x.
+                // A count the device cannot render with falls back to the supported default.
+                let scene_samples = {
+                    let requested = u32::from(samples).max(1);
+                    if requested <= 1 || rs.msaa_supported.is_empty() || rs.msaa_supported.contains(&requested) {
+                        requested
+                    } else {
+                        rs.msaa_supported.iter().copied().filter(|&n| n <= solidcraft_ui_egui::prefs::Prefs::default().msaa).max().unwrap_or(1)
+                    }
+                };
+                eprintln!("SolidCraft graphics: {:?}, MSAA {scene_samples}x (requested {}x)", rs.adapter.get_info().backend, samples);
                 solidcraft_engine::crash::phase("viewport pipelines (shader compile)");
-                app.set_wgpu(rs, depth_bits, STENCIL_BITS, rs.msaa_samples);
+                app.set_wgpu_split(rs, depth_bits, STENCIL_BITS, scene_samples);
                 solidcraft_ui_egui::gpu::install_picture_renderer(rs);
                 // The graphics driver is loaded now; it may have put its own exception filter
                 // in front of ours.
@@ -682,8 +694,8 @@ fn main() -> eframe::Result {
                 solidcraft_ui_egui::prefs::check_msaa(&mut app, u32::from(samples));
                 let info = rs.adapter.get_info();
                 solidcraft_engine::crash::set_environment(&format!(
-                    "Renderer: {:?} {} ({}), MSAA {}x",
-                    info.backend, info.name, info.driver, rs.msaa_samples
+                    "Renderer: {:?} {} ({}), MSAA {scene_samples}x",
+                    info.backend, info.name, info.driver
                 ));
             }
             mark("viewport pipelines");
