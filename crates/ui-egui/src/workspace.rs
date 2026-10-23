@@ -346,12 +346,7 @@ pub const SECTIONS: &[Section] = &[
             "manufacture.inspection.record",
         ],
     },
-    Section {
-        tab: "MANUFACTURE",
-        panel: "CUTTING",
-        promoted: 2,
-        ids: &["manufacture.fabrication.nest", "manufacture.fabrication.profile"],
-    },
+    Section { tab: "MANUFACTURE", panel: "CUTTING", promoted: 2, ids: &["manufacture.fabrication.nest", "manufacture.fabrication.profile"] },
     Section {
         tab: "MANUFACTURE",
         panel: "INSPECT",
