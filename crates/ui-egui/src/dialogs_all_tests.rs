@@ -55,6 +55,8 @@ fn representative(h: &Harness, command: &str) -> Dialog {
             }
         } else if input.accept & PLANES != 0 {
             vec![Sel::Plane { name: if index == 1 { "XZ" } else { "XY" }.into() }]
+        } else if input.accept & crate::selection::SKETCH_LINES != 0 {
+            vec![Sel::ExternalSketchCurve { sketch: s.world_state().sketches.last().unwrap().feature, id: path.clone() }]
         } else if input.accept & CURVES != 0 || command == "sheet.fold" && index == 0 {
             vec![Sel::SketchCurve { id: path.clone() }]
         } else if input.accept & AXES != 0 {
@@ -147,6 +149,7 @@ fn check_form(command: &str, labels: &[&str]) {
         "joint.gear" => &["Reverse", "Internal gear"],
         "joint.rack_pinion" | "joint.screw" => &["Reverse"],
         "joint.cam" => &["Other side"],
+        "frame.member" => &["All Lines", "Mirror"],
         _ => &[],
     };
     for label in checks {
@@ -191,10 +194,10 @@ fn control_role(command: &str, label: &str) -> Option<egui::accesskit::Role> {
         "Operation" if command == "solid.mirror" => return None,
         "Operation" | "Type" | "Orientation" | "Move Type" | "Object Type" | "Rule" | "Rim Edge" | "Catch Direction" | "Shape" | "Holes" | "Size"
         | "Bend Line Position" | "From Snap" | "To Snap" | "Joint" | "Joint 1" | "Joint 2" | "Gear 1" | "Gear 2" | "Pinion" | "Rack" | "Screw"
-        | "Nut" | "Cam" | "Follower" => Role::ComboBox,
+        | "Nut" | "Cam" | "Follower" | "Anchor" => Role::ComboBox,
         "Radius" if command == "joint.rack_pinion" => Role::Label,
         "Pitch" if command == "solid.thread" => Role::ComboBox,
-        "Automatic size" | "Reverse" | "Other side" => Role::CheckBox,
+        "Automatic size" | "Reverse" | "Other side" | "All Lines" | "Mirror" => Role::CheckBox,
         "Animate" => Role::Button,
         "Ratio" if command.starts_with("joint.") && command != "joint.motion_link" => return None,
         _ => Role::TextInput,
@@ -234,6 +237,7 @@ form_case!(remove, "solid.remove", []);
 form_case!(path_pattern, "solid.pattern.path", ["Type", "Object Type", "Quantity", "Spacing"]);
 form_case!(pipe, "solid.pipe", ["Diameter", "Wall"]);
 form_case!(stock, "solid.bounding_solid", ["Margin"]);
+form_case!(frame_member, "frame.member", ["All Lines", "Anchor", "Angle", "Mirror", "Name"]);
 form_case!(thread, "solid.thread", ["Profile", "Size", "Pitch", "Designation"]);
 form_case!(primitive_box, "solid.box", ["length", "width", "height", "Operation"]);
 form_case!(cylinder, "solid.cylinder", ["diameter", "height", "Operation"]);

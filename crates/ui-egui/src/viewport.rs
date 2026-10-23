@@ -2311,6 +2311,11 @@ pub(crate) fn build_highlight(app: &SolveApp) -> GpuScene {
                             feedback.line(a.to_f32(), b.to_f32(), c4(t.sel_edge), 3.5, true);
                         }
                     }
+                } else if let Some(w) = st.sketch(*sketch).and_then(|ss| ss.sketch.wire_index(id).and_then(|i| ss.sketch.wires.get(i))) {
+                    // A 3D sketch curve of that sketch.
+                    for q in w.pts.windows(2) {
+                        feedback.line(q[0].to_f32(), q[1].to_f32(), c4(t.sel_edge), 3.5, true);
+                    }
                 }
             }
             // A 3D sketch curve, in whichever sketch has it.

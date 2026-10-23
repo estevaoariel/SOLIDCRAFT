@@ -27,6 +27,7 @@ mod feature_refs;
 pub use face_anchor::{FaceAnchor, FaceAttachmentStatus};
 pub mod format;
 mod format_offsets;
+pub mod frame;
 mod history_names;
 pub use format_offsets::whole_profile_selection_from_value;
 pub mod joints;

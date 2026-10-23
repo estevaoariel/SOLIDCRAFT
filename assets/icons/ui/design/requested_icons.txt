@@ -104,6 +104,8 @@ flange	false
 flat	false
 fold	false
 folder	false
+frame_member	false
+frame_trim	false
 gear	false
 graph	false
 ground	false
