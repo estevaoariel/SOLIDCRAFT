@@ -8,7 +8,7 @@ use solidcraft_manufacture::{
     SidewaysCompensation, ThreedOperation, ThreedStrategy, Tool,
 };
 
-use crate::{viewport, SolveApp};
+use crate::{SolveApp, viewport};
 
 const HEIGHT_FROM: &[HeightFrom] = &[
     HeightFrom::ClearanceHeight,
@@ -155,11 +155,7 @@ pub fn show_dialogs(app: &mut SolveApp, ui: &mut egui::Ui) {
 
 fn dialog_title(draft: &ThreedOperation) -> String {
     let kind = draft.strategy.label().to_uppercase();
-    if draft.name.is_empty() || draft.name == draft.strategy.label() {
-        kind
-    } else {
-        format!("{kind} : {}", draft.name.to_uppercase())
-    }
+    if draft.name.is_empty() || draft.name == draft.strategy.label() { kind } else { format!("{kind} : {}", draft.name.to_uppercase()) }
 }
 
 fn tool_tab(ui: &mut egui::Ui, draft: &mut ThreedOperation, tools: &[Tool]) {
