@@ -866,11 +866,11 @@ struct CornerKept {
 }
 
 /// Keep corner point `c` of curves `ca`, `cb` (whose corner ends were just moved to `na`, `nb`)
-/// when anything measures to it: a constraint or dimension on the point, the length of either
-/// line, or it is the origin or still ends another curve. It stays as a virtual sharp corner,
-/// held on both curves' extensions (their intersection), and the line lengths become distances
-/// from the far end to it, so the part keeps its size. Otherwise None: the
-/// caller removes the point.
+/// when anything measures to it or places it: a constraint or dimension on the point, the length
+/// of either line, a fixed or expression-driven position, or it is the origin or still ends another
+/// curve. It stays as a virtual sharp corner, held on both curves' extensions (their
+/// intersection), and the line lengths become distances from the far end to it, so the part
+/// keeps its size. Otherwise None: the caller removes the point.
 fn keep_corner(sk: &mut Sketch, c: usize, [(ca, na), (cb, nb)]: [(usize, usize); 2]) -> Result<Option<CornerKept>> {
     let used = sk.curves.iter().any(|x| uses(x, c));
     let mut moved: Vec<String> = sk.constraints.iter().filter(|k| k.kind.refers_to_point(c)).map(|k| k.id.clone()).collect();
@@ -888,7 +888,8 @@ fn keep_corner(sk: &mut Sketch, c: usize, [(ca, na), (cb, nb)]: [(usize, usize);
         k.kind = if *a == new_end { ConstraintKind::Distance { p: c, q: *b, value } } else { ConstraintKind::Distance { p: *a, q: c, value } };
         moved.push(k.id.clone());
     }
-    if moved.is_empty() && !used && c != 0 {
+    let positioned = sk.points.get(c).is_some_and(|pt| pt.fixed || pt.exprs.is_some());
+    if moved.is_empty() && !used && c != 0 && !positioned {
         return Ok(None);
     }
     for cu in [ca, cb] {
