@@ -274,6 +274,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                 }
                 let users: Vec<_> = visible.iter().copied().filter(|r| r.source == "user").collect();
                 ui_kit::section_count(ui, "users", "User Parameters", true, Some(users.len()), |ui| {
+                    ui.horizontal_wrapped(|ui| favorite_all(app, ui, &mut d, &users, "user"));
                     table(app, ui, &mut d, &users, "user");
                 });
                 if !d.sources.is_empty() {
@@ -286,7 +287,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                                 for source in sources.iter() {
                                     let members: Vec<_> = linked.iter().copied().filter(|r| r.link == source.path).collect();
                                     ui_kit::section_count(ui, ("plink", &source.path), source.title(), true, Some(members.len()), |ui| {
-                                        linked_source(app, ui, &mut d, source);
+                                        linked_source(app, ui, &mut d, source, &members);
                                         table(app, ui, &mut d, &members, &format!("link:{}", source.path));
                                     });
                                 }
@@ -335,7 +336,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
 }
 
 /// A linked design's status and its Update and Break Link buttons, above its parameters.
-fn linked_source(app: &mut SolveApp, ui: &mut egui::Ui, d: &mut ParamsDialog, source: &Source) {
+fn linked_source(app: &mut SolveApp, ui: &mut egui::Ui, d: &mut ParamsDialog, source: &Source, rows: &[&Row]) {
     // Anything but up to date needs a look: the values in use are not the file's.
     let kind = if source.status == "up_to_date" { ui_kit::Text::Hint("link_status") } else { ui_kit::Text::Error("link_status") };
     ui_kit::text(ui, crate::i18n::tr_label(source.status_label()), kind).on_hover_text(&source.path);
@@ -354,7 +355,24 @@ fn linked_source(app: &mut SolveApp, ui: &mut egui::Ui, d: &mut ParamsDialog, so
         if unlink.clicked() {
             d.error = app.run("parameters.break_link", json!({"source": source.path})).err();
         }
+        favorite_all(app, ui, d, rows, &format!("link:{}", source.path));
     });
+}
+
+/// Favourite all the rows a group shows (the filter applies), in one step; when they all are
+/// already, the button takes them off again.
+fn favorite_all(app: &mut SolveApp, ui: &mut egui::Ui, d: &mut ParamsDialog, rows: &[&Row], key: &str) {
+    if rows.is_empty() {
+        return;
+    }
+    let all = rows.iter().all(|r| r.favorite);
+    let label = if all { "Unfavourite all" } else { "Favourite all" };
+    let response = ui_kit::icon_label_button(ui, label, "star", true, false);
+    crate::scenario::publish_handle(&format!("pfav_all:{key}"), response.rect.center());
+    if response.clicked() {
+        let names: Vec<&str> = rows.iter().map(|r| r.name.as_str()).collect();
+        d.error = app.run("parameters.favorite", json!({"names": names, "favorite": !all})).err();
+    }
 }
 
 /// Live check of an expression typed for a parameter of this unit: Ok(shown value) or the message.
@@ -901,6 +919,14 @@ mod tests {
         h.frames(3);
         assert_eq!(h.app.params.as_ref().unwrap().error, None);
         assert_eq!(expr(&h).as_deref(), Some("8.5 mm"));
+        // Favourite all stars the group's parameters; pressed again, it takes them off.
+        let favourites = |h: &crate::scenario::Harness| h.app.session.doc.favorites.iter().cloned().collect::<Vec<_>>();
+        h.step(&json!({"click": {"handle": format!("pfav_all:link:{source}")}})).unwrap();
+        h.frames(3);
+        assert_eq!(favourites(&h), ["Q_InsHole", "Q_InsLen"]);
+        h.step(&json!({"click": {"handle": format!("pfav_all:link:{source}")}})).unwrap();
+        h.frames(3);
+        assert!(favourites(&h).is_empty());
         // Break Link: the values stay, as this design's own.
         h.step(&json!({"click": {"handle": format!("plink:break:{source}")}})).unwrap();
         h.frames(3);

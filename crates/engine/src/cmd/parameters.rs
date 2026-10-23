@@ -27,7 +27,9 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("parameters.delete", "Delete Parameter", delete)
         .icon("delete")
         .params("name (refused while something uses it; the error lists the users)"),
-    CommandSpec::new("parameters.favorite", "Favourite Parameter", favorite).icon("star").params("name, favorite?: bool (default true)"),
+    CommandSpec::new("parameters.favorite", "Favourite Parameter", favorite)
+        .icon("star")
+        .params("name | names: [name] (all or nothing), favorite?: bool (default true)"),
     CommandSpec::new("parameters.move", "Move Parameter", move_param)
         .icon("reorder")
         .params("name, before | after: another user parameter; the user parameter is listed just before or after it"),
@@ -209,10 +211,30 @@ fn delete(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn favorite(s: &mut Session, p: &Value) -> Result<Value> {
-    let name = param_name("parameters.favorite", p)?.to_string();
+    let cmd = "parameters.favorite";
     let on = bool_(p, "favorite").unwrap_or(true);
-    s.doc_mut().set_favorite(&name, on)?;
-    Ok(json!({"name": name, "favorite": on}))
+    let Some(list) = p.get("names") else {
+        let name = param_name(cmd, p)?.to_string();
+        s.doc_mut().set_favorite(&name, on)?;
+        return Ok(json!({"name": name, "favorite": on}));
+    };
+    // Several at once (Favourite all in the Parameters window): one undo step, and nothing
+    // changes when one of the names is unknown.
+    let names: Vec<String> = list
+        .as_array()
+        .filter(|a| a.len() <= solidcraft_doc::MAX_PARAMS * 2)
+        .and_then(|a| a.iter().map(|n| n.as_str().map(|x| x.trim().to_string())).collect::<Option<Vec<_>>>())
+        .ok_or_else(|| bad(cmd, "`names` must be a list of parameter names"))?;
+    if let Some(n) = names.iter().find(|n| !known(s, n) && s.doc.linked_param(n).is_none()) {
+        return Err(bad(cmd, format!("no parameter `{n}`")));
+    }
+    if names.iter().any(|n| s.doc.favorites.contains(n) != on) {
+        let d = s.doc_mut();
+        for n in &names {
+            d.set_favorite(n, on)?;
+        }
+    }
+    Ok(json!({"names": names, "favorite": on}))
 }
 
 fn move_param(s: &mut Session, p: &Value) -> Result<Value> {
