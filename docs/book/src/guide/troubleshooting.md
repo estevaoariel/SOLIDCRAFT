@@ -96,3 +96,13 @@ order above). Safe mode ignores it and always uses the software renderer.
 Designs saved by a newer SolidCraft use a newer file format. Older versions refuse them with
 "this design was saved by a newer SolidCraft" and don't change the file. Open them with the
 current version.
+
+## Save As says the file can't be found (Windows)
+
+If saving into *Documents* (or *Pictures*, *Desktop* and other protected folders) fails with a
+"File not found" message from the Windows save dialog and nothing is saved, Windows Security's
+*Controlled folder access* is probably blocking SolidCraft. Windows usually also shows an
+"Unauthorized changes blocked" notification. Either save to a folder that isn't protected, or
+allow SolidCraft: *Windows Security › Virus & threat protection › Ransomware protection ›
+Controlled folder access › Allow an app through Controlled folder access*, then add
+`solidcraft.exe`.
