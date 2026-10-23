@@ -752,8 +752,7 @@ fn nearest_plane(doc: &Document, st: &ModelState, o: &JointOrigin, pick: Vec3) -
     let mut best: Option<(f64, Vec3, Vec3)> = None;
     for b in component_bodies(doc, st, comp) {
         let offset = doc.model_body_offset(b);
-        let tol = (b.body.size() * 2e-3).max(1e-3);
-        for f in b.body.faces(tol)? {
+        for f in b.joint_faces()?.iter() {
             let Some(n) = f.plane_normal else { continue };
             let (c, n) = match offset {
                 Some(m) => (apply_point(m, f.centroid), apply_vector(m, n)),
