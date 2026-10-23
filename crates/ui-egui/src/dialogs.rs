@@ -109,7 +109,7 @@ crate::dialog_descriptor::dialog_descriptors! {
             FeatureKind::ConstructionPlane { plane: PlaneRef::Offset { distance, .. } }) {
             offset: String = "0 mm".into() => distance.to_string(),
         } => json!({"offset": offset});
-        AnglePlane("construct.plane.at_angle", "PLANE AT ANGLE", [("Plane", PLANES, false), ("Axis", AXES, false)],
+        AnglePlane("construct.plane.at_angle", "PLANE AT ANGLE", [("Plane", PLANES | PLANAR_FACES, false), ("Axis", AXES | EDGES, false)],
             FeatureKind::ConstructionPlane { plane: PlaneRef::AtAngle { angle, .. } }) {
             angle: String = "45 deg".into() => angle.to_string(),
         } => json!({"angle": angle});
@@ -689,6 +689,7 @@ impl Dialog {
             "construct.plane.along_path" => {
                 Dialog::new(Kind::PathPlane { t: "0.5".into(), sketch: None }, vec![SelInput::new("Path", CURVES | EDGES, false)])
             }
+
             "solid.split_body" => Dialog::new(
                 Kind::Split,
                 vec![SelInput::new("Body to split", BODIES, false), SelInput::new("Splitting tool", PLANES | FACES | AXES, false)],
@@ -1711,6 +1712,8 @@ fn hint(inp: &SelInput) -> &'static str {
     let a = inp.accept;
     if a & PROFILES != 0 {
         "click profiles in the view"
+    } else if (a & (AXES | EDGES)) == (AXES | EDGES) {
+        "click an axis, line or edge"
     } else if a & EDGES != 0 {
         "click edges or faces"
     } else if a & PLANES != 0 {
@@ -2860,6 +2863,18 @@ fn plane_by_name(app: &SolveApp, name: &str) -> Option<solidcraft_engine::geom::
     })
 }
 
+/// The base plane of a construct command that takes a plane or a picked planar face:
+/// its origin and normal in world space.
+fn base_plane(app: &SolveApp, base: &Value) -> Option<(Vec3, Vec3)> {
+    if let Some(name) = base.as_str() {
+        let pl = plane_by_name(app, name)?;
+        return Some((pl.origin, pl.normal()));
+    }
+    let body = base.get("body")?.as_str()?;
+    let index = base.get("index")?.as_u64()? as usize;
+    planar_face(&app.session, body, index)
+}
+
 /// Animate the camera to look straight at the active sketch plane.
 pub fn look_at_sketch(app: &mut SolveApp) {
     look_at_sketch_from(app, false);
@@ -3418,17 +3433,52 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
         }
         Kind::AnglePlane { .. } => {
             need(0, "a plane")?;
-            let base = match sels(d, 0).first() {
-                Some(Sel::Plane { name }) => name.clone(),
-                _ => return Err("pick an origin or construction plane".into()),
-            };
+            let base = plane_arg(app, sels(d, 0).first())?;
             let axis = match sels(d, 1).first() {
-                Some(Sel::Axis { name }) => json!(name),
+                Some(Sel::Axis { name }) => {
+                    if let Some((_, normal)) = base_plane(app, &base) {
+                        let dir = match name.as_str() {
+                            "X" => Vec3::X,
+                            "Y" => Vec3::Y,
+                            "Z" => Vec3::Z,
+                            n => solidcraft_engine::view::construction_axes(&app.session)
+                                .into_iter()
+                                .find(|(_, an, _, _)| an == n)
+                                .map(|(_, _, _, d)| d)
+                                .unwrap_or(Vec3::ZERO),
+                        };
+                        if normal.dot(dir).abs() > 1e-4 {
+                            return Err("the axis must be parallel to the base plane".into());
+                        }
+                    }
+                    json!(name)
+                }
                 Some(x) => {
-                    let (o, dir) = axis_of(app, x).ok_or("the axis must be an origin axis or a sketch line")?;
+                    let (o, dir) = axis_of(app, x).ok_or("the axis must be an origin axis, a sketch line or a straight edge")?;
+                    if let Some((origin, normal)) = base_plane(app, &base) {
+                        if normal.dot(dir).abs() > 1e-4 {
+                            return Err("the axis must be parallel to the base plane".into());
+                        }
+                        if normal.dot(o - origin).abs() > 1e-4 {
+                            return Err("the axis must lie in the base plane".into());
+                        }
+                    }
                     json!({"origin": pt(o), "dir": pt(dir)})
                 }
-                None => d.extra.get("axis").cloned().ok_or("pick an axis")?,
+                None => {
+                    let ax = d.extra.get("axis").cloned().ok_or("pick an axis")?;
+                    if let Some((origin, normal)) = base_plane(app, &base)
+                        && let (Some(o), Some(dir)) = (ax.get("origin").and_then(vec3_of), ax.get("dir").and_then(vec3_of))
+                    {
+                        if normal.dot(dir).abs() > 1e-4 {
+                            return Err("the axis must be parallel to the base plane".into());
+                        }
+                        if normal.dot(o - origin).abs() > 1e-4 {
+                            return Err("the axis must lie in the base plane".into());
+                        }
+                    }
+                    ax
+                }
             };
             ("construct.plane.at_angle", json!({"base": base, "axis": axis}))
         }
