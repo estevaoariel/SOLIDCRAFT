@@ -604,3 +604,99 @@ fn copies_of_a_join_that_merged_its_targets_join_the_merged_body() {
         assert!(rel(volume(&mut s), v0 + n * (v1 - v0)) < 1e-3, "{id}: {} vs {}", volume(&mut s), v0 + n * (v1 - v0));
     }
 }
+
+/// #395: a pattern or mirror of features takes a pattern or mirror of features as a source: it
+/// copies what that one made (its copies, not its source). The issue's design: a 40 × 30 × 20
+/// box with a hole `H` at (−15, −10) and `Pat`, two more holes along x at 10 mm steps.
+#[test]
+fn patterns_and_mirrors_of_patterns_and_mirrors() {
+    use solidcraft_geom::Vec3;
+    let hole = PI * 1.5 * 1.5 * 20.0;
+    let design = || {
+        let mut s = Session::default();
+        run(&mut s, "solid.box", json!({"length": 40, "width": 30, "height": 20, "corner": [-20, -15, 0], "name": "Box"}));
+        run(&mut s, "sketch.create", json!({"plane": "XY", "name": "Spot"}));
+        run(&mut s, "sketch.circle.center", json!({"center": [-15, -10], "radius": 1.5}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "solid.extrude", json!({"sketch": "Spot", "through_all": true, "operation": "cut", "name": "H"}));
+        run(&mut s, "solid.pattern.rectangular", json!({"features": ["H"], "dir1": [1, 0, 0], "count1": 3, "spacing1": 10, "name": "Pat"}));
+        s
+    };
+    let across_xz = json!({"origin": [0, 0, 0], "normal": [0, 1, 0]});
+    let across_yz = json!({"origin": [0, 0, 0], "normal": [1, 0, 0]});
+    // Each case: the steps after `design`, the holes there must be, and the spots that must
+    // stay material.
+    type Case = (Vec<(&'static str, Value)>, Vec<[f64; 2]>, Vec<[f64; 2]>);
+    let cases: Vec<(&str, Case)> = vec![
+        // The issue's step: the mirror of `Pat` is its two copies mirrored.
+        (
+            "mirror of a pattern",
+            (vec![("solid.mirror", json!({"features": ["Pat"], "plane": across_xz}))], vec![[-5.0, 10.0], [5.0, 10.0]], vec![[-15.0, 10.0]]),
+        ),
+        // With its source too: the six holes the issue expects.
+        (
+            "mirror of a hole and its pattern",
+            (
+                vec![("solid.mirror", json!({"features": ["H", "Pat"], "plane": across_xz}))],
+                vec![[-15.0, 10.0], [-5.0, 10.0], [5.0, 10.0]],
+                vec![[15.0, 10.0]],
+            ),
+        ),
+        (
+            "pattern of a pattern",
+            (
+                vec![("solid.pattern.rectangular", json!({"features": ["Pat"], "dir1": [0, 1, 0], "count1": 2, "spacing1": 20}))],
+                vec![[-5.0, 10.0], [5.0, 10.0]],
+                vec![[-15.0, 10.0]],
+            ),
+        ),
+        (
+            "mirror of a mirror",
+            (
+                vec![
+                    ("solid.mirror", json!({"features": ["H"], "plane": across_yz, "name": "Mir"})),
+                    ("solid.mirror", json!({"features": ["Mir"], "plane": across_xz})),
+                ],
+                vec![[15.0, -10.0], [15.0, 10.0]],
+                vec![[-15.0, 10.0]],
+            ),
+        ),
+        (
+            "pattern of a mirror",
+            (
+                vec![
+                    ("solid.mirror", json!({"features": ["H"], "plane": across_yz, "name": "Mir"})),
+                    ("solid.pattern.rectangular", json!({"features": ["Mir"], "dir1": [0, 1, 0], "count1": 2, "spacing1": 20})),
+                ],
+                vec![[15.0, -10.0], [15.0, 10.0]],
+                vec![[-15.0, 10.0]],
+            ),
+        ),
+    ];
+    for (what, (steps, holes, material)) in cases {
+        let mut s = design();
+        let before = volume(&mut s);
+        for (id, p) in steps {
+            run(&mut s, id, p);
+        }
+        for r in &s.model.results {
+            assert!(r.error.is_none(), "{what}: {}: {:?}", r.name, r.error);
+        }
+        let st = s.world_state();
+        assert_eq!(st.bodies.len(), 1, "{what}");
+        let body = &st.bodies[0].body;
+        for [x, y] in &holes {
+            assert!(!body.contains(Vec3::new(*x, *y, 10.0)), "{what}: a hole at ({x}, {y})");
+            assert!(body.contains(Vec3::new(*x, *y + 2.5, 10.0)), "{what}: material beside ({x}, {y})");
+        }
+        for [x, y] in &material {
+            assert!(body.contains(Vec3::new(*x, *y, 10.0)), "{what}: no hole at ({x}, {y})");
+        }
+        // The listed holes the steps added (in the last two cases `Mir` made the first of them).
+        let added = holes.len();
+        // Measured on the body's mesh, like the other tests here: to 1e-5 of the whole body.
+        let after = volume(&mut s);
+        let want = before - added as f64 * hole;
+        assert!(rel(after, want) < 1e-5, "{what}: {after} mm³, {added} more holes than {before} = {want}");
+    }
+}

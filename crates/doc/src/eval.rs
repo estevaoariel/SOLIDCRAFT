@@ -1920,6 +1920,13 @@ impl Model {
                         }
                         _ => Vec::new(),
                     };
+                    // Copies made through a pattern or mirror among the sources come after (#395).
+                    let mats = match &f.kind {
+                        FeatureKind::Pattern { features, bodies, .. } | FeatureKind::Mirror { features, bodies, .. } if bodies.is_empty() => {
+                            copy_instances(doc, &vals, &state, &crate::plain(features), &mats).unwrap_or(mats)
+                        }
+                        _ => mats,
+                    };
                     next.stamp(&state, f, key, mats);
                     for b in &mut next.bodies {
                         if !b.transferred {
@@ -5286,6 +5293,108 @@ fn path_at(segs: &[kernel::PathSeg], d: f64) -> (Vec3, Vec3) {
     (Vec3::ZERO, Vec3::X)
 }
 
+/// The deepest a pattern or mirror reaches through patterns and mirrors of features (#395).
+const MAX_NESTING: usize = 8;
+
+/// The feature a pattern or mirror names as a source. A sketch and its extrude often share a
+/// name; the feature that makes geometry wins.
+fn source_feature<'a>(doc: &'a Document, name: &str) -> Result<&'a Feature> {
+    doc.features
+        .iter()
+        .find(|x| x.name == name && !matches!(x.kind, FeatureKind::Sketch { .. } | FeatureKind::ConstructionPlane { .. }))
+        .or_else(|| doc.find_feature(name))
+        .ok_or_else(|| DocError::Unknown(format!("feature `{name}`")))
+}
+
+/// What a pattern or mirror of features copies, when it is the source of another one (#395): its
+/// own sources, and the transforms of its copies. `None` for any other feature, and for a pattern
+/// or mirror of bodies (its copies are bodies, which a pattern or mirror of features can't take).
+fn copied_features(doc: &Document, vals: &BTreeMap<String, Value>, st: &ModelState, src: &Feature) -> Result<Option<(Vec<String>, Vec<Mat>)>> {
+    match &src.kind {
+        FeatureKind::Pattern { features, pattern, bodies } if bodies.is_empty() => {
+            Ok(Some((crate::plain(features), pattern_transforms(doc, vals, st, src.component, pattern)?)))
+        }
+        FeatureKind::Mirror { features, plane, bodies, .. } if bodies.is_empty() => {
+            let pl = doc.resolve_plane_in(vals, plane, 0, Some(st))?;
+            Ok(Some((crate::plain(features), vec![mirror_matrix(&pl)])))
+        }
+        _ => Ok(None),
+    }
+}
+
+/// The copies a pattern or mirror of `features` at `mats` makes, source by source: the source
+/// feature, the transforms of its copies, and the instance number of its first copy less one.
+/// A source that is itself a pattern or mirror of features (#395) stands for what it copied: its
+/// own sources, at each of its transforms moved by each of ours. Those copies are numbered after
+/// `mats`' own (which keep the numbers they always had), each nested source in a block of its
+/// own, so no two copies of one feature share an instance. Suppressed sources copy nothing.
+fn copy_plan<'a>(
+    doc: &'a Document,
+    vals: &BTreeMap<String, Value>,
+    st: &ModelState,
+    features: &[String],
+    mats: &[Mat],
+) -> Result<Vec<(&'a Feature, Vec<Mat>, usize)>> {
+    #[allow(clippy::too_many_arguments)]
+    fn walk<'a>(
+        doc: &'a Document,
+        vals: &BTreeMap<String, Value>,
+        st: &ModelState,
+        features: &[String],
+        mats: &[Mat],
+        first: usize,
+        next: &mut usize,
+        depth: usize,
+        out: &mut Vec<(&'a Feature, Vec<Mat>, usize)>,
+    ) -> Result<()> {
+        for name in features {
+            if doc.find_feature(name).is_some_and(|x| x.suppressed) {
+                continue;
+            }
+            let src = source_feature(doc, name)?;
+            let Some((inner, inner_mats)) = copied_features(doc, vals, st, src)? else {
+                out.push((src, mats.to_vec(), first));
+                continue;
+            };
+            if depth >= MAX_NESTING {
+                return Err(DocError::Invalid(format!("patterns and mirrors of patterns and mirrors nest at most {MAX_NESTING} deep")));
+            }
+            let moved: Vec<Mat> = mats.iter().flat_map(|m| inner_mats.iter().map(move |mi| crate::mat_mul(m, mi))).collect();
+            if moved.len() > MAX_INSTANCES || next.saturating_add(moved.len()) > MAX_INSTANCES * MAX_NESTING {
+                return Err(DocError::Invalid("too many pattern instances".into()));
+            }
+            let block = *next;
+            *next += moved.len();
+            walk(doc, vals, st, &inner, &moved, block, next, depth + 1, out)?;
+        }
+        Ok(())
+    }
+    let mut next = mats.len();
+    let mut out = Vec::new();
+    walk(doc, vals, st, features, mats, 0, &mut next, 0, &mut out)?;
+    Ok(out)
+}
+
+/// The transforms of a pattern's or mirror's copies in their instance order (instance `k + 1`
+/// is the `k`-th): `mats`, then those of the copies made through patterns and mirrors among
+/// `features` ([`copy_plan`]). Naming finds a copy's faces through them.
+fn copy_instances(doc: &Document, vals: &BTreeMap<String, Value>, st: &ModelState, features: &[String], mats: &[Mat]) -> Result<Vec<Mat>> {
+    let plan = copy_plan(doc, vals, st, features, mats)?;
+    let len = plan.iter().map(|(_, ms, first)| first + ms.len()).max().unwrap_or(0).max(mats.len());
+    let mut all = vec![crate::IDENTITY; len];
+    for (slot, m) in all.iter_mut().zip(mats) {
+        *slot = *m;
+    }
+    for (_, ms, first) in &plan {
+        for (k, m) in ms.iter().enumerate() {
+            if let Some(slot) = all.get_mut(first + k) {
+                *slot = *m;
+            }
+        }
+    }
+    Ok(all)
+}
+
 /// Apply transformed copies of the tools of `features` (patterns, mirrors).
 fn replay(
     doc: &Document,
@@ -5309,14 +5418,9 @@ fn replay(
             format!("{list} suppressed and not copied")
         });
     }
-    for name in features.iter().filter(|n| !suppressed.contains(n)) {
-        // A sketch and its extrude often share a name; the feature that makes geometry wins.
-        let src = doc
-            .features
-            .iter()
-            .find(|x| &x.name == name && !matches!(x.kind, FeatureKind::Sketch { .. } | FeatureKind::ConstructionPlane { .. }))
-            .or_else(|| doc.find_feature(name))
-            .ok_or_else(|| DocError::Unknown(format!("feature `{name}`")))?;
+    let kept: Vec<String> = features.iter().filter(|n| !suppressed.contains(n)).cloned().collect();
+    let plan = copy_plan(doc, vals, st, &kept, mats)?;
+    for (src, mats, first) in &plan {
         // A fillet or chamfer repeats at the copied edges.
         if let FeatureKind::Fillet { edges, radius, .. } | FeatureKind::Chamfer { edges, distance: radius, .. } = &src.kind {
             let r = val(vals, radius, Kind::Length)?;
@@ -5371,7 +5475,7 @@ fn replay(
                     copies.extend(
                         hole_tools(vals, st, &at, d, diameter, &depth, hole)?
                             .into_iter()
-                            .map(|t| Traced { lineage: t.lineage.map(|l| l.copied(src.id, k + 1)), body: t.body }),
+                            .map(|t| Traced { lineage: t.lineage.map(|l| l.copied(src.id, first + k + 1)), body: t.body }),
                     );
                 }
             }
@@ -5380,7 +5484,7 @@ fn replay(
             let tools = feature_tools_with_constructor(doc, vals, src, st, &mut None)?;
             for (k, m) in mats.iter().enumerate() {
                 for t in &tools {
-                    copies.push(t.copied(kernel::transform_matrix(&t.body, *m)?, src.id, k + 1));
+                    copies.push(t.copied(kernel::transform_matrix(&t.body, *m)?, src.id, first + k + 1));
                 }
             }
         }
