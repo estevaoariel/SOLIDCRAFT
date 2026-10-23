@@ -219,11 +219,13 @@ turns the linked parameters into ordinary user parameters. Compare a linked comp
 Design), which brings in another design's bodies, not its parameters.
 
 - **In SolidCraft:** `parameters.link_design` ("Link Parameters"), `parameters.update_links`
-  ("Update Parameter Links"), `parameters.break_link` ("Break Parameter Link"),
-  `parameters.links` ("List Parameter Links"); the `param_sources` design-file key; the `linked`
-  parameter source in `parameters.list`.
+  ("Update Parameter Links"), `parameters.relink` ("Relink Parameters"), `parameters.break_link`
+  ("Break Parameter Link"), `parameters.links` ("List Parameter Links"); the `design` parameter
+  key naming a linked design; the `linked_designs` design-file key; the `linked` parameter source
+  in `parameters.list`.
 - **Don't use:** shared parameter, global parameter, external parameter, imported parameter (an
-  import copies values once and keeps no link).
+  import copies values once and keeps no link); parameter source ("source" is the kind of
+  parameter in `parameters.list`).
 - **Elsewhere:** linked parameter, master parameters, parameters from a skeleton or master model.
 - **For translators:** not a parameter of a linked component and not a configuration row.
 

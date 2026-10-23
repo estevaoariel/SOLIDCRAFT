@@ -51,24 +51,35 @@ Parameters export to and import from CSV or JSON (`parameters.export`, `paramete
 
 **Linked parameters** let several designs share one set of sizes. Keep the shared sizes as user
 parameters in one design, then use **Link Parameters** (`parameters.link_design`) in each design
-that needs them. By default the other design's favourite user parameters come in; give `scope`
-`all` for all of its user parameters. Linked parameters are used by name in any expression, keep
-their own units and can't be changed, renamed or deleted in the design that links them: change
-them in the design they come from, save it, and run **Update Parameter Links**
-(`parameters.update_links`) to rebuild with the new values. **List Parameter Links**
-(`parameters.links`) shows whether each linked design is found and up to date, and opening a
-design warns when one is missing or has changed. The design keeps the values it last read, so it
-still opens when the linked design is missing. A link is refused when a name is already used
-here, when it would link a design to itself or close a loop of links, and an update is refused
-when it would remove a parameter that is still in use. **Break Parameter Link**
-(`parameters.break_link`) turns the linked parameters into ordinary user parameters. Paths are
-kept relative to the design's folder once it is saved, as for linked components.
+that needs them: all of the linked design's user parameters come in (give `scope` `favorites` for
+its favourite ones only). Linked parameters are used by name in any expression and keep their own
+units. They can't be changed, renamed, deleted, imported over or configured in the design that
+links them: change them in the linked design, save it, and run **Update Parameter Links**
+(`parameters.update_links`) to rebuild with the new values. The update reports each value that
+changed, and is refused (changing nothing) when it would bring in a name this design already
+uses, or remove a parameter that is still in use. A parameter renamed in the linked design counts
+as removed and added, so rename its uses here first, or break the link.
+
+The design keeps the values it last read, so it opens and rebuilds when the linked design is
+missing; opening it warns when the file can't be found or read. **List Parameter Links**
+(`parameters.links`) says whether each linked design is up to date, changed since the last update,
+missing, unreadable, or outside the folders an agent may use. **Relink Parameters**
+(`parameters.relink`) reads the parameters from another file instead, such as the linked design
+after it moved; **Break Parameter Link** (`parameters.break_link`) turns the linked parameters
+into ordinary user parameters. A design can't link itself, a design that links it in turn, or
+the same design twice.
+
+A design file keeps each linked design's path relative to its own folder, so a folder of designs
+can move, or sync to another computer, and keep its links. Keep the linked design in the same
+folder tree as the designs that use it. A crash report holds the design without its linked
+designs, so a replay uses the values last read. In the browser, only designs in its own storage
+can be linked.
 
 In the Parameters window, **Link Parameters…** picks the design to link. Linked parameters are
-listed under **Linked Parameters**, one group per linked design, with its status (up to date,
-changed since the last update, or its file not found) and **Update** and **Break Link** buttons.
-Their rows show the name, unit, value and comment but can't be edited; a linked parameter can
-still be a favourite.
+listed under **Linked Parameters**, one group per linked design, with its state and **Update**,
+**Relink…** and **Break Link** buttons. Their rows show the name, unit, value and comment but
+can't be edited; a linked parameter can still be a favourite.
+
 **Configurations** (`config.*`) keep a table of rows, each with its own parameter values and
 suppressed features, physical materials and body appearances, switched with `config.activate`.
 The table's Library picker selects material or appearance values. Choose **Follow material**

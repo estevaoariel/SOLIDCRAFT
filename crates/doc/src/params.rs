@@ -94,9 +94,9 @@ pub struct ParamRow {
     /// For feature inputs: the feature and the input's label.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub feature: Option<String>,
-    /// For linked parameters: the linked design's path as stored.
+    /// For linked parameters: the linked design's file.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub link: Option<String>,
+    pub design: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub input: Option<&'static str>,
     pub favorite: bool,
@@ -129,29 +129,42 @@ impl Document {
         v
     }
 
+    /// Whether a name is in use, by anyone (see [`Document::owner`]).
     pub(crate) fn name_taken(&self, n: &str) -> bool {
-        self.param(n).is_some() || self.linked_param(n).is_some() || self.features.iter().any(|f| f.param_names.iter().any(|x| x == n))
+        self.owner(n).is_some()
+    }
+
+    /// Who a parameter name belongs to: the one answer every edit and every free-name check
+    /// matches on, so a new kind of owner (or a new edit path) can't forget one.
+    pub fn owner(&self, name: &str) -> Option<Owner<'_>> {
+        if let Some(p) = self.param(name) {
+            return Some(if p.model { Owner::Model(p) } else { Owner::User(p) });
+        }
+        let input = self.features.iter().enumerate().find_map(|(i, f)| f.param_names.iter().position(|n| n == name).map(|k| (i, k)));
+        if let Some((feature, input)) = input {
+            return Some(Owner::Input { feature, input });
+        }
+        self.linked_param(name).map(|(design, param)| Owner::Linked { design, param })
+    }
+
+    /// The owner of a parameter that exists and may be changed here. A linked parameter is
+    /// refused: its value belongs to its design.
+    pub fn editable(&self, name: &str) -> Result<Owner<'_>> {
+        match self.owner(name) {
+            None => Err(DocError::Unknown(format!("parameter `{name}`"))),
+            Some(Owner::Linked { design, .. }) => Err(linked_refusal(name, design)),
+            Some(owner) => Ok(owner),
+        }
     }
 
     /// Every linked parameter with the design it comes from.
-    pub fn linked_params(&self) -> impl Iterator<Item = (&crate::ParamSource, &crate::LinkedParam)> {
-        self.param_sources.iter().flat_map(|s| s.params.iter().map(move |p| (s, p)))
+    pub fn linked_params(&self) -> impl Iterator<Item = (&crate::LinkedDesign, &crate::LinkedParam)> {
+        self.linked_designs.iter().flat_map(|s| s.params.iter().map(move |p| (s, p)))
     }
 
     /// A linked parameter by name, with the design it comes from.
-    pub fn linked_param(&self, name: &str) -> Option<(&crate::ParamSource, &crate::LinkedParam)> {
+    pub fn linked_param(&self, name: &str) -> Option<(&crate::LinkedDesign, &crate::LinkedParam)> {
         self.linked_params().find(|(_, p)| p.name == name)
-    }
-
-    /// Refuses to edit a linked parameter: its value belongs to the design it comes from.
-    pub(crate) fn refuse_linked(&self, name: &str) -> Result<()> {
-        match self.linked_param(name) {
-            Some((s, _)) => Err(DocError::Invalid(format!(
-                "`{name}` comes from the linked design `{}`: change it there and update the parameter links, or break the link",
-                s.path
-            ))),
-            None => Ok(()),
-        }
     }
 
     /// The next free `dN` name.
@@ -283,9 +296,11 @@ impl Document {
     }
 
     pub fn change_param(&mut self, name: &str, expr_s: &str, unit: Option<&str>, comment: Option<&str>) -> Result<()> {
-        self.refuse_linked(name)?;
-        let hit = self.features.iter().enumerate().find_map(|(i, f)| f.param_names.iter().position(|n| n == name).map(|k| (i, k)));
-        let Some((i, k)) = hit else { return self.set_param(name, expr_s, unit, comment) };
+        let (i, k) = match self.owner(name) {
+            Some(Owner::Input { feature, input }) => (feature, input),
+            Some(Owner::Linked { design, .. }) => return Err(linked_refusal(name, design)),
+            Some(Owner::User(_) | Owner::Model(_)) | None => return self.set_param(name, expr_s, unit, comment),
+        };
         if expr_s.len() > 4096 {
             return Err(DocError::Expr("expression too long".into()));
         }
@@ -322,7 +337,7 @@ impl Document {
             if !names.insert(name.clone()) {
                 return Err(DocError::Invalid(format!("duplicate parameter `{name}`")));
             }
-            next.refuse_linked(name)?;
+            self.editable(name)?;
             if expression.len() > 4096 || expression.trim().is_empty() {
                 return Err(DocError::Expr("expression is empty or too long".into()));
             }
@@ -382,7 +397,7 @@ impl Document {
                 comment: p.comment.clone(),
                 source: if p.model { "sketch" } else { "user" },
                 feature: None,
-                link: None,
+                design: None,
                 input: None,
                 favorite: self.favorites.contains(&p.name),
                 uses: refs.get(&p.name).cloned().unwrap_or_default(),
@@ -399,7 +414,7 @@ impl Document {
                 comment: p.comment.clone(),
                 source: "linked",
                 feature: None,
-                link: Some(s.path.clone()),
+                design: Some(s.path.clone()),
                 input: None,
                 favorite: self.favorites.contains(&p.name),
                 uses: Vec::new(),
@@ -420,7 +435,7 @@ impl Document {
                     comment: self.param_comments.get(name).cloned().unwrap_or_default(),
                     source: "feature",
                     feature: Some(f.name.clone()),
-                    link: None,
+                    design: None,
                     input: Some(label),
                     favorite: self.favorites.contains(name),
                     uses: refs.get(name).cloned().unwrap_or_default(),
@@ -436,6 +451,11 @@ impl Document {
     pub fn move_user_param(&mut self, name: &str, target: &str, after: bool) -> Result<()> {
         fn user(params: &[crate::Param], n: &str) -> Option<usize> {
             params.iter().position(|p| p.name == n && !p.model)
+        }
+        for n in [name, target] {
+            if let Some(Owner::Linked { design, .. }) = self.owner(n) {
+                return Err(linked_refusal(n, design));
+            }
         }
         let (Some(from), Some(_)) = (user(&self.params, name), user(&self.params, target)) else {
             let missing = if user(&self.params, name).is_none() { name } else { target };
@@ -537,11 +557,14 @@ impl Document {
     /// `set_param` (a user parameter, a new one taking the unit of its value) without evaluating
     /// every parameter. `vals` are the values so far, for the units of the rows after it.
     fn import_row(&mut self, name: &str, expr_s: &str, unit: Option<&str>, comment: Option<&str>, vals: &mut BTreeMap<String, Value>) -> Result<()> {
-        self.refuse_linked(name)?;
         if expr_s.len() > 4096 {
             return Err(DocError::Expr("expression too long".into()));
         }
-        let hit = self.features.iter().enumerate().find_map(|(i, f)| f.param_names.iter().position(|n| n == name).map(|k| (i, k)));
+        let hit = match self.owner(name) {
+            Some(Owner::Input { feature, input }) => Some((feature, input)),
+            Some(Owner::Linked { design, .. }) => return Err(linked_refusal(name, design)),
+            Some(Owner::User(_) | Owner::Model(_)) | None => None,
+        };
         if let Some((i, k)) = hit {
             let kind = self.features.get(i).and_then(|f| f.kind.inputs().get(k).map(|x| x.2)).unwrap_or(Kind::Unitless);
             let expr_s = self.with_design_unit(expr_s, kind);
@@ -770,12 +793,9 @@ impl Document {
 
     /// Remove a stored parameter; refused while something uses it (the error lists the users).
     pub fn remove_param(&mut self, name: &str) -> Result<()> {
-        self.refuse_linked(name)?;
-        if self.param(name).is_none() {
-            if self.features.iter().any(|f| f.param_names.iter().any(|n| n == name)) {
-                return Err(DocError::Invalid(format!("`{name}` is a feature's input: delete or edit the feature instead")));
-            }
-            return Err(DocError::Unknown(format!("parameter `{name}`")));
+        match self.editable(name)? {
+            Owner::Input { .. } => return Err(DocError::Invalid(format!("`{name}` is a feature's input: delete or edit the feature instead"))),
+            Owner::User(_) | Owner::Model(_) | Owner::Linked { .. } => {}
         }
         let users = self.param_users(name);
         if !users.is_empty() {
@@ -792,10 +812,7 @@ impl Document {
     /// references were updated.
     pub fn rename_param(&mut self, old: &str, new: &str) -> Result<usize> {
         let new = new.trim();
-        if !self.name_taken(old) {
-            return Err(DocError::Unknown(format!("parameter `{old}`")));
-        }
-        self.refuse_linked(old)?;
+        self.editable(old)?;
         if old == new {
             return Ok(0);
         }
@@ -889,13 +906,14 @@ impl Document {
         if comment.len() > 4096 {
             return Err(DocError::Invalid("comment too long".into()));
         }
-        self.refuse_linked(name)?;
-        if let Some(p) = self.params.iter_mut().find(|p| p.name == name) {
-            p.comment = comment.to_string();
-            return Ok(());
-        }
-        if !self.name_taken(name) {
-            return Err(DocError::Unknown(format!("parameter `{name}`")));
+        match self.editable(name)? {
+            Owner::User(_) | Owner::Model(_) => {
+                if let Some(p) = self.params.iter_mut().find(|p| p.name == name) {
+                    p.comment = comment.to_string();
+                }
+                return Ok(());
+            }
+            Owner::Input { .. } | Owner::Linked { .. } => {}
         }
         if comment.is_empty() {
             self.param_comments.remove(name);
@@ -952,15 +970,37 @@ impl Document {
 
     /// Add a user parameter (refused when the name exists).
     pub fn add_user_param(&mut self, name: &str, expr_s: &str, unit: Option<&str>, comment: Option<&str>) -> Result<()> {
-        self.refuse_linked(name.trim())?;
-        if self.name_taken(name.trim()) {
-            return Err(DocError::Invalid(format!("there is already a parameter `{}`", name.trim())));
+        match self.owner(name.trim()) {
+            None => {}
+            Some(Owner::Linked { design, .. }) => return Err(linked_refusal(name.trim(), design)),
+            Some(Owner::User(_) | Owner::Model(_) | Owner::Input { .. }) => {
+                return Err(DocError::Invalid(format!("there is already a parameter `{}`", name.trim())));
+            }
         }
         if self.params.len() >= MAX_PARAMS {
             return Err(DocError::Invalid("too many parameters".into()));
         }
         self.set_param(name.trim(), expr_s, unit, comment)
     }
+}
+
+/// Who a parameter name belongs to ([`Document::owner`]).
+#[derive(Clone, Copy, Debug)]
+pub enum Owner<'a> {
+    /// A user parameter.
+    User(&'a crate::Param),
+    /// A sketch dimension's model parameter.
+    Model(&'a crate::Param),
+    /// A feature's input: the feature's index in the timeline and the input's among its inputs.
+    Input { feature: usize, input: usize },
+    /// A linked design's parameter: read-only here.
+    Linked { design: &'a crate::LinkedDesign, param: &'a crate::LinkedParam },
+}
+
+/// The refusal of an edit to a linked parameter, naming the design it comes from.
+pub(crate) fn linked_refusal(name: &str, design: &crate::LinkedDesign) -> DocError {
+    let file = design.path.rsplit(['/', '\\']).next().unwrap_or(&design.path);
+    DocError::Invalid(format!("`{name}` comes from the linked design `{file}`: change it there and update the parameter links, or break the link"))
 }
 
 /// One CSV line with quoted fields.

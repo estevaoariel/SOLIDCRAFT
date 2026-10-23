@@ -1194,7 +1194,7 @@ fn doc_settings(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize) {
     if draw_row(ui, ui.id().with("precision"), &Row { depth: depth + 1, icon: "settings", label: &prec, ..Default::default() }).clicked {
         app.prefs_window.open = true;
     }
-    let params = format!("Parameters ({})", app.session.doc.params.len());
+    let params = format!("Parameters ({})", app.session.doc.params.len() + app.session.doc.linked_params().count());
     if draw_row(ui, ui.id().with("params"), &Row { depth: depth + 1, icon: "params", label: &params, ..Default::default() }).clicked {
         app.start("parameters.change");
     }

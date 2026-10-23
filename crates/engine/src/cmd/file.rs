@@ -289,6 +289,7 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(stem) = default_name_for(&doc.name, path) {
         doc.name = stem;
     }
+    super::parameters_link::opened(&mut doc, path);
     s.replace_design(Session::opened(doc, saved.as_ref()));
     s.path = Some(path.to_string());
     let errors = s.model.results.iter().filter(|r| r.error.is_some()).count();
@@ -375,16 +376,11 @@ fn write_file(s: &mut Session, path: &str, format: &str, compression: &str, prev
     // Linked designs are kept relative to the folder the design is saved in.
     let links = super::component_link::rebased(&s.doc, s.path.as_deref(), path);
     let old_links = (links != s.doc.links).then(|| std::mem::replace(&mut s.doc_mut().links, links));
-    let sources = super::parameters_link::rebased(&s.doc, s.path.as_deref(), path);
-    let old_sources = (sources != s.doc.param_sources).then(|| std::mem::replace(&mut s.doc_mut().param_sources, sources));
     let r = write_bytes(s, path, format, compression, preview, cache);
-    if r.is_err() {
-        if let Some(old) = old_links {
-            s.doc_mut().links = old;
-        }
-        if let Some(old) = old_sources {
-            s.doc_mut().param_sources = old;
-        }
+    if r.is_err()
+        && let Some(old) = old_links
+    {
+        s.doc_mut().links = old;
     }
     r
 }
@@ -398,8 +394,8 @@ fn write_bytes(
     cache: bool,
 ) -> Result<Value> {
     let bytes = match format {
-        "container" => s.design_container(compression, preview, cache)?,
-        "json" => solidcraft_io::write_design(&s.design()),
+        "container" => s.design_container_at(Some(path), compression, preview, cache)?,
+        "json" => solidcraft_io::write_design(&s.design_at(Some(path))),
         _ => return Err(bad("file.save", "format must be container or json")),
     };
     // Atomic, keeping the version being replaced as `<file>.bak`.
@@ -410,6 +406,18 @@ fn write_bytes(
 }
 
 impl Session {
+    /// The design as a design file written at `file` keeps it: [`Session::design`], with linked
+    /// designs' paths relative to that file's folder (in memory they are resolved).
+    pub(crate) fn design_at(&self, file: Option<&str>) -> std::borrow::Cow<'_, Document> {
+        let design = self.design();
+        if design.linked_designs.is_empty() {
+            return design;
+        }
+        let mut doc = design.into_owned();
+        doc.linked_designs = super::parameters_link::file_form(&doc, file);
+        std::borrow::Cow::Owned(doc)
+    }
+
     /// Take up a save that ran on `done`, a [`Session::scratch`] copy of this session that
     /// `file.save` or `file.save_as` ran on (on another thread, so the window keeps drawing)
     /// while this one did not change: the name and link paths the save gave the design, its
@@ -429,7 +437,18 @@ impl Session {
     /// Container bytes for desktop and browser saves. Only already evaluated bodies
     /// and warm meshes are eligible; saving never forces evaluation or tessellation.
     pub fn design_container(&self, compression: solidcraft_io::DesignCompression, preview: bool, cache: bool) -> solidcraft_io::Result<Vec<u8>> {
-        let design = self.design();
+        self.design_container_at(self.path.as_deref(), compression, preview, cache)
+    }
+
+    /// [`Session::design_container`] for a file written at `file`.
+    fn design_container_at(
+        &self,
+        file: Option<&str>,
+        compression: solidcraft_io::DesignCompression,
+        preview: bool,
+        cache: bool,
+    ) -> solidcraft_io::Result<Vec<u8>> {
+        let design = self.design_at(file);
         let geometry = cache.then(|| saved_geometry(self, &design)).flatten();
         let preview = preview.then(|| saved_preview(self)).flatten();
         let thumbnail = cache.then(|| thumbnail::saved(self)).flatten();
@@ -514,7 +533,7 @@ fn export_to(s: &Session, path: &str, format: Format, bodies: &[String]) -> Resu
         if !bodies.is_empty() {
             return Err(bad("file.export", "design JSON exports the complete document; omit bodies"));
         }
-        solidcraft_io::write_design(&s.design())
+        solidcraft_io::write_design(&s.design_at(Some(path)))
     } else if format == Format::Step && bodies.is_empty() && !s.doc.occurrences.is_empty() {
         solidcraft_io::step_assembly(&s.doc, &s.doc.painted(&s.model.state()), &name)?
     } else {
@@ -652,6 +671,10 @@ fn recover(s: &mut Session, p: &Value) -> Result<Value> {
     let dir = recovery_dir(p, cmd)?;
     let id = str_(p, "id").ok_or_else(|| bad(cmd, "`id` is required (see doc.recovery_list)"))?;
     let (mut doc, entry) = crate::recovery::load(&dir, id)?;
+    // Recovery copies keep linked designs as resolved; a path relative to the design still works.
+    if let Some(path) = entry.path.as_deref() {
+        super::parameters_link::opened(&mut doc, path);
+    }
     if let Some(stem) = entry.path.as_deref().and_then(|path| default_name_for(&doc.name, path)) {
         doc.name = stem;
     }

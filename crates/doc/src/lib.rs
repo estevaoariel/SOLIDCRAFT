@@ -31,6 +31,7 @@ mod history_names;
 pub use format_offsets::whole_profile_selection_from_value;
 pub mod joints;
 mod lineage;
+pub mod linked;
 pub mod metadata;
 pub use metadata::Metadata;
 pub mod motion;
@@ -66,7 +67,7 @@ pub use eval::{
 };
 pub use expr::Expr;
 pub use names::{BodyName, FeatureName, SketchId};
-pub use params::{ParamRow, ParamUser, cycles};
+pub use params::{Owner, ParamRow, ParamUser, cycles};
 pub use points::{Dir, FacePick, Position, plain};
 pub use solidcraft_kernel as kernel;
 pub use solidcraft_sketch as sketch;

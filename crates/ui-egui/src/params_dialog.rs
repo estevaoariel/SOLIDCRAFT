@@ -44,7 +44,7 @@ pub struct ParamsDialog {
     /// evaluates every parameter, so it happens when the design changes, not every frame.
     listed: Option<(u64, Arc<Vec<Row>>)>,
     /// The linked designs and where each stands against its file, listed with the rows.
-    sources: Arc<Vec<Source>>,
+    linked: Arc<Vec<Linked>>,
     /// The add row's live check, by (revision, unit, expression).
     new_check: Option<((u64, String, String), Result<String, String>)>,
     /// How many times the rows were listed and the add row checked (for the tests).
@@ -76,40 +76,42 @@ struct Row {
     comment: String,
     source: String,
     group: String,
-    /// For a linked parameter: its design's path as stored.
-    link: String,
+    /// For a linked parameter: its linked design's file.
+    design: String,
     favorite: bool,
 }
 
-/// A design this one links parameters from, as `parameters.links` lists it.
+/// A linked design, as `parameters.links` lists it.
 #[derive(Clone, Debug, Default)]
-struct Source {
-    path: String,
-    /// `up_to_date`, `out_of_date`, `missing` or `unreadable`.
-    status: String,
+struct Linked {
+    /// Its file (as resolved).
+    file: String,
+    /// `up_to_date`, `out_of_date`, `missing`, `unreadable` or `not_allowed`.
+    state: String,
 }
 
-impl Source {
+impl Linked {
     /// The design's name (its file's name without `.solidcraft`), shown as the group's title.
     fn title(&self) -> &str {
-        let file = self.path.rsplit(['/', '\\']).next().unwrap_or(&self.path);
+        let file = self.file.rsplit(['/', '\\']).next().unwrap_or(&self.file);
         file.strip_suffix(".solidcraft").unwrap_or(file)
     }
 
-    fn status_label(&self) -> &'static str {
-        match self.status.as_str() {
+    fn state_label(&self) -> &'static str {
+        match self.state.as_str() {
             "up_to_date" => "Up to date",
             "out_of_date" => "Changed since last update",
             "missing" => "File not found: using the values last read",
+            "not_allowed" => "Outside the folders this agent may use: using the values last read",
             _ => "Can't read the file: using the values last read",
         }
     }
 }
 
-fn sources(app: &mut SolveApp) -> Vec<Source> {
+fn linked(app: &mut SolveApp) -> Vec<Linked> {
     let list = app.session.execute("parameters.links", &json!({})).unwrap_or_default();
     let s = |v: &Value, k: &str| v.get(k).and_then(Value::as_str).unwrap_or_default().to_string();
-    list["sources"].as_array().into_iter().flatten().map(|x| Source { path: s(x, "path"), status: s(x, "status") }).collect()
+    list["designs"].as_array().into_iter().flatten().map(|x| Linked { file: s(x, "file"), state: s(x, "state") }).collect()
 }
 
 fn rows(app: &mut SolveApp) -> Vec<Row> {
@@ -139,7 +141,7 @@ fn rows(app: &mut SolveApp) -> Vec<Row> {
                 _ => String::new(),
             };
             Row {
-                link: s(r, "link"),
+                design: s(r, "design"),
                 expression: s(r, "expression"),
                 unit: s(r, "unit"),
                 value: r.get("value").and_then(Value::as_f64),
@@ -212,7 +214,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     } else {
         let rows = Arc::new(rows(app));
         d.listed = Some((app.session.revision, rows.clone()));
-        d.sources = Arc::new(sources(app));
+        d.linked = Arc::new(linked(app));
         d.lists += 1;
         rows
     };
@@ -244,7 +246,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         app.pick_open_command("parameters.import", json!({}), &[]);
                     }
                     if ui_kit::icon_label_button(ui, "Link Parameters…", "chain", true, false)
-                        .on_hover_text(crate::i18n::tr_label("Use the favourite user parameters of another design, read-only"))
+                        .on_hover_text(crate::i18n::tr_label("Use another design's user parameters by name, read-only"))
                         .clicked()
                     {
                         app.pick_open_command("parameters.link_design", json!({}), &[solidcraft_engine::io::DESIGN_EXT]);
@@ -276,18 +278,18 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                 ui_kit::section_count(ui, "users", "User Parameters", true, Some(users.len()), |ui| {
                     table(app, ui, &mut d, &users, "user");
                 });
-                if !d.sources.is_empty() {
-                    let linked: Vec<_> = visible.iter().copied().filter(|r| r.source == "linked").collect();
-                    let sources = d.sources.clone();
-                    ui_kit::section_count(ui, "linked", "Linked Parameters", true, Some(linked.len()), |ui| {
+                if !d.linked.is_empty() {
+                    let rows: Vec<_> = visible.iter().copied().filter(|r| r.source == "linked").collect();
+                    let designs = d.linked.clone();
+                    ui_kit::section_count(ui, "linked", "Linked Parameters", true, Some(rows.len()), |ui| {
                         ui.scope(|ui| {
                             ui.spacing_mut().indent = crate::theme::Tokens::get().space_14;
                             ui.indent("link_groups", |ui| {
-                                for source in sources.iter() {
-                                    let members: Vec<_> = linked.iter().copied().filter(|r| r.link == source.path).collect();
-                                    ui_kit::section_count(ui, ("plink", &source.path), source.title(), true, Some(members.len()), |ui| {
-                                        linked_source(app, ui, &mut d, source);
-                                        table(app, ui, &mut d, &members, &format!("link:{}", source.path));
+                                for design in designs.iter() {
+                                    let members: Vec<_> = rows.iter().copied().filter(|r| r.design == design.file).collect();
+                                    ui_kit::section_count(ui, ("plink", &design.file), design.title(), true, Some(members.len()), |ui| {
+                                        linked_design(app, ui, &mut d, design);
+                                        table(app, ui, &mut d, &members, &format!("link:{}", design.file));
                                     });
                                 }
                             });
@@ -334,25 +336,31 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     }
 }
 
-/// A linked design's status and its Update and Break Link buttons, above its parameters.
-fn linked_source(app: &mut SolveApp, ui: &mut egui::Ui, d: &mut ParamsDialog, source: &Source) {
+/// A linked design's state and its Update, Relink and Break Link buttons, above its parameters.
+fn linked_design(app: &mut SolveApp, ui: &mut egui::Ui, d: &mut ParamsDialog, design: &Linked) {
     // Anything but up to date needs a look: the values in use are not the file's.
-    let kind = if source.status == "up_to_date" { ui_kit::Text::Hint("link_status") } else { ui_kit::Text::Error("link_status") };
-    ui_kit::text(ui, crate::i18n::tr_label(source.status_label()), kind).on_hover_text(&source.path);
+    let kind = if design.state == "up_to_date" { ui_kit::Text::Hint("link_status") } else { ui_kit::Text::Error("link_status") };
+    ui_kit::text(ui, crate::i18n::tr_label(design.state_label()), kind).on_hover_text(&design.file);
     ui.horizontal_wrapped(|ui| {
         let update = ui_kit::icon_label_button(ui, "Update", "update", true, false)
             .on_hover_text(crate::i18n::tr_label("Read the linked design again and use its current values"));
-        crate::scenario::publish_handle(&format!("plink:update:{}", source.path), update.rect.center());
+        crate::scenario::publish_handle(&format!("plink:update:{}", design.file), update.rect.center());
         if update.clicked() {
-            d.error = app.run("parameters.update_links", json!({"source": source.path})).err();
-            // The file may have changed while the design did not: list its status again.
+            d.error = app.run("parameters.update_links", json!({"design": design.file})).err();
+            // The file may have changed while the design did not: list its state again.
             d.listed = None;
+        }
+        let relink = ui_kit::icon_label_button(ui, "Relink…", "chain", true, false)
+            .on_hover_text(crate::i18n::tr_label("Read these parameters from another file, such as the design after it moved"));
+        crate::scenario::publish_handle(&format!("plink:relink:{}", design.file), relink.rect.center());
+        if relink.clicked() {
+            app.pick_open_command("parameters.relink", json!({"design": design.file}), &[solidcraft_engine::io::DESIGN_EXT]);
         }
         let unlink = ui_kit::icon_label_button(ui, "Break Link", "break", true, false)
             .on_hover_text(crate::i18n::tr_label("Keep these values as this design's own user parameters"));
-        crate::scenario::publish_handle(&format!("plink:break:{}", source.path), unlink.rect.center());
+        crate::scenario::publish_handle(&format!("plink:break:{}", design.file), unlink.rect.center());
         if unlink.clicked() {
-            d.error = app.run("parameters.break_link", json!({"source": source.path})).err();
+            d.error = app.run("parameters.break_link", json!({"design": design.file})).err();
         }
     });
 }
@@ -880,11 +888,11 @@ mod tests {
         let mut h = crate::scenario::Harness::new();
         h.app.home.open = false;
         h.app.run("parameters.link_design", json!({"path": file, "scope": "all"})).unwrap();
-        let source = h.app.session.doc.param_sources[0].path.clone();
+        let source = h.app.session.doc.linked_designs[0].path.clone();
         h.step(&json!({"start": "parameters.change"})).unwrap();
         h.frames(4);
         let d = h.app.params.as_ref().unwrap();
-        assert_eq!(d.sources.iter().map(|x| (x.title(), x.status.as_str())).collect::<Vec<_>>(), [("standard", "up_to_date")]);
+        assert_eq!(d.linked.iter().map(|x| (x.title(), x.state.as_str())).collect::<Vec<_>>(), [("standard", "up_to_date")]);
         // Typing into a linked row edits nothing.
         h.step(&json!({"click": {"handle": "param:Q_InsHole"}})).unwrap();
         h.frames(2);
@@ -904,9 +912,9 @@ mod tests {
         // Break Link: the values stay, as this design's own.
         h.step(&json!({"click": {"handle": format!("plink:break:{source}")}})).unwrap();
         h.frames(3);
-        assert!(h.app.session.doc.param_sources.is_empty());
+        assert!(h.app.session.doc.linked_designs.is_empty());
         assert_eq!(h.app.session.doc.param("Q_InsHole").map(|p| p.expr.as_str()), Some("8.5 mm"));
-        assert!(h.app.params.as_ref().unwrap().sources.is_empty());
+        assert!(h.app.params.as_ref().unwrap().linked.is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
