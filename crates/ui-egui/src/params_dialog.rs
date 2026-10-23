@@ -1,8 +1,9 @@
 //! The Change Parameters dialog and parameter-name autocomplete for expression boxes.
 //!
 //! A window over the engine's `parameters.*` commands: favourites first, then user parameters
-//! (name, unit, expression, value, comment; add, rename, delete) and model parameters grouped by
-//! the sketch or feature they drive (editable). Expressions validate as you type
+//! (name, unit, expression, value, comment; add, rename, delete), parameters linked from other
+//! designs grouped by the design they come from (read-only; update or break the link) and model
+//! parameters grouped by the sketch or feature they drive (editable). Expressions validate as you type
 //! (`expr.evaluate`) with a live model preview; Enter or leaving the field applies them.
 //! Import and export go through `parameters.import` / `parameters.export`.
 //!
@@ -42,6 +43,8 @@ pub struct ParamsDialog {
     /// The rows as the engine listed them at one revision of the design (#2723): listing
     /// evaluates every parameter, so it happens when the design changes, not every frame.
     listed: Option<(u64, Arc<Vec<Row>>)>,
+    /// The linked designs and where each stands against its file, listed with the rows.
+    sources: Arc<Vec<Source>>,
     /// The add row's live check, by (revision, unit, expression).
     new_check: Option<((u64, String, String), Result<String, String>)>,
     /// How many times the rows were listed and the add row checked (for the tests).
@@ -73,7 +76,40 @@ struct Row {
     comment: String,
     source: String,
     group: String,
+    /// For a linked parameter: its design's path as stored.
+    link: String,
     favorite: bool,
+}
+
+/// A design this one links parameters from, as `parameters.links` lists it.
+#[derive(Clone, Debug, Default)]
+struct Source {
+    path: String,
+    /// `up_to_date`, `out_of_date`, `missing` or `unreadable`.
+    status: String,
+}
+
+impl Source {
+    /// The design's name (its file's name without `.solidcraft`), shown as the group's title.
+    fn title(&self) -> &str {
+        let file = self.path.rsplit(['/', '\\']).next().unwrap_or(&self.path);
+        file.strip_suffix(".solidcraft").unwrap_or(file)
+    }
+
+    fn status_label(&self) -> &'static str {
+        match self.status.as_str() {
+            "up_to_date" => "Up to date",
+            "out_of_date" => "Changed since last update",
+            "missing" => "File not found: using the values last read",
+            _ => "Can't read the file: using the values last read",
+        }
+    }
+}
+
+fn sources(app: &mut SolveApp) -> Vec<Source> {
+    let list = app.session.execute("parameters.links", &json!({})).unwrap_or_default();
+    let s = |v: &Value, k: &str| v.get(k).and_then(Value::as_str).unwrap_or_default().to_string();
+    list["sources"].as_array().into_iter().flatten().map(|x| Source { path: s(x, "path"), status: s(x, "status") }).collect()
 }
 
 fn rows(app: &mut SolveApp) -> Vec<Row> {
@@ -103,6 +139,7 @@ fn rows(app: &mut SolveApp) -> Vec<Row> {
                 _ => String::new(),
             };
             Row {
+                link: s(r, "link"),
                 expression: s(r, "expression"),
                 unit: s(r, "unit"),
                 value: r.get("value").and_then(Value::as_f64),
@@ -175,6 +212,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     } else {
         let rows = Arc::new(rows(app));
         d.listed = Some((app.session.revision, rows.clone()));
+        d.sources = Arc::new(sources(app));
         d.lists += 1;
         rows
     };
@@ -205,6 +243,12 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     {
                         app.pick_open_command("parameters.import", json!({}), &[]);
                     }
+                    if ui_kit::icon_label_button(ui, "Link Parameters…", "chain", true, false)
+                        .on_hover_text(crate::i18n::tr_label("Use the favourite user parameters of another design, read-only"))
+                        .clicked()
+                    {
+                        app.pick_open_command("parameters.link_design", json!({}), &[solidcraft_engine::io::DESIGN_EXT]);
+                    }
                     for (label, ext) in [("Export CSV…", "csv"), ("Export JSON…", "json")] {
                         if ui_kit::icon_label_button(ui, label, "export_tray", true, false).clicked() {
                             app.pick_save_command(&format!("parameters.{ext}"), &[ext], "parameters.export", json!({"format": ext}));
@@ -232,9 +276,27 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                 ui_kit::section_count(ui, "users", "User Parameters", true, Some(users.len()), |ui| {
                     table(app, ui, &mut d, &users, "user");
                 });
+                if !d.sources.is_empty() {
+                    let linked: Vec<_> = visible.iter().copied().filter(|r| r.source == "linked").collect();
+                    let sources = d.sources.clone();
+                    ui_kit::section_count(ui, "linked", "Linked Parameters", true, Some(linked.len()), |ui| {
+                        ui.scope(|ui| {
+                            ui.spacing_mut().indent = crate::theme::Tokens::get().space_14;
+                            ui.indent("link_groups", |ui| {
+                                for source in sources.iter() {
+                                    let members: Vec<_> = linked.iter().copied().filter(|r| r.link == source.path).collect();
+                                    ui_kit::section_count(ui, ("plink", &source.path), source.title(), true, Some(members.len()), |ui| {
+                                        linked_source(app, ui, &mut d, source);
+                                        table(app, ui, &mut d, &members, &format!("link:{}", source.path));
+                                    });
+                                }
+                            });
+                        });
+                    });
+                }
                 ui_kit::section(ui, "models", "Model Parameters", true, |ui| {
                     let mut groups = Vec::new();
-                    for r in visible.iter().filter(|r| r.source != "user") {
+                    for r in visible.iter().filter(|r| r.source != "user" && r.source != "linked") {
                         if !groups.contains(&r.group) {
                             groups.push(r.group.clone());
                         }
@@ -243,7 +305,8 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         ui.spacing_mut().indent = crate::theme::Tokens::get().space_14;
                         ui.indent("model_groups", |ui| {
                             for group in groups {
-                                let members: Vec<_> = visible.iter().copied().filter(|r| r.source != "user" && r.group == group).collect();
+                                let members: Vec<_> =
+                                    visible.iter().copied().filter(|r| r.source != "user" && r.source != "linked" && r.group == group).collect();
                                 ui_kit::section_count(ui, ("pgroup", &group), &group, true, Some(members.len()), |ui| {
                                     table(app, ui, &mut d, &members, &group)
                                 });
@@ -269,6 +332,29 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     if !close {
         app.params = Some(d);
     }
+}
+
+/// A linked design's status and its Update and Break Link buttons, above its parameters.
+fn linked_source(app: &mut SolveApp, ui: &mut egui::Ui, d: &mut ParamsDialog, source: &Source) {
+    // Anything but up to date needs a look: the values in use are not the file's.
+    let kind = if source.status == "up_to_date" { ui_kit::Text::Hint("link_status") } else { ui_kit::Text::Error("link_status") };
+    ui_kit::text(ui, crate::i18n::tr_label(source.status_label()), kind).on_hover_text(&source.path);
+    ui.horizontal_wrapped(|ui| {
+        let update = ui_kit::icon_label_button(ui, "Update", "update", true, false)
+            .on_hover_text(crate::i18n::tr_label("Read the linked design again and use its current values"));
+        crate::scenario::publish_handle(&format!("plink:update:{}", source.path), update.rect.center());
+        if update.clicked() {
+            d.error = app.run("parameters.update_links", json!({"source": source.path})).err();
+            // The file may have changed while the design did not: list its status again.
+            d.listed = None;
+        }
+        let unlink = ui_kit::icon_label_button(ui, "Break Link", "break", true, false)
+            .on_hover_text(crate::i18n::tr_label("Keep these values as this design's own user parameters"));
+        crate::scenario::publish_handle(&format!("plink:break:{}", source.path), unlink.rect.center());
+        if unlink.clicked() {
+            d.error = app.run("parameters.break_link", json!({"source": source.path})).err();
+        }
+    });
 }
 
 /// Live check of an expression typed for a parameter of this unit: Ok(shown value) or the message.
@@ -355,6 +441,11 @@ fn table(app: &mut SolveApp, ui: &mut egui::Ui, d: &mut ParamsDialog, rows: &[&R
                             response.request_focus();
                         }
                     }
+                    _ if r.source == "linked" => {
+                        let response = ui_kit::text(ui, &r.name, ui_kit::Text::NameCell(false))
+                            .on_hover_text(crate::i18n::tr_label("From a linked design: change it there, then update"));
+                        crate::scenario::publish_handle(&format!("param:name:{}", r.name), response.rect.center());
+                    }
                     _ => {
                         let response =
                             ui_kit::text(ui, &r.name, ui_kit::Text::NameCell(false)).on_hover_text(crate::i18n::tr_label("Double-click to rename"));
@@ -378,6 +469,10 @@ fn table(app: &mut SolveApp, ui: &mut egui::Ui, d: &mut ParamsDialog, rows: &[&R
                         ui_kit::text(ui, unit_label(&r.unit), ui_kit::Text::MonoCell);
                     }
                 });
+                if r.source == "linked" {
+                    linked_cells(row, r, salt);
+                    return;
+                }
                 let mut expression = d.editing.get(&r.name).cloned().unwrap_or_else(|| r.expression.clone());
                 let live = (expression != r.expression).then(|| check(app, &expression, &r.unit));
                 let invalid = matches!(live, Some(Err(_))) || (live.is_none() && r.error.is_some());
@@ -452,6 +547,28 @@ fn table(app: &mut SolveApp, ui: &mut egui::Ui, d: &mut ParamsDialog, rows: &[&R
             }
         }
     });
+}
+
+/// A linked row's expression, value and comment: shown, not edited (they belong to its design).
+fn linked_cells(row: &mut ui_kit::TableRow<'_>, r: &Row, salt: &str) {
+    row.cell(|ui| {
+        let response = ui_kit::text(ui, &r.expression, ui_kit::Text::MonoCell);
+        crate::scenario::publish_handle(&format!("param:{}", r.name), response.rect.center());
+        if salt == "fav" {
+            crate::scenario::publish_handle(&format!("param:favorite:{}", r.name), response.rect.center());
+        }
+    });
+    row.cell(|ui| {
+        let (text, error) = match &r.error {
+            Some(message) => (message.clone(), true),
+            None => (show_value(r), false),
+        };
+        ui_kit::text(ui, &text, ui_kit::Text::Value(&format!("value:{}", r.name), error)).on_hover_text(&text);
+    });
+    row.cell(|ui| {
+        ui_kit::text(ui, &r.comment, ui_kit::Text::Cell);
+    });
+    row.cell(|_| {});
 }
 
 fn unit_label(u: &str) -> &str {
@@ -746,6 +863,51 @@ mod tests {
             let editing = h.app.params.as_ref().unwrap().editing.get("width").cloned();
             assert_eq!(editing.as_deref(), Some("1.1"), "favourite {favourite}, row {row}");
         }
+    }
+
+    /// Parameters linked from another design are listed under it, read-only: clicking and typing
+    /// into one changes nothing. Its Update button brings in the file's new values, and Break
+    /// Link keeps them as user parameters.
+    #[test]
+    fn linked_parameters_are_listed_read_only_under_their_design() {
+        let dir = std::env::temp_dir().join(format!("solidcraft-params-dialog-link-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("standard.solidcraft");
+        let mut standard = solidcraft_engine::Session::default();
+        let csv = "name,unit,expression,comment\nQ_InsHole,mm,8.2 mm,insert hole\nQ_InsLen,mm,9.5 mm,insert length\n";
+        standard.execute("parameters.import", &json!({"text": csv})).unwrap();
+        standard.execute("file.save", &json!({"path": file})).unwrap();
+        let mut h = crate::scenario::Harness::new();
+        h.app.home.open = false;
+        h.app.run("parameters.link_design", json!({"path": file, "scope": "all"})).unwrap();
+        let source = h.app.session.doc.param_sources[0].path.clone();
+        h.step(&json!({"start": "parameters.change"})).unwrap();
+        h.frames(4);
+        let d = h.app.params.as_ref().unwrap();
+        assert_eq!(d.sources.iter().map(|x| (x.title(), x.status.as_str())).collect::<Vec<_>>(), [("standard", "up_to_date")]);
+        // Typing into a linked row edits nothing.
+        h.step(&json!({"click": {"handle": "param:Q_InsHole"}})).unwrap();
+        h.frames(2);
+        h.step(&json!({"key": "A", "cmd": true})).unwrap();
+        h.step(&json!({"text": "9"})).unwrap();
+        h.frames(2);
+        assert!(h.app.params.as_ref().unwrap().editing.is_empty());
+        let expr = |h: &crate::scenario::Harness| h.app.session.doc.linked_param("Q_InsHole").map(|(_, p)| p.expr.clone());
+        assert_eq!(expr(&h).as_deref(), Some("8.2 mm"));
+        // The design changes; Update brings its new value in.
+        standard.execute("parameters.change", &json!({"name": "Q_InsHole", "expression": "8.5 mm"})).unwrap();
+        standard.execute("file.save", &json!({"path": file})).unwrap();
+        h.step(&json!({"click": {"handle": format!("plink:update:{source}")}})).unwrap();
+        h.frames(3);
+        assert_eq!(h.app.params.as_ref().unwrap().error, None);
+        assert_eq!(expr(&h).as_deref(), Some("8.5 mm"));
+        // Break Link: the values stay, as this design's own.
+        h.step(&json!({"click": {"handle": format!("plink:break:{source}")}})).unwrap();
+        h.frames(3);
+        assert!(h.app.session.doc.param_sources.is_empty());
+        assert_eq!(h.app.session.doc.param("Q_InsHole").map(|p| p.expr.as_str()), Some("8.5 mm"));
+        assert!(h.app.params.as_ref().unwrap().sources.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A design with hundreds of chained parameters.

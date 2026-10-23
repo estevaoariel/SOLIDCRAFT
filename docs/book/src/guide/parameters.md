@@ -63,6 +63,12 @@ here, when it would link a design to itself or close a loop of links, and an upd
 when it would remove a parameter that is still in use. **Break Parameter Link**
 (`parameters.break_link`) turns the linked parameters into ordinary user parameters. Paths are
 kept relative to the design's folder once it is saved, as for linked components.
+
+In the Parameters window, **Link Parameters…** picks the design to link. Linked parameters are
+listed under **Linked Parameters**, one group per linked design, with its status (up to date,
+changed since the last update, or its file not found) and **Update** and **Break Link** buttons.
+Their rows show the name, unit, value and comment but can't be edited; a linked parameter can
+still be a favourite.
 **Configurations** (`config.*`) keep a table of rows, each with its own parameter values and
 suppressed features, physical materials and body appearances, switched with `config.activate`.
 The table's Library picker selects material or appearance values. Choose **Follow material**
