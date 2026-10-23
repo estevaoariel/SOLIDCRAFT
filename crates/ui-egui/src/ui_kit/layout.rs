@@ -131,6 +131,63 @@ pub(crate) fn caption(ui: &mut Ui, aligned_to: &str, text: &str) {
     scenario::publish_rect(&format!("dialog:caption:{aligned_to}"), text_rect);
 }
 
+/// Where a [`figure_rows`] field went (in the order given): the field's rect, and whether it is
+/// hovered or has the keyboard (its part of the figure lights up).
+pub(crate) struct FigureSlot {
+    pub rect: egui::Rect,
+    pub hot: bool,
+}
+
+/// A figure in the label column beside a stack of expression fields, each under its own caption,
+/// for a picture whose parts the fields size (the Hole dialog's section): the caller paints the
+/// figure where the fields went, with leaders to them. At least four rows tall; the fields keep
+/// their labels' handles and accessible names. Returns whether Enter was accepted in a field.
+/// Tokens: `control_height, form_label_width, font_small, form_dim, space_2/4, label gap`.
+pub(crate) fn figure_rows(
+    ui: &mut Ui,
+    id: &str,
+    fields: &mut [(&str, &mut String)],
+    paint: impl FnOnce(&egui::Painter, egui::Rect, &[FigureSlot]),
+) -> bool {
+    let t = Tokens::get();
+    let width = dimension(ui.available_width());
+    let slot = t.font_small + t.space_2 + row_height();
+    let stack = fields.len() as f32 * slot + fields.len().saturating_sub(1) as f32 * t.space_4;
+    let height = stack.max(row_height() * 4.0);
+    let (rect, _) = ui.allocate_exact_size(vec2(width, height), egui::Sense::hover());
+    let figure = egui::Rect::from_min_size(rect.min, vec2((t.form_label_width * 1.4).min(width * 0.45), height));
+    let left = (figure.right() + label_gap(ui, width)).min(rect.right());
+    let focused = ui.ctx().memory(|m| m.focused()).and_then(|f| ui.ctx().read_response(f)).map(|r| r.rect);
+    let mut enter = false;
+    let mut top = rect.top() + (height - stack) / 2.0;
+    let mut slots = Vec::with_capacity(fields.len());
+    for (label, value) in fields.iter_mut() {
+        let caption = egui::Rect::from_min_max(egui::pos2(left, top), egui::pos2(rect.right(), top + t.font_small));
+        paint_text(ui, caption, crate::i18n::tr_label(label), egui::FontId::proportional(t.font_small), t.form_dim, false);
+        let field = egui::Rect::from_min_max(egui::pos2(left, caption.bottom() + t.space_2), egui::pos2(rect.right(), top + slot));
+        enter |= ui
+            .scope_builder(
+                egui::UiBuilder::new()
+                    .id_salt((id, *label))
+                    .max_rect(field)
+                    .layout(egui::Layout::left_to_right(egui::Align::Center))
+                    .ui_stack_info(egui::UiStackInfo::default().with_tag_value(LABEL, label.to_string())),
+                |ui| {
+                    ui.spacing_mut().text_edit_width = field.width();
+                    super::field(ui, value)
+                },
+            )
+            .inner;
+        let hot = ui.rect_contains_pointer(field) || focused.is_some_and(|f| field.contains_rect(f));
+        slots.push(FigureSlot { rect: field, hot });
+        top += slot + t.space_4;
+    }
+    paint(ui.painter(), figure, &slots);
+    scenario::publish_rect(&format!("dialog:figure:{id}"), rect);
+    scenario::publish_rect(&format!("dialog:figure_picture:{id}"), figure);
+    enter
+}
+
 /// Memory belongs to the enclosing dialog ID; animation is avoided so each row keeps its fixed height.
 /// Persisted disclosure with a rule and uppercase title. Tokens: `control_height, space_2, radius_sm, hover, dialog_rule, form_section_icon_size, form_gap_y, font_caption, font_section_tracking, text_dim`.
 pub(crate) fn section<R>(ui: &mut Ui, id: impl egui::AsIdSalt, title: &str, default_open: bool, add: impl FnOnce(&mut Ui) -> R) -> Option<R> {
