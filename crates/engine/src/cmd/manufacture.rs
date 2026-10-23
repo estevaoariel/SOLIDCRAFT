@@ -218,6 +218,30 @@ pub static COMMANDS: &[CommandSpec] = &[
         .doc_only()
         .at("MANUFACTURE", "TURNING")
         .params("Opens a Turning Part operation on the active Manufacture setup. Document writes go through manufacture.settings.set."),
+    CommandSpec::new("manufacture.part_handling.grab", "Grab", twod_open)
+        .icon("settings")
+        .noundo()
+        .doc_only()
+        .at("MANUFACTURE", "PART")
+        .params("Opens Subspindle Grab on the active Manufacture setup. Document writes go through manufacture.settings.set."),
+    CommandSpec::new("manufacture.part_handling.bar_pull", "Bar Pull", twod_open)
+        .icon("settings")
+        .noundo()
+        .doc_only()
+        .at("MANUFACTURE", "PART")
+        .params("Opens a Bar Pull operation on the active Manufacture setup. Document writes go through manufacture.settings.set."),
+    CommandSpec::new("manufacture.part_handling.return", "Return", twod_open)
+        .icon("settings")
+        .noundo()
+        .doc_only()
+        .at("MANUFACTURE", "PART")
+        .params("Opens Subspindle Return on the active Manufacture setup. Document writes go through manufacture.settings.set."),
+    CommandSpec::new("manufacture.part_handling.tool_call", "Tool Call", twod_open)
+        .icon("settings")
+        .noundo()
+        .doc_only()
+        .at("MANUFACTURE", "PART")
+        .params("Opens a Tool Call operation on the active Manufacture setup. Document writes go through manufacture.settings.set."),
 ];
 
 // ── Settings get ───────────────────────────────────────────────────────────────
@@ -449,6 +473,22 @@ mod tests {
             "manufacture.turning.thread",
             "manufacture.turning.chamfer",
             "manufacture.turning.part",
+        ];
+        for id in IDS {
+            let mut s = Session::default();
+            let r = s.execute(id, &json!({})).unwrap();
+            assert_eq!(r["opened"], true, "{id}");
+            assert!(s.doc.manufacture.setups.is_empty(), "{id}");
+        }
+    }
+
+    #[test]
+    fn part_handling_commands_are_display_only() {
+        const IDS: &[&str] = &[
+            "manufacture.part_handling.grab",
+            "manufacture.part_handling.bar_pull",
+            "manufacture.part_handling.return",
+            "manufacture.part_handling.tool_call",
         ];
         for id in IDS {
             let mut s = Session::default();

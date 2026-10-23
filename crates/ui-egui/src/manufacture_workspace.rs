@@ -19,6 +19,7 @@ pub enum MfgTab {
     ThreeD,
     MultiAxis,
     Turning,
+    PartHandling,
 }
 
 /// Manufacture process family for a new setup.
@@ -55,6 +56,7 @@ pub struct State {
     pub threed_dialog: Option<crate::manufacture_3d::ThreedDialogState>,
     pub multiaxis_dialog: Option<crate::manufacture_multiaxis::MultiAxisDialogState>,
     pub turning_dialog: Option<crate::manufacture_turning::TurningDialogState>,
+    pub part_handling_dialog: Option<crate::manufacture_part_handling::PartHandlingDialogState>,
 }
 
 pub fn active(app: &SolveApp) -> bool {
@@ -102,6 +104,7 @@ pub fn close_floating_dialogs(app: &mut SolveApp) {
     app.manufacture_workspace.threed_dialog = None;
     app.manufacture_workspace.multiaxis_dialog = None;
     app.manufacture_workspace.turning_dialog = None;
+    app.manufacture_workspace.part_handling_dialog = None;
     app.ui.pick_bodies = false;
 }
 
@@ -155,6 +158,7 @@ pub fn start_hook(app: &mut SolveApp, id: &str) -> bool {
             crate::manufacture_hole_recognition::open_new(app);
             false
         }
+        id if id.starts_with("manufacture.part_handling.") => crate::manufacture_part_handling::open_from_command(app, id),
         id if id.starts_with("manufacture.turning.") => crate::manufacture_turning::open_from_command(app, id),
         id if id.starts_with("manufacture.multiaxis.") => crate::manufacture_multiaxis::open_from_command(app, id),
         id if id.starts_with("manufacture.3d.") => crate::manufacture_3d::open_from_command(app, id),
@@ -193,6 +197,7 @@ pub fn panel(app: &mut SolveApp, ui: &mut egui::Ui) {
     crate::manufacture_3d::show_dialogs(app, ui);
     crate::manufacture_multiaxis::show_dialogs(app, ui);
     crate::manufacture_turning::show_dialogs(app, ui);
+    crate::manufacture_part_handling::show_dialogs(app, ui);
 }
 
 pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {

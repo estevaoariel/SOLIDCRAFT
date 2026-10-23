@@ -324,6 +324,17 @@ pub const SECTIONS: &[Section] = &[
     },
     Section {
         tab: "MANUFACTURE",
+        panel: "PART",
+        promoted: 4,
+        ids: &[
+            "manufacture.part_handling.grab",
+            "manufacture.part_handling.bar_pull",
+            "manufacture.part_handling.return",
+            "manufacture.part_handling.tool_call",
+        ],
+    },
+    Section {
+        tab: "MANUFACTURE",
         panel: "INSPECT",
         promoted: 2,
         ids: &[
@@ -392,6 +403,10 @@ pub const RIBBON_LABELS: &[(&str, &str)] = &[
     ("manufacture.multiaxis.rough", "MA Rough"),
     ("manufacture.multiaxis.rotary", "Rotary"),
     ("manufacture.multiaxis.swarf", "Swarf"),
+    ("manufacture.part_handling.bar_pull", "Bar Pull"),
+    ("manufacture.part_handling.grab", "Grab"),
+    ("manufacture.part_handling.return", "Return"),
+    ("manufacture.part_handling.tool_call", "Tool Call"),
     ("manufacture.setup.new", "New Setup"),
     ("manufacture.tools.library", "Tool Library"),
     ("manufacture.turning.chamfer", "Chamfer"),
