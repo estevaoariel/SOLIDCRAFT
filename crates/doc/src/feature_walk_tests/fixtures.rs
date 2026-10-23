@@ -103,6 +103,16 @@ pub(super) fn fixtures() -> Vec<(&'static str, Value)> {
         ("delete_face", json!({"type": "delete_face", "faces": [o]})),
         ("bounding_solid", json!({"type": "bounding_solid", "bodies": ["B"], "margin": "bounding.margin"})),
         ("pipe", json!({"type": "pipe", "path_sketch": 1, "path": ["l1"], "diameter": "pipe.diameter", "wall": "pipe.wall"})),
+        (
+            "frame_member",
+            json!({"type": "frame_member", "path_sketch": 1, "lines": ["l1"],
+                "profile": {"source": "library", "profile": {"kind": "rect_tube", "width": 40, "height": 40, "wall": 3}}, "angle": "frame_member.angle"}),
+        ),
+        (
+            "frame_member_sketch",
+            json!({"type": "frame_member", "path_sketch": 1, "profile": {"source": "sketch", "sketch": 2, "profiles": {"type": "all"}},
+                "anchor": "bottom_left", "mirror": true}),
+        ),
         ("emboss", json!({"type": "emboss", "sketch": 1, "profiles": {"type": "all"}, "depth": "emboss.depth"})),
         ("rib", json!({"type": "rib", "sketch": 1, "curves": ["l1"], "thickness": "rib.thickness", "depth": "rib.depth"})),
         ("replace_face", json!({"type": "replace_face", "faces": [o], "target": plane("replace_face")})),

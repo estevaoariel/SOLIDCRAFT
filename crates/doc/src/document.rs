@@ -898,6 +898,34 @@ pub enum FeatureKind {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         targets: Vec<BodyName>,
     },
+    /// Structural members (#4003): one body per straight line of a frame sketch (2D sketch lines
+    /// and 3D sketch lines), its cross-section the profile, square to the line from end to end.
+    FrameMember {
+        path_sketch: SketchId,
+        /// The lines, by curve id; none: every straight line drawn in the sketch (not
+        /// construction, not projected or otherwise linked, not of no length).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        lines: Vec<String>,
+        profile: crate::frame::MemberProfile,
+        /// The profile point that sits on the line.
+        #[serde(default, skip_serializing_if = "crate::frame::Anchor::is_origin")]
+        anchor: crate::frame::Anchor,
+        /// How far the profile turns about the line (see `frame::member_axes`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[walk(angle = "Rotation")]
+        angle: Option<Expr>,
+        /// The profile mirrored across its y axis (before it turns).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        mirror: bool,
+        /// What members without a name of their own are named after (`Rail`, `Rail (2)`...); none:
+        /// the profile's description (`Rect Tube 40x40x3`) or the profile sketch's name.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        body_name: Option<String>,
+        /// Each member's body name, by its line's id, so a member keeps its name when other lines
+        /// come and go (`frame::member_names`).
+        #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+        names: std::collections::BTreeMap<String, String>,
+    },
     /// Raise or sink profiles on a planar face, or wrap them on a selected cylindrical wall.
     Emboss {
         sketch: SketchId,
@@ -2176,6 +2204,7 @@ impl FeatureKind {
             FeatureKind::SurfaceOffset { .. } => "OffsetSurfaceFeature",
             FeatureKind::BoundingSolid { .. } => "BoundingSolidFeature",
             FeatureKind::Pipe { .. } => "PipeFeature",
+            FeatureKind::FrameMember { .. } => "FrameMemberFeature",
             FeatureKind::Emboss { .. } => "EmbossFeature",
             FeatureKind::Boss { .. } => "BossFeature",
             FeatureKind::Lip { groove: false, .. } => "LipFeature",
@@ -2256,6 +2285,7 @@ impl FeatureKind {
             FeatureKind::SurfaceOffset { .. } => "OffsetSurface",
             FeatureKind::BoundingSolid { .. } => "BoundingSolid",
             FeatureKind::Pipe { .. } => "Pipe",
+            FeatureKind::FrameMember { .. } => "Member",
             FeatureKind::Emboss { .. } => "Emboss",
             FeatureKind::Boss { .. } => "Boss",
             FeatureKind::Lip { groove: false, .. } => "Lip",
@@ -2353,7 +2383,7 @@ fn inside_str() -> String {
     "inside".into()
 }
 
-fn all_profiles() -> ProfileSel {
+pub(crate) fn all_profiles() -> ProfileSel {
     ProfileSel::All
 }
 

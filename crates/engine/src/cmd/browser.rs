@@ -4,6 +4,8 @@
 //! Browser items are keyed per component folder (`bodies`, `sketches`, `construction`): a body
 //! by name, a sketch or construction plane by feature id.
 
+use std::collections::BTreeMap;
+
 use serde_json::{Value, json};
 
 use solidcraft_doc::FeatureKind;
@@ -530,6 +532,16 @@ fn replace_body_name(v: &mut Value, old: &str, new: &str, names_body: bool, dept
     }
 }
 
+/// A frame member feature's bodies by line id, as its own result made them: what pins each
+/// member's name to its line. `None` for any other feature, or when they don't pair up.
+fn member_pins(s: &Session, fid: u64) -> Option<BTreeMap<String, String>> {
+    let f = s.doc.feature(fid)?;
+    let result = s.model.result(fid)?;
+    let lines = solidcraft_doc::frame::member_line_ids(&result.state, &f.kind).ok()?;
+    let made: Vec<String> = result.state.bodies.iter().filter(|b| b.feature == fid).map(|b| b.name.clone()).collect();
+    (lines.len() == made.len()).then(|| lines.into_iter().zip(made).collect())
+}
+
 fn rename_body(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "body.rename";
     let old = str_(p, "body").ok_or_else(|| bad(cmd, "`body` must be a body name"))?.to_string();
@@ -578,22 +590,40 @@ fn rename_body(s: &mut Session, p: &Value) -> Result<Value> {
             .collect(),
         None => Vec::new(),
     };
+    // Frame members are named by their lines (#4003): each keeps the name it has now on its
+    // line, whichever lines come and go later, and the renamed one takes its new name.
+    let later_pins: Vec<Option<BTreeMap<String, String>>> = later.iter().map(|(id, _)| member_pins(s, *id)).collect();
+    let own_pins = member_pins(s, fid).and_then(|mut pins| {
+        let line = pins.iter().find(|(_, n)| **n == old).map(|(line, _)| line.clone())?;
+        pins.insert(line, name.to_string());
+        Some(pins)
+    });
     let d = s.doc_mut();
-    for (id, made) in &later {
+    for ((id, made), pins) in later.iter().zip(later_pins) {
         if let Some(f) = d.feature_mut(*id) {
-            f.body_names.clone_from(made);
+            if let (Some(pins), FeatureKind::FrameMember { names, .. }) = (pins, &mut f.kind) {
+                *names = pins;
+                f.body_names.clear();
+            } else {
+                f.body_names.clone_from(made);
+            }
         }
     }
     let f = d.feature_mut(fid).ok_or_else(|| bad(cmd, "the body's feature is gone"))?;
-    while f.body_names.len() < siblings.len().max(k + 1) {
-        let i = f.body_names.len();
-        f.body_names.push(siblings.get(i).cloned().unwrap_or_default());
-    }
-    for (slot, current) in f.body_names.iter_mut().zip(&siblings) {
-        slot.clone_from(current);
-    }
-    if let Some(slot) = f.body_names.get_mut(k) {
-        *slot = name.to_string();
+    if let (Some(pins), FeatureKind::FrameMember { names, .. }) = (own_pins, &mut f.kind) {
+        *names = pins;
+        f.body_names.clear();
+    } else {
+        while f.body_names.len() < siblings.len().max(k + 1) {
+            let i = f.body_names.len();
+            f.body_names.push(siblings.get(i).cloned().unwrap_or_default());
+        }
+        for (slot, current) in f.body_names.iter_mut().zip(&siblings) {
+            slot.clone_from(current);
+        }
+        if let Some(slot) = f.body_names.get_mut(k) {
+            *slot = name.to_string();
+        }
     }
     // Later features refer to bodies by name.
     let mut failed = None;
