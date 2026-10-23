@@ -213,7 +213,7 @@ fn services(cc: &eframe::CreationContext<'_>) -> Services {
             }
             let future = dialog
                 .add_filter(
-                    "Designs, CAD files and meshes",
+                    "Designs, CAD files, meshes and drawings",
                     &[
                         io::DESIGN_EXT,
                         io::LEGACY_DESIGN_EXT,
@@ -240,6 +240,10 @@ fn services(cc: &eframe::CreationContext<'_>) -> Services {
                         "GLB",
                         "gltf",
                         "GLTF",
+                        "dxf",
+                        "DXF",
+                        "svg",
+                        "SVG",
                     ],
                 )
                 .add_filter("SolidCraft design (container or JSON)", &[io::DESIGN_EXT, io::LEGACY_DESIGN_EXT, "json"])
