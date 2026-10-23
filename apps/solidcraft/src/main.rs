@@ -24,6 +24,8 @@ mod native_crash;
 #[cfg(target_os = "windows")]
 mod native_frame;
 #[cfg(target_os = "macos")]
+mod native_menu;
+#[cfg(target_os = "macos")]
 mod open_documents;
 #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
 mod space_mouse;
@@ -78,6 +80,8 @@ struct App {
     take_focus_unwanted: bool,
     #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
     space_mouse: space_mouse::SpaceMouse,
+    #[cfg(target_os = "macos")]
+    native_menu: Option<native_menu::NativeMenu>,
 }
 
 impl eframe::App for App {
@@ -119,6 +123,10 @@ impl eframe::App for App {
         for f in if self.solve.file_picker_busy() { Vec::new() } else { open_documents::take() } {
             self.solve.open_path_async(&f);
         }
+        #[cfg(target_os = "macos")]
+        if let Some(menu) = &mut self.native_menu {
+            menu.tick(&mut self.solve, ctx);
+        }
         self.solve.logic(ctx);
         #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
         if !self.solve.file_picker_busy() {
@@ -129,6 +137,10 @@ impl eframe::App for App {
         }
     }
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
+        #[cfg(target_os = "macos")]
+        if let Some(menu) = &mut self.native_menu {
+            menu.raw_input_hook(&mut self.solve, _ctx, raw);
+        }
         // Before the app's own hook, which adds the control channel's events.
         #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
         self.space_mouse.raw_input_hook(self.solve.preferences.space_mouse_enabled, raw);
@@ -529,6 +541,8 @@ fn app_viewport() -> Result<egui::ViewportBuilder, eframe::Error> {
 const APP_ID: &str = solidcraft_engine::io::APP_ID;
 
 fn main() -> eframe::Result {
+    #[cfg(target_os = "macos")]
+    objc2_foundation::NSProcessInfo::processInfo().setProcessName(objc2_foundation::ns_string!("SolidCraft"));
     mark("main");
     adopt_legacy_settings();
     let mut safe_mode = startup::env_on(std::env::var(startup::SAFE_MODE_ENV).ok().as_deref());
@@ -739,6 +753,18 @@ fn main() -> eframe::Result {
             }
             #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
             let space_mouse = space_mouse::SpaceMouse::start(&cc.egui_ctx);
+            #[cfg(target_os = "macos")]
+            let native_menu = match native_menu::NativeMenu::new(&app, &cc.egui_ctx) {
+                Ok(menu) => Some(menu),
+                Err(error) => {
+                    app.set_status(format!("System menu: {error}"), true);
+                    None
+                }
+            };
+            #[cfg(target_os = "macos")]
+            {
+                app.native_file_menu = native_menu.is_some();
+            }
             mark("app created");
             solidcraft_engine::crash::phase("first frame");
             Ok(Box::new(App {
@@ -748,6 +774,8 @@ fn main() -> eframe::Result {
                 take_focus_unwanted: control_port.is_some(),
                 #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
                 space_mouse,
+                #[cfg(target_os = "macos")]
+                native_menu,
             }))
         }),
     );

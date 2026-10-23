@@ -465,6 +465,8 @@ pub struct SolveApp {
     pub native_resize_border: bool,
     /// macOS: the traffic lights sit over the application bar's left end.
     pub integrated_titlebar: bool,
+    /// The desktop host installed a system File menu; omit the in-window duplicate.
+    pub native_file_menu: bool,
     /// Build bodies' display meshes on the CPU even where the GPU could (safe mode). Read by
     /// [`SolveApp::set_wgpu`].
     pub cpu_meshing: bool,
@@ -586,6 +588,7 @@ impl SolveApp {
             custom_titlebar: false,
             native_resize_border: false,
             integrated_titlebar: false,
+            native_file_menu: false,
             cpu_meshing: false,
             frame_ms: 0.0,
             frame_rate: frame_rate::FrameRate::default(),
