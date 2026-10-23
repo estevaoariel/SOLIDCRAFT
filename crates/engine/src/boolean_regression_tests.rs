@@ -1223,3 +1223,78 @@ fn extrude_cut_into_a_rounded_block_top() {
     let v = before - volume(&cut, "Body1");
     assert!((v - taken).abs() < 0.05, "took {v}, expected {taken}");
 }
+
+#[test]
+fn empty_intersection_is_refused_without_changing_the_design() -> crate::Result<()> {
+    for command in ["solid.extrude", "solid.box", "solid.combine"] {
+        for x in [5, 20] {
+            let mut s = Session::default();
+            s.execute("solid.box", &json!({"length":10,"width":10,"height":10,"body_name":"Base"}))?;
+            s.execute("solid.box", &json!({"corner":[x,0,0],"length":10,"width":10,"height":10,"body_name":"Tool","operation":"new"}))?;
+            s.execute("sketch.create", &json!({"plane":"XY"}))?;
+            s.execute("sketch.rectangle.two_point", &json!({"p0":[x,0],"p1":[x+10,10]}))?;
+            s.execute("sketch.finish", &json!({}))?;
+            let before = s.doc.to_json();
+            let params = match command {
+                "solid.combine" => json!({"target":"Base","tools":["Tool"],"operation":"intersect"}),
+                "solid.box" => json!({"corner":[x,0,0],"length":10,"width":10,"height":10,"operation":"intersect","targets":["Base"]}),
+                _ => json!({"distance":10,"operation":"intersect","targets":["Base"]}),
+            };
+            let result = s.execute(command, &params);
+            if x == 20 {
+                let error = result.err().ok_or_else(|| crate::EngineError::Other(format!("{command} accepted an empty intersection")))?;
+                assert!(
+                    error.to_string().contains("the intersection is empty: nothing of `Base` would remain; check that the profile overlaps the body"),
+                    "{error}"
+                );
+                assert_eq!(s.doc.to_json(), before);
+                assert_eq!(s.model.state().bodies.len(), 2);
+                assert!((volume(&s, "Base") - 1000.0).abs() < 1e-6);
+                assert!((volume(&s, "Tool") - 1000.0).abs() < 1e-6);
+            } else {
+                result?;
+                assert!((volume(&s, "Base") - 500.0).abs() < 1e-6);
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn empty_intersection_in_a_saved_design_fails_and_keeps_the_target() -> crate::Result<()> {
+    let mut s = Session::default();
+    s.execute("solid.box", &json!({"length":10,"width":10,"height":10,"body_name":"Base"}))?;
+    s.execute("solid.box", &json!({"length":10,"width":10,"height":40,"body_name":"Tall","operation":"new"}))?;
+    s.execute("sketch.create", &json!({"plane":"XY","offset":5}))?;
+    s.execute("sketch.rectangle.two_point", &json!({"p0":[0,0],"p1":[10,10]}))?;
+    s.execute("sketch.finish", &json!({}))?;
+    let result = s.execute("solid.extrude", &json!({"distance":10,"operation":"intersect","targets":["Tall","Base"]}))?;
+    let id = result["feature"].as_u64().ok_or_else(|| crate::EngineError::Other("missing feature id".into()))?;
+    assert!((volume(&s, "Base") - 500.0).abs() < 1e-6);
+    let mut doc = solidcraft_doc::Document::from_json(&s.doc.to_json())?;
+    if let Some(f) = doc.feature_mut(id)
+        && let solidcraft_doc::FeatureKind::Extrude { extent, .. } = &mut f.kind
+    {
+        extent.start_offset = Some("20 mm".into());
+    }
+    let reopened = Session::new(solidcraft_doc::Document::from_json(&doc.to_json())?);
+    assert!(reopened.model.result(id).and_then(|r| r.error.as_ref()).is_some_and(|e| e.contains("the intersection is empty")));
+    assert_eq!(reopened.model.state().bodies.len(), 2);
+    assert!((volume(&reopened, "Tall") - 4000.0).abs() < 1e-6);
+    assert!((volume(&reopened, "Base") - 1000.0).abs() < 1e-6);
+    Ok(())
+}
+
+#[test]
+fn intersect_with_every_body_still_drops_the_ones_it_misses() -> crate::Result<()> {
+    let mut s = Session::default();
+    s.execute("solid.box", &json!({"length":10,"width":10,"height":10,"body_name":"Near"}))?;
+    s.execute("solid.box", &json!({"corner":[30,0,0],"length":10,"width":10,"height":10,"body_name":"Far","operation":"new"}))?;
+    s.execute("sketch.create", &json!({"plane":"XY"}))?;
+    s.execute("sketch.rectangle.two_point", &json!({"p0":[0,0],"p1":[5,10]}))?;
+    s.execute("sketch.finish", &json!({}))?;
+    s.execute("solid.extrude", &json!({"distance":10,"operation":"intersect"}))?;
+    assert_eq!(s.model.state().bodies.len(), 1);
+    assert!((volume(&s, "Near") - 500.0).abs() < 1e-6);
+    Ok(())
+}

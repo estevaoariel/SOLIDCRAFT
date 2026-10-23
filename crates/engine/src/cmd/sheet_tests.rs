@@ -226,15 +226,16 @@ fn unsupported_sheet_machining_is_atomic_but_true_no_change_is_allowed() {
 }
 
 #[test]
-fn empty_sheet_intersection_removes_geometry_and_metadata_together() {
+fn empty_sheet_intersection_keeps_geometry_and_metadata_together() {
     let mut s = Session::default();
     base(&mut s, 100.0, 60.0);
     rectangle_tool(&mut s, "Outside", [120.0, 20.0], [130.0, 30.0]);
-    run(&mut s, "solid.extrude", json!({"sketch":"Outside","through_all":true,"direction":"symmetric","operation":"intersect"}));
-    assert!(s.model.state().bodies.is_empty());
-    assert!(s.model.state().sheets.is_empty());
-    assert!(s.execute("sheet.unfold", &json!({})).is_err());
-    run(&mut s, "edit.undo", json!({}));
+    let before = s.doc.to_json();
+    let result = s.execute("solid.extrude", &json!({"sketch":"Outside","through_all":true,"direction":"symmetric","operation":"intersect"}));
+    assert!(result.as_ref().err().is_some_and(|e| e.to_string().contains("the intersection is empty")), "{result:?}");
+    assert_eq!(s.doc.to_json(), before);
+    assert_eq!(s.model.state().bodies.len(), 1);
+    assert_eq!(s.model.state().sheets.len(), 1);
     assert!((volume(&mut s) - 15000.0).abs() < 1e-6);
 }
 
@@ -369,8 +370,8 @@ fn deleting_sheet_material_prunes_cosmetic_threads_and_undo_restores_them() {
     run(&mut s, "sheet.flange", json!({"sketch":"ThreadPlate","profiles":[{"point":[10,10]}]}));
     run(&mut s, "solid.thread", json!({"face":[55,30,1],"designation":"M10"}));
     assert_eq!(s.model.state().threads.len(), 1);
-    rectangle_tool(&mut s, "Outside", [120.0, 20.0], [130.0, 30.0]);
-    run(&mut s, "solid.extrude", json!({"sketch":"Outside","through_all":true,"direction":"symmetric","operation":"intersect"}));
+    rectangle_tool(&mut s, "All", [-10.0, -10.0], [110.0, 70.0]);
+    run(&mut s, "solid.extrude", json!({"sketch":"All","through_all":true,"direction":"symmetric","operation":"cut"}));
     assert!(s.model.state().bodies.is_empty());
     assert!(s.model.state().sheets.is_empty());
     assert!(s.model.state().threads.is_empty());
