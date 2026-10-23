@@ -1867,7 +1867,7 @@ pub fn shortcuts(app: &mut SolveApp, ctx: &egui::Context) {
                 // Copy, Cut and Paste (`edit_clipboard::handle`).
                 Key::C | Key::X | Key::V if !mods.shift && !mods.alt => {}
                 Key::S => save(app),
-                _ => crate::keymap::press(app, &crate::keymap::key_name(k, mods)),
+                _ => crate::keymap::press(app, &crate::keymap::key_name(k, mods), repeat),
             }
             continue;
         }
@@ -1933,7 +1933,7 @@ pub fn shortcuts(app: &mut SolveApp, ctx: &egui::Context) {
                     crate::viewport::delete_selection(app);
                 }
             }
-            _ => crate::keymap::press(app, &crate::keymap::key_name(k, mods)),
+            _ => crate::keymap::press(app, &crate::keymap::key_name(k, mods), repeat),
         }
     }
 }

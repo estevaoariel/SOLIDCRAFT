@@ -2065,6 +2065,8 @@
   "ui.sent_to_slicer": "已发送到 {slicer}",
   "ui.sheet_gap": "间隙",
   "ui.shell": "抽壳",
+  "ui.shortcut_cycles_modes": "再次按下工具的快捷键时切换其模式",
+  "ui.shortcut_cycles_modes_tip": "在放置第一个点之前，再次按下草图工具的快捷键会依次切换其创建模式。关闭：重新开始该工具。",
   "ui.show": "显示",
   "ui.showAll": "显示全部",
   "ui.showAllBodies": "显示所有实体",

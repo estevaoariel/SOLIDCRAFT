@@ -148,3 +148,49 @@ fn move_key_keeps_sketch_mode_behavior_and_honors_a_sketch_move_binding() {
     assert_eq!(h.app.session.active_sketch, sketch);
     assert!(h.app.tree.occurrence_move.is_none(), "M must not open component Move while editing its sketch");
 }
+
+/// #2459: by default a tool's shortcut pressed again starts the tool again, in the mode the key
+/// is bound to; the preference is off.
+#[test]
+fn a_tools_shortcut_pressed_again_restarts_it_by_default() {
+    let mut h = Harness::new();
+    assert!(!h.app.preferences.shortcut_cycles_modes, "off by default");
+    h.app.run("sketch.create", json!({"plane": "XY"})).unwrap();
+    h.settle();
+    press(&mut h, "R");
+    assert_eq!(tool(&h), Some("sketch.rectangle.two_point"));
+    press(&mut h, "R");
+    assert_eq!(tool(&h), Some("sketch.rectangle.two_point"), "the same mode again");
+}
+
+/// #2459: with Preferences › Sketch asking for it, a tool's shortcut pressed again before the
+/// first point steps through its family's modes and wraps round; a held key's repeats and a shape
+/// already begun keep the tool.
+#[test]
+fn a_tools_shortcut_pressed_again_cycles_its_modes() {
+    let mut h = Harness::new();
+    h.app.preferences.shortcut_cycles_modes = true;
+    h.app.run("sketch.create", json!({"plane": "XY"})).unwrap();
+    h.settle();
+    press(&mut h, "R");
+    assert_eq!(tool(&h), Some("sketch.rectangle.two_point"), "the first press starts the bound mode");
+    for want in ["sketch.rectangle.three_point", "sketch.rectangle.center", "sketch.rectangle.rounded", "sketch.rectangle.two_point"] {
+        press(&mut h, "R");
+        assert_eq!(tool(&h), Some(want));
+    }
+    // Auto-repeat of a held R doesn't skip modes.
+    crate::keymap::press(&mut h.app, "R", true);
+    assert_eq!(tool(&h), Some("sketch.rectangle.two_point"), "a repeat changes nothing");
+    // Another tool's key starts that tool, at its bound mode.
+    press(&mut h, "C");
+    assert_eq!(tool(&h), Some("sketch.circle.center"));
+    press(&mut h, "C");
+    assert_eq!(tool(&h), Some("sketch.circle.two_point"));
+    // Once the shape is begun, its key keeps the tool and the point.
+    press(&mut h, "R");
+    h.step(&json!({"click": {"world": [0, 0, 0]}})).unwrap();
+    assert_eq!(h.app.tool.as_ref().map(|t| t.pts.len()), Some(1));
+    press(&mut h, "R");
+    assert_eq!(tool(&h), Some("sketch.rectangle.two_point"));
+    assert_eq!(h.app.tool.as_ref().map(|t| t.pts.len()), Some(1), "the placed corner is kept");
+}

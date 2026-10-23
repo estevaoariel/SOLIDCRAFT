@@ -114,8 +114,23 @@ pub fn command_for(app: &SolveApp, key: &str) -> Option<&'static str> {
 /// Run a shortcut key: its enabled command; outside a sketch, a sketch tool's key opens Create
 /// Sketch (on the selected plane or planar face, else on the plane picked next) and the tool
 /// starts in the new sketch.
-pub fn press(app: &mut SolveApp, key: &str) {
+pub fn press(app: &mut SolveApp, key: &str, repeat: bool) {
     if let Some(id) = command_for(app, key) {
+        // Pressed again while a tool of the same family is out, with Preferences › Sketch asking
+        // for it (#2459): before its first point, the family's next mode (wrapping round); once a
+        // point is placed, the tool keeps it. A held key's repeats change nothing.
+        if let Some((family, current, started)) = app.tool.as_ref().filter(|_| app.preferences.shortcut_cycles_modes).and_then(|t| {
+            let f = crate::sketch_families::family(t.cmd).filter(|f| f.commands.contains(&id))?;
+            Some((f, t.cmd, !t.pts.is_empty() || !t.picks.is_empty()))
+        }) {
+            if !repeat && !started {
+                let at = family.commands.iter().position(|c| *c == current).unwrap_or(0);
+                if let Some(next) = family.commands.get((at + 1) % family.commands.len()) {
+                    app.start(next);
+                }
+            }
+            return;
+        }
         app.start(app.preferences.sketch_variants.resolve(id));
     } else if let Some(id) = sketch_tool_for(app, key) {
         app.start("sketch.create");
