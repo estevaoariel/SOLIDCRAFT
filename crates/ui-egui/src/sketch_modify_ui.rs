@@ -236,7 +236,7 @@ pub fn edit_pattern(app: &mut SolveApp, id: &str) -> bool {
     let Some(pattern) = sk.patterns.iter().find(|p| p.id == id) else { return false };
     let kind = match &pattern.kind {
         SketchPatternKind::Circular { count, angle, alignment, reversed, .. } => Mod::PatternCirc {
-            count: count.to_string(),
+            count: pattern.count_expression.clone().unwrap_or_else(|| count.to_string()),
             angle: format!("{angle} deg"),
             alignment: if *alignment == PatternAlignment::Left { PatternAlignment::Right } else { *alignment },
             reversed: *reversed ^ (*alignment == PatternAlignment::Left),
@@ -665,7 +665,8 @@ fn picked_point(session: &solidcraft_engine::Session, inputs: &[SelInput], i: us
 }
 
 /// The command a sketch modify dialog makes. Scale, Move, and patterns send evaluated
-/// numbers. Offset and Fillet retain expressions in persistent driving dimensions.
+/// numbers, except circular Quantity, which keeps its authored expression. Offset and Fillet
+/// retain expressions in persistent driving dimensions.
 pub fn commands(app: &SolveApp, k: &Mod, inputs: &[SelInput], extra: &Map<String, Value>) -> Result<Vec<(String, Value)>, String> {
     if inputs.iter().flat_map(|input| &input.items).any(|sel| matches!(sel, Sel::SketchPoint { .. }) && point_id(&app.session, sel).is_none()) {
         return Err("Select points of the sketch being edited".into());
@@ -792,7 +793,7 @@ pub fn commands(app: &SolveApp, k: &Mod, inputs: &[SelInput], extra: &Map<String
             let a = total_angle(app, "Total angle", angle)?;
             (
                 "sketch.pattern.circular",
-                json!({"entities": entities, "center": center, "count": n, "angle": a, "alignment": alignment, "reversed": reversed}),
+                json!({"entities": entities, "center": center, "count": count.trim().parse::<u64>().map_or_else(|_| json!(count.trim()), |_| json!(n)), "angle": a, "alignment": alignment, "reversed": reversed}),
             )
         }
         Mod::Corner { chamfer: false, size, .. } => {

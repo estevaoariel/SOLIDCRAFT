@@ -278,6 +278,9 @@ pub(super) fn edit_solved<T>(
 ) -> Result<(T, Option<SolveReport>)> {
     let mut doc = (*s.doc).clone();
     let mut sk = doc.sketch(id)?.clone();
+    if sk.patterns.iter().any(|p| p.count_expression.is_some()) {
+        doc.apply_pattern_quantities(&doc.param_values().0, &mut sk)?;
+    }
     super::sketch_project::refresh(s, &doc, id, &mut sk);
     // The stored sketch is solved for its stored values.
     let stored = sk.driving_values();
