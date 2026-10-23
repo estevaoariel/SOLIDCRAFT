@@ -1570,9 +1570,17 @@ impl CanvasPanel {
     }
 }
 
-/// A browser click on a plane or axis: it goes to the open dialog's input if that takes it,
-/// otherwise it becomes the selection.
+/// Browser picks go only into compatible active dialog inputs. Outside a dialog, planes and
+/// axes become the selection; body rows use the ordinary Ctrl/Shift-aware selection path.
 fn pick_from_browser(app: &mut SolveApp, x: Sel) {
+    if matches!(x, Sel::Body { .. }) {
+        if let Some(d) = app.dialog.as_mut()
+            && d.active_input().is_some_and(|i| i.accept & crate::selection::BODIES != 0)
+        {
+            d.pick(&app.session, x);
+        }
+        return;
+    }
     let hit = match &x {
         Sel::Plane { name } => crate::viewport::Hit::Plane { name: name.clone(), point: solidcraft_engine::geom::Vec3::ZERO },
         Sel::Axis { name } => crate::viewport::Hit::Axis { name: name.clone() },
@@ -1964,7 +1972,7 @@ fn entry_row(
             app.edit_sketch(id);
         }
     } else if r.clicked {
-        if folder == "construction" {
+        if folder == "construction" || (folder == "bodies" && app.dialog.is_some()) {
             if let Some(s) = e.sel.clone() {
                 pick_from_browser(app, s);
             }
