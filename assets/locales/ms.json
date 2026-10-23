@@ -1060,7 +1060,7 @@
   "search.try": "Taip nama arahan, ciri dalam reka bentuk ini, atau parameter. Untuk menjalankan arahan dengan nilai, taip ID-nya dan objek JSON: {example}",
   "search.valid": "Sah",
   "settings.display_quality_note": "Tahap halus melicinkan muka dan tepi melengkung, tetapi mesh lebih lambat disiapkan. Hanya paparan berubah, bukan reka bentuk atau eksport.",
-  "settings.frame_rate_note": "Papar bingkai sesaat di kanan bawah. Jika diaktifkan, pandangan dilukis semula tanpa henti.",
+  "settings.frame_rate_note": "Papar bingkai sesaat di kanan bawah.",
   "settings.measure_axis_distances": "Papar jarak X/Y/Z",
   "settings.measure_axis_distances_help": "Papar jarak paksi dunia X/Y/Z bersama jarak keseluruhan semasa Ukur dibuka.",
   "settings.msaa_applies_on_restart": "Antialias digunakan apabila SolidCraft dimulakan semula",

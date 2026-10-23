@@ -1060,7 +1060,7 @@
   "search.try": "Nhập tên lệnh, một tính năng trong thiết kế này hoặc một tham số. Để chạy lệnh kèm giá trị, hãy nhập mã lệnh và một đối tượng JSON: {example}",
   "search.valid": "Hợp lệ",
   "settings.display_quality_note": "Mức độ chi tiết cao hơn giúp hiển thị các mặt cong và cạnh mượt mà hơn nhưng tốn nhiều thời gian tạo lưới hơn. Thiết lập này chỉ thay đổi vùng nhìn, không ảnh hưởng đến thiết kế hay dữ liệu xuất tệp.",
-  "settings.frame_rate_note": "Hiển thị số khung hình trên giây (FPS) ở góc dưới bên phải khung nhìn. Khi bật, khung nhìn sẽ vẽ lại liên tục.",
+  "settings.frame_rate_note": "Hiển thị số khung hình trên giây (FPS) ở góc dưới bên phải khung nhìn.",
   "settings.measure_axis_distances": "Hiển thị khoảng cách theo trục X/Y/Z",
   "settings.measure_axis_distances_help": "Hiển thị kích thước thành phần theo các trục tọa độ cùng với khoảng cách tổng thể khi mở công cụ Đo lường.",
   "settings.msaa_applies_on_restart": "Khử răng cưa sẽ áp dụng vào lần khởi động tiếp theo của SolidCraft",

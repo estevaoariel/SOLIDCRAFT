@@ -1060,7 +1060,7 @@
   "search.try": "Skriv et kommandonavn, en feature i dette design eller en parameter. Du kører en kommando med værdier ved at skrive dens id og et JSON-objekt: {example}",
   "search.valid": "Gyldig",
   "settings.display_quality_note": "Finere niveauer viser krumme flader og kanter mere jævnt og tager længere tid at opbygge mesh til. Kun modelvisningen ændres, aldrig designet eller eksporten.",
-  "settings.frame_rate_note": "Viser billeder pr. sekund nederst til højre i modelvisningen. Når dette er slået til, gentegnes visningen løbende.",
+  "settings.frame_rate_note": "Viser billeder pr. sekund nederst til højre i modelvisningen.",
   "settings.measure_axis_distances": "Vis X/Y/Z-afstande",
   "settings.measure_axis_distances_help": "Vis afstanden langs X-, Y- og Z-aksen sammen med den samlede afstand i Mål.",
   "settings.msaa_applies_on_restart": "Kantudjævning træder i kraft, næste gang SolidCraft starter",

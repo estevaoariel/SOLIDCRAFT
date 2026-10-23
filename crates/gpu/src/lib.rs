@@ -95,6 +95,8 @@ pub enum GpuError {
     Pipeline(String),
     #[error("not supported yet: {0}")]
     Unsupported(String),
+    #[error("the GPU device was lost (the graphics driver was reset); it can't draw again")]
+    DeviceLost,
 }
 
 pub type Result<T> = std::result::Result<T, GpuError>;

@@ -443,6 +443,8 @@ pub struct SolveApp {
     /// When Esc was last pressed (input time): a second press soon after finishes the sketch.
     pub last_escape: Option<f64>,
     pub status: Option<(String, f64, bool)>,
+    /// The status message offers Undo (a click on it undoes the last step), as after an automatic stand-up.
+    pub status_undo: bool,
     pub quit_requested: bool,
     /// Autosave into the recovery folder (the desktop app turns it on).
     pub autosave: Option<recovery_ui::Autosaves>,
@@ -577,6 +579,7 @@ impl SolveApp {
             esc_handled: false,
             last_escape: None,
             status: None,
+            status_undo: false,
             quit_requested: false,
             autosave: None,
             recoverable: Vec::new(),
@@ -1204,6 +1207,7 @@ impl SolveApp {
         let (text, at) = (s.into(), now_ms());
         self.messages.push(&text, error, at);
         self.status = Some((text, at, error));
+        self.status_undo = false;
     }
 
     pub fn open_path(&mut self, path: &str) {

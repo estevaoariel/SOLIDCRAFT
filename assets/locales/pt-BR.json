@@ -1060,7 +1060,7 @@
   "search.try": "Digite o nome de um comando, um recurso deste projeto ou um parâmetro. Para executar um comando com valores, digite seu id e um objeto JSON: {example}",
   "search.valid": "Válido",
   "settings.display_quality_note": "Níveis mais finos desenham faces e arestas curvas mais suaves e demoram mais para gerar a malha. Só a janela de visualização muda, nunca o projeto ou as exportações.",
-  "settings.frame_rate_note": "Mostra quadros por segundo no canto inferior direito da vista. Enquanto estiver ativo, a vista é redesenhada continuamente.",
+  "settings.frame_rate_note": "Mostra quadros por segundo no canto inferior direito da vista.",
   "settings.measure_axis_distances": "Mostrar distâncias X/Y/Z",
   "settings.measure_axis_distances_help": "Mostrar as componentes nos eixos do mundo junto com a distância total enquanto Medir está aberto.",
   "settings.msaa_applies_on_restart": "O antisserrilhamento vale na próxima vez que o SolidCraft iniciar",

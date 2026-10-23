@@ -146,7 +146,7 @@ pub fn keep(app: &mut SolveApp, ctx: &egui::Context, rect: egui::Rect) {
 
 /// The device the offer is for now: the current device when it should be offered one and the offer
 /// has not been hidden for the run. No side effects.
-fn offerable(app: &SolveApp) -> Option<String> {
+pub(crate) fn offerable(app: &SolveApp) -> Option<String> {
     let calibrated = app.space_mouse.device.as_ref().is_some_and(|device| app.preferences.space_mouse_calibrations.contains_key(device));
     app.space_mouse.device.clone().filter(|device| {
         should_offer(

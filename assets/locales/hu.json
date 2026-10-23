@@ -1059,7 +1059,7 @@
   "search.try": "Írja be egy parancs nevét, a terv egy elemét vagy egy paramétert. Parancs értékekkel való futtatásához írja be az azonosítóját és egy JSON-objektumot: {example}",
   "search.valid": "Érvényes",
   "settings.display_quality_note": "A finomabb szintek simábban rajzolják az ívelt lapokat és éleket, de tovább tart a hálózás. Csak a nézetablak változik, a terv és az exportok soha.",
-  "settings.frame_rate_note": "Megjeleníti a másodpercenkénti képkockaszámot a nézet jobb alsó sarkában. Bekapcsolt állapotban a nézet folyamatosan újrarajzolódik.",
+  "settings.frame_rate_note": "Megjeleníti a másodpercenkénti képkockaszámot a nézet jobb alsó sarkában.",
   "settings.measure_axis_distances": "X/Y/Z távolságok megjelenítése",
   "settings.measure_axis_distances_help": "A világtengely-összetevők méreteit is megjeleníti a teljes távolság mellett, amíg a Mérés nyitva van.",
   "settings.msaa_applies_on_restart": "Az élsimítás a SolidCraft következő indításakor lép érvénybe",
