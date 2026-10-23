@@ -1193,7 +1193,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
 }
 
 /// Close the dialog; `revert`: put back what was there when it opened (Cancel, Esc, ×).
-fn close(app: &mut SolveApp, revert: bool) {
+pub(crate) fn close(app: &mut SolveApp, revert: bool) {
     if let Some(s) = app.prefs_window.snapshot.take()
         && revert
     {

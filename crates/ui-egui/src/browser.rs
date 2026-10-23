@@ -1170,6 +1170,8 @@ fn occurrence_rows(app: &mut SolveApp, ui: &mut egui::Ui, path: Vec<u64>, depth:
     }
 }
 
+/// The Document Settings group. A second click on an entry closes the window it opened, the way
+/// that window's own × does (#4150).
 fn doc_settings(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize) {
     let key = "docsettings";
     let open = is_open(app, key, false);
@@ -1182,8 +1184,12 @@ fn doc_settings(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize) {
     }
     let units = format!("Units: {}", app.session.doc.units);
     let r = draw_row(ui, ui.id().with("units"), &Row { depth: depth + 1, icon: "settings", label: &units, ..Default::default() });
-    if let Some(p) = r.secondary.or(r.clicked.then(|| r.rect.map(|x| x.left_bottom())).flatten()) {
+    if let Some(p) = r.secondary {
         crate::context_menu::open_for(app, p, Target::Units);
+    } else if r.clicked
+        && let Some(rect) = r.rect
+    {
+        crate::context_menu::toggle_for(app, rect, rect.left_bottom(), Target::Units);
     }
     let prec = format!(
         "Precision: {} {}, {}°",
@@ -1192,16 +1198,28 @@ fn doc_settings(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize) {
         format_args!("{:.*}", usize::from(app.preferences.angle_decimals), 0.0)
     );
     if draw_row(ui, ui.id().with("precision"), &Row { depth: depth + 1, icon: "settings", label: &prec, ..Default::default() }).clicked {
-        app.prefs_window.open = true;
+        if app.prefs_window.open {
+            crate::prefs::close(app, true);
+        } else {
+            app.prefs_window.open = true;
+        }
     }
     let params = format!("Parameters ({})", app.session.doc.params.len());
     if draw_row(ui, ui.id().with("params"), &Row { depth: depth + 1, icon: "params", label: &params, ..Default::default() }).clicked {
-        app.start("parameters.change");
+        if app.params.is_some() {
+            app.params = None;
+        } else {
+            app.start("parameters.change");
+        }
     }
     if draw_row(ui, ui.id().with("design_properties"), &Row { depth: depth + 1, icon: "settings", label: "Design Properties", ..Default::default() })
         .clicked
     {
-        app.start("document.metadata");
+        if app.design_properties.is_some() {
+            app.design_properties = None;
+        } else {
+            app.start("document.metadata");
+        }
     }
 }
 
