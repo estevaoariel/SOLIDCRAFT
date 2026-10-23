@@ -1871,3 +1871,34 @@ fn fillet_refuses_an_offsets_corners_until_its_association_is_broken() {
         assert!((sk.radius(ai).unwrap() - 2.0).abs() < 1e-7);
     }
 }
+
+/// #5074: lines made tangent to a circle by the solver touch it within rounding noise, and the
+/// noise often falls outside, so trim found no cut at the touch and deleted the whole line. Each
+/// line is trimmed back to its tangent point instead: the belt shape (two lines from one point)
+/// and two parallel lines.
+#[test]
+fn trim_cuts_a_line_at_its_tangent_point_on_a_circle() {
+    // (start, end, where the trim picks: past the tangent point)
+    let belt = [([30.0, 0.0], [-8.0, 12.0], [-7.0, 12.5]), ([30.0, 0.0], [-8.0, -12.0], [-7.0, -12.5])];
+    let parallel = [([-20.0, 11.0], [20.0, 11.0], [-15.0, 10.0]), ([-20.0, -11.0], [20.0, -11.0], [-15.0, -10.0])];
+    for (name, lines) in [("belt", belt), ("parallel", parallel)] {
+        let mut s = new_sketch();
+        run(&mut s, "sketch.circle.center", json!({"center": [0, 0], "radius": 10}));
+        for (a, b, _) in lines {
+            run(&mut s, "sketch.line", json!({"points": [a, b], "connect": false, "infer": false}));
+        }
+        run(&mut s, "sketch.constraint.tangent", json!({"a": "l1", "b": "c1"}));
+        run(&mut s, "sketch.constraint.tangent", json!({"a": "l2", "b": "c1"}));
+        for (line, (_, _, at)) in ["l1", "l2"].into_iter().zip(lines) {
+            let r = run(&mut s, "sketch.trim", json!({"curve": line, "at": at}));
+            assert_eq!(r["result"]["trimmed"], line, "{name}: {line} was {}", r["result"]);
+            let sk = sketch(&s);
+            let at = |r: &str| sk.point(sk.resolve_point(r).unwrap()).unwrap();
+            // The solve may size the circle to the lines (its radius isn't dimensioned).
+            let radius = sk.radius(sk.curve_index("c1").unwrap()).unwrap();
+            let touches = [format!("{line}.start"), format!("{line}.end")].iter().any(|e| (at(e).len() - radius).abs() < 1e-6);
+            assert!(touches, "{name}: {line} now ends at its tangent point");
+        }
+        assert_eq!(sketch(&s).curves.len(), 3, "{name}: the circle and both lines stay");
+    }
+}
