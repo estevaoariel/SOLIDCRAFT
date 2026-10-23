@@ -44,9 +44,10 @@ fn angle_dimension_both_interactive_workflows() {
             {"call":"ui.view","params":{"view":"top"}}
         ]))
         .unwrap();
+        // Select the whole lines away from their separately selectable MIDs.
         let picks = json!([
-            {"click":{"sketch":[20,0]}},
-            {"click":{"sketch":[15,15]},"shift":true}
+            {"click":{"sketch":[10,0]}},
+            {"click":{"sketch":[7.5,7.5]},"shift":true}
         ]);
         if preselect {
             h.run(&picks).unwrap();
