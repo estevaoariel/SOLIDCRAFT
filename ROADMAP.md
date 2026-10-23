@@ -69,6 +69,9 @@ M6 navigation preferences include **Touchpad**: Shift + pointer movement pans, A
 pointer movement orbits without a mouse button, and vertical scrolling zooms. Other presets
 retain their saved two-finger scroll preference; camera motion is available through
 `view.navigate` and modifier-aware `ui.move` automation.
+With the **Fusion** preset and two-finger pan enabled, two fingers pan and Shift + two fingers
+orbit freely, with pinch zoom and mouse bindings unchanged. The shared navigation handler
+applies the same gestures to model and Render views and blocks orbit on flat pages.
 
 UI redesign (#2016): the File/start view (#2027) uses shared light/dark navigation,
 action tiles, recent rows and sample cards, with recovery review and Save As/Export

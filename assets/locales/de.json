@@ -2004,7 +2004,7 @@
   "ui.top": "Oben",
   "ui.torus": "Torus",
   "ui.total_angle": "Gesamtwinkel",
-  "ui.trackpad_pan_tip": "Trackpad-Gesten schwenken (aus: sie zoomen wie das Rad); Mausrad zoomt, Daumenrad schwenkt seitlich, Pinch zoomt immer",
+  "ui.trackpad_pan_tip": "Scrollen mit zwei Fingern verschiebt die Ansicht; bei Fusion dreht Umschalt + zwei Finger die Ansicht. Aus: Scrollen zoomt. Mausrad und Pinch-Geste zoomen; das Daumenrad verschiebt seitlich.",
   "ui.trim": "Kürzen",
   "ui.twist": "Verdrehung",
   "ui.two_finger_scroll_pans": "Zwei-Finger-Scrollen schwenkt",
