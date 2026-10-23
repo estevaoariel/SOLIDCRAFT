@@ -62,6 +62,7 @@ pub fn open(app: &mut SolveApp, setup_name: &str, op_index: usize) {
     app.manufacture_workspace.hole_rec_dialog = None;
     app.manufacture_workspace.threed_dialog = None;
     app.manufacture_workspace.multiaxis_dialog = None;
+    app.manufacture_workspace.turning_dialog = None;
     app.manufacture_workspace.contour_dialog =
         Some(ContourDialogState { setup_name: setup_name.to_string(), op_index, draft: op, tab: ContourDialogTab::Tool });
     app.manufacture_workspace.tab = crate::manufacture_workspace::MfgTab::Contour;

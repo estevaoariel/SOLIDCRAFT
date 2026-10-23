@@ -182,6 +182,42 @@ pub static COMMANDS: &[CommandSpec] = &[
         .doc_only()
         .at("MANUFACTURE", "MULTI-AXIS")
         .params("Opens Advanced Swarf on the active Manufacture setup. Document writes go through manufacture.settings.set."),
+    CommandSpec::new("manufacture.turning.face", "Face", twod_open)
+        .icon("settings")
+        .noundo()
+        .doc_only()
+        .at("MANUFACTURE", "TURNING")
+        .params("Opens a Turning Face operation on the active Manufacture setup. Document writes go through manufacture.settings.set."),
+    CommandSpec::new("manufacture.turning.profile", "Profile", twod_open)
+        .icon("settings")
+        .noundo()
+        .doc_only()
+        .at("MANUFACTURE", "TURNING")
+        .params("Opens Turning Profile Roughing on the active Manufacture setup. Document writes go through manufacture.settings.set."),
+    CommandSpec::new("manufacture.turning.groove", "Groove", twod_open)
+        .icon("settings")
+        .noundo()
+        .doc_only()
+        .at("MANUFACTURE", "TURNING")
+        .params("Opens a Turning Groove operation on the active Manufacture setup. Document writes go through manufacture.settings.set."),
+    CommandSpec::new("manufacture.turning.thread", "Thread", twod_open)
+        .icon("settings")
+        .noundo()
+        .doc_only()
+        .at("MANUFACTURE", "TURNING")
+        .params("Opens a Turning Thread operation on the active Manufacture setup. Document writes go through manufacture.settings.set."),
+    CommandSpec::new("manufacture.turning.chamfer", "Chamfer", twod_open)
+        .icon("settings")
+        .noundo()
+        .doc_only()
+        .at("MANUFACTURE", "TURNING")
+        .params("Opens a Turning Chamfer operation on the active Manufacture setup. Document writes go through manufacture.settings.set."),
+    CommandSpec::new("manufacture.turning.part", "Part", twod_open)
+        .icon("settings")
+        .noundo()
+        .doc_only()
+        .at("MANUFACTURE", "TURNING")
+        .params("Opens a Turning Part operation on the active Manufacture setup. Document writes go through manufacture.settings.set."),
 ];
 
 // ── Settings get ───────────────────────────────────────────────────────────────
@@ -395,6 +431,24 @@ mod tests {
             "manufacture.multiaxis.finish",
             "manufacture.multiaxis.contour",
             "manufacture.multiaxis.adv_swarf",
+        ];
+        for id in IDS {
+            let mut s = Session::default();
+            let r = s.execute(id, &json!({})).unwrap();
+            assert_eq!(r["opened"], true, "{id}");
+            assert!(s.doc.manufacture.setups.is_empty(), "{id}");
+        }
+    }
+
+    #[test]
+    fn turning_commands_are_display_only() {
+        const IDS: &[&str] = &[
+            "manufacture.turning.face",
+            "manufacture.turning.profile",
+            "manufacture.turning.groove",
+            "manufacture.turning.thread",
+            "manufacture.turning.chamfer",
+            "manufacture.turning.part",
         ];
         for id in IDS {
             let mut s = Session::default();

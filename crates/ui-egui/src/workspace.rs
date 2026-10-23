@@ -311,6 +311,19 @@ pub const SECTIONS: &[Section] = &[
     },
     Section {
         tab: "MANUFACTURE",
+        panel: "TURNING",
+        promoted: 4,
+        ids: &[
+            "manufacture.turning.face",
+            "manufacture.turning.profile",
+            "manufacture.turning.groove",
+            "manufacture.turning.thread",
+            "manufacture.turning.chamfer",
+            "manufacture.turning.part",
+        ],
+    },
+    Section {
+        tab: "MANUFACTURE",
         panel: "INSPECT",
         promoted: 2,
         ids: &[
@@ -381,6 +394,12 @@ pub const RIBBON_LABELS: &[(&str, &str)] = &[
     ("manufacture.multiaxis.swarf", "Swarf"),
     ("manufacture.setup.new", "New Setup"),
     ("manufacture.tools.library", "Tool Library"),
+    ("manufacture.turning.chamfer", "Chamfer"),
+    ("manufacture.turning.face", "Face"),
+    ("manufacture.turning.groove", "Groove"),
+    ("manufacture.turning.part", "Part"),
+    ("manufacture.turning.profile", "Profile"),
+    ("manufacture.turning.thread", "Thread"),
     ("parameters.change", "Parameters"),
     ("parameters.graph", "Param. Graph"),
     ("parts.fastener", "Fastener"),

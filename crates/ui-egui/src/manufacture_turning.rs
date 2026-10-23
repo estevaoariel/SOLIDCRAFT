@@ -1,5 +1,5 @@
-//! Turning dialogs (Tool / Geometry / Radii / Passes / Linking)
-//! for Face, Profile Rough/Finish, Groove variants, Adaptive, Thread, Chamfer, Part, Trace.
+//! Turning dialogs (Tool / Geometry / Radii / Passes / Linking).
+//! Document writes go through manufacture.settings.set; not companion HTTP or GPL CAM.
 
 use egui::RichText;
 use serde_json::json;
@@ -33,39 +33,75 @@ pub fn open(app: &mut SolveApp, setup_name: &str, op_index: usize) {
         return;
     };
     app.manufacture_workspace.selected_op = Some(op_index);
+    app.manufacture_workspace.tool_library_dialog = None;
+    app.manufacture_workspace.edit_tool_dialog = None;
+    app.manufacture_workspace.manage_stub_dialog = None;
+    app.manufacture_workspace.setup_dialog = None;
     app.manufacture_workspace.drill_dialog = None;
     app.manufacture_workspace.contour_dialog = None;
     app.manufacture_workspace.twod_dialog = None;
     app.manufacture_workspace.threed_dialog = None;
     app.manufacture_workspace.hole_rec_dialog = None;
     app.manufacture_workspace.multiaxis_dialog = None;
-    app.manufacture_workspace.part_handling_dialog = None;
     app.manufacture_workspace.turning_dialog =
         Some(TurningDialogState { setup_name: setup_name.to_string(), op_index, draft: op, tab: TurningTab::Tool });
-    app.manufacture_workspace.tab = crate::manufacture_workspace::MfgTab::Operations;
+    app.manufacture_workspace.tab = crate::manufacture_workspace::MfgTab::Turning;
     app.manufacture_workspace.cam_mode = crate::manufacture_workspace::CamMode::Turning;
 }
 
-pub fn show_dialog(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
+/// Create a turning op with `strategy` on the active setup and open its inspector.
+pub fn open_new(app: &mut SolveApp, strategy: TurningStrategy) {
+    crate::manufacture_workspace::ensure_setup(app);
+    let setup_name = app.manufacture_workspace.active_setup.clone();
+    if setup_name.is_empty() {
+        return;
+    }
+    let Some(mut setup) = app.session.doc.manufacture.setups.get(&setup_name).cloned() else {
+        return;
+    };
+    setup.operations.push(Operation::Turning(TurningOperation::with_strategy(strategy)));
+    let op_index = setup.operations.len() - 1;
+    match serde_json::to_value(&setup.operations) {
+        Ok(ops) => match app.run("manufacture.settings.set", json!({"name": setup_name, "set": {"operations": ops}})) {
+            Ok(_) => {
+                app.manufacture_workspace.revision = u64::MAX;
+                app.manufacture_workspace.last_issues = app.session.doc.manufacture.issues();
+                open(app, &setup_name, op_index);
+            }
+            Err(e) => app.set_status(e, true),
+        },
+        Err(e) => app.set_status(e.to_string(), true),
+    }
+}
+
+/// Return false when `id` is a turning command this panel handles.
+pub fn open_from_command(app: &mut SolveApp, id: &str) -> bool {
+    let strategy = match id {
+        "manufacture.turning.face" => TurningStrategy::Face,
+        "manufacture.turning.profile" => TurningStrategy::ProfileRoughing,
+        "manufacture.turning.groove" => TurningStrategy::Groove,
+        "manufacture.turning.thread" => TurningStrategy::Thread,
+        "manufacture.turning.chamfer" => TurningStrategy::Chamfer,
+        "manufacture.turning.part" => TurningStrategy::Part,
+        _ => return true,
+    };
+    open_new(app, strategy);
+    false
+}
+
+pub fn show_dialogs(app: &mut SolveApp, ui: &mut egui::Ui) {
+    let _ = ui;
     let Some(state) = app.manufacture_workspace.turning_dialog.clone() else {
-        return false;
+        return;
     };
     let tools: Vec<Tool> = app.session.doc.manufacture.setups.get(&state.setup_name).map(|s| s.tools.clone()).unwrap_or_default();
 
-    let mut open = true;
-    let mut commit = false;
-    let mut cancel = false;
     let mut draft = state.draft.clone();
     let mut tab = state.tab;
     let title = draft.strategy.label().to_string();
 
-    crate::frame::window(ui.ctx(), title, crate::frame::Width::Normal)
-        .id(egui::Id::new("mfg_turning_dialog"))
-        .open(&mut open)
-        .collapsible(false)
-        .resizable(true)
-        .default_width(380.0)
-        .show(ui.ctx(), |ui| {
+    let (closed, action) =
+        crate::ui_kit::Window::new(egui::Id::new("mfg_turning_dialog"), "settings", &title).fields().cards(1.5).show(ui.ctx(), true, |ui| {
             ui.horizontal(|ui| {
                 for (v, l) in [
                     (TurningTab::Tool, "Tool"),
@@ -87,32 +123,22 @@ pub fn show_dialog(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
                 TurningTab::Passes => passes_tab(ui, &mut draft),
                 TurningTab::Linking => linking_tab(ui, &mut draft),
             });
-            ui.separator();
-            ui.horizontal(|ui| {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("OK").clicked() {
-                        commit = true;
-                    }
-                    if ui.button("Cancel").clicked() {
-                        cancel = true;
-                    }
-                });
-            });
         });
+    let commit = action == crate::ui_kit::Action::Ok;
+    let cancel = closed || action == crate::ui_kit::Action::Cancel;
 
-    if !open || cancel {
+    if cancel {
         app.manufacture_workspace.turning_dialog = None;
-        return false;
+        return;
     }
     if commit && save(app, &state.setup_name, state.op_index, draft.clone()) {
         app.manufacture_workspace.turning_dialog = None;
-        return false;
+        return;
     }
     if let Some(d) = &mut app.manufacture_workspace.turning_dialog {
         d.draft = draft;
         d.tab = tab;
     }
-    true
 }
 
 fn tool_tab(ui: &mut egui::Ui, draft: &mut TurningOperation, tools: &[Tool]) {
@@ -160,6 +186,16 @@ fn tool_tab(ui: &mut egui::Ui, draft: &mut TurningOperation, tools: &[Tool]) {
 }
 
 fn geometry_tab(ui: &mut egui::Ui, draft: &mut TurningOperation) {
+    ui.horizontal(|ui| {
+        ui.label("Strategy");
+        egui::ComboBox::from_id_salt("turn_strategy").selected_text(draft.strategy.label()).show_ui(ui, |ui| {
+            for s in TurningStrategy::ALL {
+                if ui.selectable_label(draft.strategy == *s, s.label()).clicked() {
+                    draft.strategy = *s;
+                }
+            }
+        });
+    });
     ui.horizontal(|ui| {
         ui.label("Mode");
         egui::ComboBox::from_id_salt("turn_mode").selected_text(draft.mode.label()).show_ui(ui, |ui| {
@@ -250,6 +286,7 @@ fn save(app: &mut SolveApp, setup_name: &str, op_index: usize, draft: TurningOpe
             Ok(_) => {
                 app.manufacture_workspace.revision = u64::MAX;
                 app.manufacture_workspace.last_issues = app.session.doc.manufacture.issues();
+                app.set_status(app.tr("manufacture.turning.saved").to_string(), false);
                 true
             }
             Err(e) => {
