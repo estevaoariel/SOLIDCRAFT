@@ -548,8 +548,10 @@ fn rename_body(s: &mut Session, p: &Value) -> Result<Value> {
     // includes the siblings whose stored name is shared: the solids of a STEP file with one label
     // are stored as `X`, `X`, `X` and built as `X`, `X (2)`, `X (3)`, so the stored names are set
     // to the numbered ones, or `X (3)` would turn into `X (2)` once the second solid is renamed.
+    // Read the feature's own result so siblings removed by later features keep their names too.
     let fid = b.feature;
-    let siblings: Vec<String> = st.bodies.iter().filter(|x| x.feature == fid).map(|x| x.name.clone()).collect();
+    let made = s.model.result(fid).map_or(&st.bodies, |r| &r.state.bodies);
+    let siblings: Vec<String> = made.iter().filter(|x| x.feature == fid).map(|x| x.name.clone()).collect();
     let k = siblings.iter().position(|n| *n == old).unwrap_or(0);
     // A body numbered by the counter (`BodyN`) gives its number back once it has a name of its
     // own, and every counted body after it would move down one (`Body3` becoming `Body1`) and
@@ -777,6 +779,30 @@ mod tests {
         assert_eq!(names(&s)[1], b);
     }
 
+    #[test]
+    fn renaming_a_body_keeps_a_later_sibling_removal() {
+        let mut s = Session::default();
+        run(&mut s, "sketch.create", json!({"plane": "XY"}));
+        for x in [0, 20, 40] {
+            run(&mut s, "sketch.rectangle.two_point", json!({"p0": [x, 0], "p1": [x + 10, 10]}));
+        }
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "solid.extrude", json!({"distance": 5, "operation": "new", "name": "Extrude1"}));
+        assert_eq!(names(&s), ["Body1", "Body2", "Body3"]);
+        run(&mut s, "solid.remove", json!({"bodies": ["Body3"]}));
+        assert_eq!(names(&s), ["Body1", "Body2"]);
+
+        run(&mut s, "body.rename", json!({"body": "Body1", "name": "Ext"}));
+        assert_eq!(s.doc.find_feature("Extrude1").unwrap().body_names, ["Ext", "Body2", "Body3"]);
+        assert_eq!(names(&s), ["Ext", "Body2"]);
+        assert!(s.model.results.iter().all(|r| r.error.is_none()), "the remove still finds Body3");
+
+        let mut fresh = Session::new((*s.doc).clone());
+        fresh.refresh();
+        assert_eq!(names(&fresh), ["Ext", "Body2"]);
+        assert!(fresh.model.results.iter().all(|r| r.error.is_none()), "the remove also works after a full evaluation");
+    }
+
     /// #3510: each piece of a split is renamed on its own. Renaming the split body leaves the
     /// other piece, and the features that use it, as they were.
     #[test]
@@ -795,6 +821,28 @@ mod tests {
         assert!(ok(&s), "the move follows the renamed piece");
         run(&mut s, "edit.undo", json!({}));
         assert_eq!(names(&s), vec!["Upper", "Top (1)"]);
+    }
+
+    /// Renaming one half of a split leaves the other half's name, also once a later feature
+    /// joins that other half away.
+    #[test]
+    fn renaming_one_half_of_a_split_leaves_the_other() {
+        let ok = |s: &Session| s.model.results.iter().all(|r| r.error.is_none());
+        let mut s = Session::default();
+        run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "corner": [0, 0, -5]}));
+        run(&mut s, "solid.split_body", json!({"body": "Body1", "plane": "XY"}));
+        assert_eq!(names(&s), ["Body1", "Body1 (1)"]);
+        run(&mut s, "solid.box", json!({"length": 5, "width": 5, "height": 5, "corner": [10, 0, -5], "operation": "new", "body_name": "Tab"}));
+        run(&mut s, "solid.combine", json!({"target": "Tab", "tools": ["Body1 (1)"], "operation": "join"}));
+        assert_eq!(names(&s), ["Body1", "Tab"]);
+
+        run(&mut s, "body.rename", json!({"body": "Body1", "name": "Upper"}));
+        assert_eq!(names(&s), ["Upper", "Tab"]);
+        assert!(ok(&s), "the join still finds the other half");
+        let mut fresh = Session::new((*s.doc).clone());
+        fresh.refresh();
+        assert_eq!(names(&fresh), ["Upper", "Tab"]);
+        assert!(ok(&fresh), "the join also works after a full evaluation");
     }
 
     /// #1108: a primitive's `targets` are its participants, kept beside its kind; a rename
