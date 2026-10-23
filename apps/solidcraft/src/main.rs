@@ -457,9 +457,24 @@ fn http_call(url: &str, timeout: std::time::Duration) -> Result<ureq::http::Resp
     Ok(response)
 }
 
-/// The per-user settings folder: eframe's storage (`app.ron`) and the anti-aliasing preference.
+/// An absolute settings-directory override for isolated native profiles.
+const SETTINGS_DIR_ENV: &str = "SOLIDCRAFT_SETTINGS_DIR";
+
+fn settings_dir_override(value: Option<std::ffi::OsString>) -> Result<Option<std::path::PathBuf>, &'static str> {
+    value
+        .map(|value| {
+            let path = std::path::PathBuf::from(value);
+            if path.is_absolute() { Ok(path) } else { Err("SOLIDCRAFT_SETTINGS_DIR must be an absolute directory path") }
+        })
+        .transpose()
+}
+
 fn settings_dir() -> Option<std::path::PathBuf> {
-    eframe::storage_dir("SolidCraft")
+    match settings_dir_override(std::env::var_os(SETTINGS_DIR_ENV)) {
+        Ok(Some(path)) => Some(path),
+        Ok(None) => eframe::storage_dir("SolidCraft"),
+        Err(_) => None,
+    }
 }
 
 /// The anti-aliasing preference, kept next to eframe's storage (it is needed before the
@@ -475,11 +490,19 @@ fn graphics_path() -> Option<std::path::PathBuf> {
 /// old app id's `~/.var/app` folder; that copy comes first, as it is the newest. The old folders
 /// are never changed.
 fn adopt_legacy_settings() {
-    let (Some(current), Some(legacy)) = (settings_dir(), eframe::storage_dir("SolveCraft")) else { return };
-    let legacy_eframe = eframe::storage_dir(solidcraft_engine::io::LEGACY_APP_ID);
-    let old_flatpak = solidcraft_engine::io::legacy_flatpak_path(&current);
-    if let Err(e) = adopt_settings(&current, old_flatpak.as_deref(), &legacy, legacy_eframe.as_deref()) {
-        log::warn!("settings: could not copy the previous release's settings into {}: {e}", current.display());
+    adopt_legacy_for_default_profile(std::env::var_os(SETTINGS_DIR_ENV), || {
+        let (Some(current), Some(legacy)) = (settings_dir(), eframe::storage_dir("SolveCraft")) else { return };
+        let legacy_eframe = eframe::storage_dir(solidcraft_engine::io::LEGACY_APP_ID);
+        let old_flatpak = solidcraft_engine::io::legacy_flatpak_path(&current);
+        if let Err(e) = adopt_settings(&current, old_flatpak.as_deref(), &legacy, legacy_eframe.as_deref()) {
+            log::warn!("settings: could not copy the previous release's settings into {}: {e}", current.display());
+        }
+    });
+}
+
+fn adopt_legacy_for_default_profile(override_dir: Option<std::ffi::OsString>, adopt: impl FnOnce()) {
+    if override_dir.is_none() {
+        adopt();
     }
 }
 
@@ -561,6 +584,8 @@ const APP_ID: &str = solidcraft_engine::io::APP_ID;
 
 fn main() -> eframe::Result {
     mark("main");
+    // Reject an invalid override before startup can inspect or write the normal profile.
+    settings_dir_override(std::env::var_os(SETTINGS_DIR_ENV)).map_err(|message| eframe::Error::AppCreation(message.into()))?;
     adopt_legacy_settings();
     let mut safe_mode = startup::env_on(std::env::var(startup::SAFE_MODE_ENV).ok().as_deref());
     let mut control_port: Option<u16> = solidcraft_engine::geom::env::var("CONTROL_PORT").and_then(|p| p.parse().ok());
@@ -914,6 +939,29 @@ mod icon_tests {
         assert_eq!((icon.width, icon.height), (64, 64));
         assert_eq!(icon.rgba, super::app_icon::rgba(64).expect("original mark"));
         assert_eq!(viewport.app_id.as_deref(), Some(super::APP_ID));
+    }
+}
+
+#[cfg(test)]
+mod native_settings_tests {
+    #[test]
+    fn isolated_settings_override_requires_an_absolute_path_without_environment_mutation() {
+        let path = std::env::temp_dir().join("solidcraft-pdm-private-settings");
+        assert_eq!(super::settings_dir_override(Some(path.clone().into_os_string())).unwrap(), Some(path));
+        assert_eq!(super::settings_dir_override(None).unwrap(), None);
+        for value in ["", "relative-settings"] {
+            assert!(super::settings_dir_override(Some(value.into())).is_err());
+        }
+    }
+
+    #[test]
+    fn legacy_settings_are_not_even_looked_up_for_an_explicit_profile() {
+        for value in [std::env::temp_dir().into_os_string(), "".into()] {
+            super::adopt_legacy_for_default_profile(Some(value), || panic!("legacy settings were inspected"));
+        }
+        let called = std::cell::Cell::new(false);
+        super::adopt_legacy_for_default_profile(None, || called.set(true));
+        assert!(called.get());
     }
 }
 
