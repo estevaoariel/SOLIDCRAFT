@@ -1266,6 +1266,11 @@ pub fn timeline_joints_vertical(app: &mut SolveApp, ui: &mut egui::Ui) {
     for (id, name, kind, suppressed) in joints {
         let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 30.0), egui::Sense::click());
         crate::scenario::publish_handle(&format!("timeline-joint:{name}"), rect.center());
+        // Keep the scroll extent and row IDs, but only lay out icons, text and menus for
+        // joints in the clipped viewport (an imported assembly can have thousands).
+        if !ui.is_rect_visible(rect) {
+            continue;
+        }
         if app.tree.picked_joints.contains(&id) {
             ui.painter().rect_filled(rect, 3.0, t.accent_soft);
         } else if response.hovered() {
