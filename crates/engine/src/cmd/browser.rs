@@ -823,6 +823,28 @@ mod tests {
         assert_eq!(names(&s), vec!["Upper", "Top (1)"]);
     }
 
+    /// Renaming one half of a split leaves the other half's name, also once a later feature
+    /// joins that other half away.
+    #[test]
+    fn renaming_one_half_of_a_split_leaves_the_other() {
+        let ok = |s: &Session| s.model.results.iter().all(|r| r.error.is_none());
+        let mut s = Session::default();
+        run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "corner": [0, 0, -5]}));
+        run(&mut s, "solid.split_body", json!({"body": "Body1", "plane": "XY"}));
+        assert_eq!(names(&s), ["Body1", "Body1 (1)"]);
+        run(&mut s, "solid.box", json!({"length": 5, "width": 5, "height": 5, "corner": [10, 0, -5], "operation": "new", "body_name": "Tab"}));
+        run(&mut s, "solid.combine", json!({"target": "Tab", "tools": ["Body1 (1)"], "operation": "join"}));
+        assert_eq!(names(&s), ["Body1", "Tab"]);
+
+        run(&mut s, "body.rename", json!({"body": "Body1", "name": "Upper"}));
+        assert_eq!(names(&s), ["Upper", "Tab"]);
+        assert!(ok(&s), "the join still finds the other half");
+        let mut fresh = Session::new((*s.doc).clone());
+        fresh.refresh();
+        assert_eq!(names(&fresh), ["Upper", "Tab"]);
+        assert!(ok(&fresh), "the join also works after a full evaluation");
+    }
+
     /// #1108: a primitive's `targets` are its participants, kept beside its kind; a rename
     /// follows them, as it follows the names inside the kind (a combine's target and tools).
     #[test]
