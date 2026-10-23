@@ -10,12 +10,14 @@
 #![forbid(unsafe_code)]
 
 mod backend;
+mod options;
 mod server;
 mod tools;
 
 pub use backend::{Backend, Headless, Remote};
+pub use options::{COMPACT_ENV, COMPACT_FLAG, Options};
 pub use server::{PROTOCOL_VERSION, SUPPORTED_VERSIONS, Server};
-pub use tools::{call_tool, tool_definitions};
+pub use tools::{call_tool, call_tool_with, tool_definitions, tool_definitions_with};
 
 use std::path::PathBuf;
 

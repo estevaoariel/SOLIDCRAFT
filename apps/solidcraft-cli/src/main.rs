@@ -13,7 +13,7 @@
 //! solidcraft-cli recipe <recipe.json>                         translate an oracle recipe to a script
 //! solidcraft-cli oracle <case-dir>...                         replay recipes and compare with expected.json
 //! solidcraft-cli mcp [--in design|script] [--connect HOST:PORT [--token T]] [--allow-path DIR]... [--allow-any-path]
-//!                    [--param-check off|warn|strict]
+//!                    [--param-check off|warn|strict] [--compact]
 //!                                                             MCP server on stdio (docs/mcp.md)
 //! solidcraft-cli licences                                     SolidCraft's licence and the third-party licences
 //! solidcraft-cli icon --out F.png|F.ico [--size N]             the app icon (packaging; drawn, not a file)
@@ -77,7 +77,10 @@ const USAGE: &str = "usage:
   solidcraft-cli oracle <case-dir>... [--json]
   solidcraft-cli fuzz [--from N] [--count N] [--jobs J] [--timeout S] [--steps N] [--minimise] [--out DIR] [--report FILE]
   solidcraft-cli mcp [--in design.solidcraft|script.json] [--connect 127.0.0.1:PORT [--token T]] [--allow-path DIR]... [--allow-any-path]
-                     [--param-check off|warn|strict]
+                     [--param-check off|warn|strict] [--compact]
+      (--compact, SOLIDCRAFT_MCP_COMPACT=1 or the app's Preferences › AI (with --connect): compact tool output for
+       agents: inspect_design summarises sketches and takes `sketches` by name and a `bodies` filter, and tool JSON
+       is not pretty-printed; off by default)
   solidcraft-cli crashes [list [--json] | show <id> | replay <id> | dir | clear [<id>]]
   solidcraft-cli licences
   solidcraft-cli gpu [--policy auto|hardware|software|cpu]
@@ -550,6 +553,10 @@ fn cmd_exec(args: &[String]) -> Result<(), String> {
 /// calls reach are confined to `solidcraft_mcp::agent_scope` unless `--allow-any-path` is given.
 fn cmd_mcp(args: &[String]) -> Result<(), String> {
     install_renderer();
+    let options = solidcraft_mcp::Options::from_args_and_env(args).map_err(|e| format!("mcp: {e}"))?;
+    if options.compact {
+        eprintln!("solidcraft mcp: compact output (inspect_design summarises sketches; tool JSON is not pretty-printed)");
+    }
     let scope = (!args.iter().any(|a| a == "--allow-any-path"))
         .then(|| solidcraft_mcp::agent_scope(flags(args, "--allow-path").into_iter().map(std::path::PathBuf::from)));
     if let Some(s) = &scope {
@@ -601,7 +608,7 @@ fn cmd_mcp(args: &[String]) -> Result<(), String> {
     };
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
-    solidcraft_mcp::Server::new(backend).with_path_scope(scope).serve(stdin.lock(), stdout.lock()).map_err(|e| e.to_string())
+    solidcraft_mcp::Server::new(backend).with_path_scope(scope).with_options(options).serve(stdin.lock(), stdout.lock()).map_err(|e| e.to_string())
 }
 
 /// `save-stress <path> <rounds>`: save a design of a few hundred kilobytes `rounds` times, its
