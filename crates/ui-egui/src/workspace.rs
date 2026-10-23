@@ -263,6 +263,7 @@ pub const SECTIONS: &[Section] = &[
     Section { tab: "RENDER", panel: "IMAGE", promoted: 1, ids: &["render.start"] },
     // The Manufacture workspace: New Setup opens the WCS/stock dialog on this PR.
     Section { tab: "MANUFACTURE", panel: "SETUP", promoted: 1, ids: &["manufacture.setup.new"] },
+    Section { tab: "MANUFACTURE", panel: "MANAGE", promoted: 1, ids: &["manufacture.tools.library"] },
     Section {
         tab: "MANUFACTURE",
         panel: "INSPECT",
@@ -309,6 +310,7 @@ pub const RIBBON_LABELS: &[(&str, &str)] = &[
     ("joint.as_built", "As-Built"),
     ("material.assign", "Material"),
     ("manufacture.setup.new", "New Setup"),
+    ("manufacture.tools.library", "Tool Library"),
     ("parameters.change", "Parameters"),
     ("parameters.graph", "Param. Graph"),
     ("parts.fastener", "Fastener"),

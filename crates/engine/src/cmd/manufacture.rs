@@ -26,6 +26,12 @@ pub static COMMANDS: &[CommandSpec] = &[
         .doc_only()
         .at("MANUFACTURE", "SETUP")
         .params("Opens the New Setup dialog in the Manufacture workspace. Document writes go through manufacture.settings.set."),
+    CommandSpec::new("manufacture.tools.library", "Tool Library", tool_library)
+        .icon("settings")
+        .noundo()
+        .doc_only()
+        .at("MANUFACTURE", "MANAGE")
+        .params("Opens the document tool library for the active Manufacture setup."),
 ];
 
 // ── Settings get ───────────────────────────────────────────────────────────────
@@ -102,6 +108,10 @@ fn new_setup(_s: &mut Session, _params: &Value) -> Result<Value> {
     Ok(json!({"opened": true}))
 }
 
+fn tool_library(_s: &mut Session, _params: &Value) -> Result<Value> {
+    Ok(json!({"opened": true}))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -153,6 +163,14 @@ mod tests {
     fn setup_new_is_display_only() {
         let mut s = Session::default();
         let r = s.execute("manufacture.setup.new", &json!({})).unwrap();
+        assert_eq!(r["opened"], true);
+        assert!(s.doc.manufacture.setups.is_empty());
+    }
+
+    #[test]
+    fn tool_library_is_display_only() {
+        let mut s = Session::default();
+        let r = s.execute("manufacture.tools.library", &json!({})).unwrap();
         assert_eq!(r["opened"], true);
         assert!(s.doc.manufacture.setups.is_empty());
     }

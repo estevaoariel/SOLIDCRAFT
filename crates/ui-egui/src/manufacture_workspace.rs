@@ -11,6 +11,7 @@ use solidcraft_manufacture::ValidationIssue;
 pub enum MfgTab {
     #[default]
     Setup,
+    Tools,
 }
 
 /// Manufacture process family for a new setup.
@@ -35,6 +36,10 @@ pub struct State {
     pub last_issues: Vec<ValidationIssue>,
     pub setup_dialog: Option<crate::manufacture_setup::SetupDialogState>,
     pub menu_dialog: Option<crate::manufacture_setup::MenuDialogState>,
+    pub selected_tool: Option<usize>,
+    pub tool_library_dialog: Option<crate::manufacture_tools::ToolLibraryState>,
+    pub edit_tool_dialog: Option<crate::manufacture_tools::EditToolState>,
+    pub manage_stub_dialog: Option<crate::manufacture_tools::ManageStubState>,
 }
 
 pub fn active(app: &SolveApp) -> bool {
@@ -72,7 +77,26 @@ pub fn reset_document(app: &mut SolveApp) {
 pub fn close_floating_dialogs(app: &mut SolveApp) {
     app.manufacture_workspace.setup_dialog = None;
     app.manufacture_workspace.menu_dialog = None;
+    app.manufacture_workspace.tool_library_dialog = None;
+    app.manufacture_workspace.edit_tool_dialog = None;
+    app.manufacture_workspace.manage_stub_dialog = None;
     app.ui.pick_bodies = false;
+}
+
+/// Pick the first setup, or create Setup1, so tool dialogs have a document target.
+pub fn ensure_setup(app: &mut SolveApp) {
+    if !app.manufacture_workspace.active_setup.is_empty() && app.session.doc.manufacture.setups.contains_key(&app.manufacture_workspace.active_setup)
+    {
+        return;
+    }
+    if let Some(name) = app.session.doc.manufacture.setups.keys().next().cloned() {
+        app.manufacture_workspace.active_setup = name;
+        return;
+    }
+    match app.run("manufacture.settings.set", serde_json::json!({"name": "Setup1", "set": {}})) {
+        Ok(_) => app.manufacture_workspace.active_setup = "Setup1".into(),
+        Err(e) => app.set_status(e, true),
+    }
 }
 
 /// Return false to cancel starting `id` after handling it here.
@@ -87,6 +111,14 @@ pub fn start_hook(app: &mut SolveApp, id: &str) -> bool {
             if !name.is_empty() {
                 crate::manufacture_setup::open_edit(app, &name);
             }
+            false
+        }
+        "manufacture.tools.library" => {
+            crate::manufacture_tools::open_tool_library(app);
+            false
+        }
+        "manufacture.tools.new" => {
+            crate::manufacture_tools::open_edit_tool(app, None);
             false
         }
         _ => true,
@@ -115,6 +147,7 @@ pub fn tick(app: &mut SolveApp, ctx: &egui::Context) {
 
 pub fn panel(app: &mut SolveApp, ui: &mut egui::Ui) {
     crate::manufacture_setup::show_dialogs(app, ui);
+    crate::manufacture_tools::show_dialogs(app, ui);
 }
 
 pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {

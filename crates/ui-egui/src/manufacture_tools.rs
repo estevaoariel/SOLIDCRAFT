@@ -157,24 +157,15 @@ fn show_manage_stub(app: &mut SolveApp, ui: &mut egui::Ui) {
     let Some(st) = app.manufacture_workspace.manage_stub_dialog.clone() else {
         return;
     };
-    let mut open = true;
-    let mut close = false;
-    crate::frame::window(ui.ctx(), st.kind.title(), crate::frame::Width::Normal)
-        .id(egui::Id::new("mfg_manage_stub"))
-        .open(&mut open)
-        .collapsible(false)
-        .resizable(true)
-        .default_width(360.0)
-        .show(ui.ctx(), |ui| {
+    let title = st.kind.title().to_string();
+    let (closed, action) = crate::ui_kit::Window::new(egui::Id::new("mfg_manage_stub"), "settings", &title)
+        .fields()
+        .actions("", "Close", None)
+        .cards(1.0)
+        .show(ui.ctx(), true, |ui| {
             ui.label(st.kind.body());
-            ui.separator();
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("Close").clicked() {
-                    close = true;
-                }
-            });
         });
-    if !open || close {
+    if closed || action == crate::ui_kit::Action::Cancel {
         app.manufacture_workspace.manage_stub_dialog = None;
     }
 }
@@ -186,24 +177,16 @@ fn show_tool_library(app: &mut SolveApp, ui: &mut egui::Ui) {
     let setup_name = app.manufacture_workspace.active_setup.clone();
     let tools: Vec<Tool> = app.session.doc.manufacture.setups.get(&setup_name).map(|s| s.tools.clone()).unwrap_or_default();
 
-    let mut open = true;
-    let mut close = false;
     let mut add = false;
     let mut edit = false;
     let mut delete = false;
     let mut duplicate = false;
 
-    let screen = ui.ctx().content_rect();
-    let max_h = (screen.height() - 96.0).max(200.0);
-    crate::frame::window(ui.ctx(), "Tool Library", crate::frame::Width::Wide)
-        .id(egui::Id::new("mfg_tool_library"))
-        .open(&mut open)
-        .collapsible(false)
-        .resizable(true)
-        .constrain(true)
-        .default_size([700.0, 400.0])
-        .max_height(max_h)
-        .show(ui.ctx(), |ui| {
+    let (closed, action) = crate::ui_kit::Window::new(egui::Id::new("mfg_tool_library"), "settings", "Tool Library")
+        .fields()
+        .actions("", "Close", None)
+        .cards(1.8)
+        .show(ui.ctx(), true, |ui| {
             ui.horizontal(|ui| {
                 // Left: library tree + search
                 ui.vertical(|ui| {
@@ -337,16 +320,9 @@ fn show_tool_library(app: &mut SolveApp, ui: &mut egui::Ui) {
                     }
                 });
             });
-
-            ui.separator();
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("Close").clicked() {
-                    close = true;
-                }
-            });
         });
 
-    if !open || close {
+    if closed || action == crate::ui_kit::Action::Cancel {
         app.manufacture_workspace.tool_library_dialog = None;
         return;
     }
@@ -417,22 +393,9 @@ fn show_edit_tool(app: &mut SolveApp, ui: &mut egui::Ui) {
         return;
     };
 
-    let mut open = true;
-    let mut commit = false;
-    let mut cancel = false;
     let title = format!("Tool Library — {}", st.draft.display_name());
-
-    let screen = ui.ctx().content_rect();
-    let max_h = (screen.height() - 96.0).max(200.0);
-    crate::frame::window(ui.ctx(), title, crate::frame::Width::Wide)
-        .id(egui::Id::new("mfg_edit_tool"))
-        .open(&mut open)
-        .collapsible(false)
-        .resizable(true)
-        .constrain(true)
-        .default_size([700.0, 400.0])
-        .max_height(max_h)
-        .show(ui.ctx(), |ui| {
+    let (closed, action) =
+        crate::ui_kit::Window::new(egui::Id::new("mfg_edit_tool"), "settings", &title).fields().cards(1.8).show(ui.ctx(), true, |ui| {
             ui.horizontal(|ui| {
                 for tab in EditToolTab::ALL {
                     if ui.selectable_label(st.tab == *tab, tab.label()).clicked() {
@@ -463,25 +426,13 @@ fn show_edit_tool(app: &mut SolveApp, ui: &mut egui::Ui) {
                     tool_preview(ui, &st.draft);
                 });
             });
-
-            ui.separator();
-            ui.horizontal(|ui| {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("OK").clicked() {
-                        commit = true;
-                    }
-                    if ui.button("Cancel").clicked() {
-                        cancel = true;
-                    }
-                });
-            });
         });
 
-    if !open || cancel {
+    if closed || action == crate::ui_kit::Action::Cancel {
         app.manufacture_workspace.edit_tool_dialog = None;
         return;
     }
-    if commit && save_edit(app, &st) {
+    if action == crate::ui_kit::Action::Ok && save_edit(app, &st) {
         app.manufacture_workspace.edit_tool_dialog = None;
         return;
     }
