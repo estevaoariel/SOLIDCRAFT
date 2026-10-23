@@ -72,7 +72,7 @@ fn param_name<'a>(cmd: &str, p: &'a Value) -> Result<&'a str> {
 }
 
 /// Features that fail (name and error).
-fn failing(s: &Session) -> Vec<Value> {
+pub(super) fn failing(s: &Session) -> Vec<Value> {
     s.model.results.iter().filter_map(|r| r.error.as_ref().map(|e| json!({"feature": r.name, "error": e}))).collect()
 }
 

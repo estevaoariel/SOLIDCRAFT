@@ -292,7 +292,12 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
     s.replace_design(Session::opened(doc, saved.as_ref()));
     s.path = Some(path.to_string());
     let errors = s.model.results.iter().filter(|r| r.error.is_some()).count();
-    Ok(json!({"path": path, "features": s.doc.features.len(), "errors": errors, "name": s.doc.name}))
+    let mut out = json!({"path": path, "features": s.doc.features.len(), "errors": errors, "name": s.doc.name});
+    let warnings = super::parameters_link::open_warnings(s);
+    if !warnings.is_empty() {
+        out["warnings"] = json!(warnings);
+    }
+    Ok(out)
 }
 
 /// The name a design never given one by its user is shown under.
@@ -370,11 +375,16 @@ fn write_file(s: &mut Session, path: &str, format: &str, compression: &str, prev
     // Linked designs are kept relative to the folder the design is saved in.
     let links = super::component_link::rebased(&s.doc, s.path.as_deref(), path);
     let old_links = (links != s.doc.links).then(|| std::mem::replace(&mut s.doc_mut().links, links));
+    let sources = super::parameters_link::rebased(&s.doc, s.path.as_deref(), path);
+    let old_sources = (sources != s.doc.param_sources).then(|| std::mem::replace(&mut s.doc_mut().param_sources, sources));
     let r = write_bytes(s, path, format, compression, preview, cache);
-    if r.is_err()
-        && let Some(old) = old_links
-    {
-        s.doc_mut().links = old;
+    if r.is_err() {
+        if let Some(old) = old_links {
+            s.doc_mut().links = old;
+        }
+        if let Some(old) = old_sources {
+            s.doc_mut().param_sources = old;
+        }
     }
     r
 }

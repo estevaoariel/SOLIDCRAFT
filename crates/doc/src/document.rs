@@ -2394,6 +2394,44 @@ pub struct DesignLink {
     pub feature: u64,
 }
 
+/// Which user parameters of a linked design come in (Link Parameters).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ParamScope {
+    /// Its favourite user parameters.
+    #[default]
+    Favorites,
+    /// All its user parameters.
+    All,
+}
+
+/// A design whose user parameters this design uses by name (Link Parameters): where the file is,
+/// and the values last read from it, so the design opens and evaluates without the file. Linked
+/// parameters are read-only here; Update Parameter Links reads the file again, and Break
+/// Parameter Link turns them into ordinary user parameters.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ParamSource {
+    /// The design file: relative to this design's folder once this design is saved, else as
+    /// given (`/` separates folders).
+    pub path: String,
+    #[serde(default)]
+    pub scope: ParamScope,
+    /// The parameters as last read: each value as a number in its own unit (`8.2 mm`).
+    pub params: Vec<LinkedParam>,
+}
+
+/// One parameter of a [`ParamSource`], as last read from it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct LinkedParam {
+    pub name: String,
+    /// The value in `unit`, with the unit written in (`8.2 mm`, `45 deg`, `3`).
+    pub expr: String,
+    /// `mm`, `deg`… or empty (unit-less), as in the linked design.
+    pub unit: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub comment: String,
+}
+
 /// The document.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Document {
@@ -2440,6 +2478,9 @@ pub struct Document {
     /// Components linked to another design file (by component id).
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub links: std::collections::BTreeMap<u64, DesignLink>,
+    /// Designs whose user parameters this design uses (Link Parameters).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_sources: Vec<ParamSource>,
     /// Configurations (rows of parameter values and suppressions).
     #[serde(default, skip_serializing_if = "crate::config::ConfigTable::is_empty")]
     pub configs: crate::config::ConfigTable,
@@ -2673,6 +2714,7 @@ impl Document {
             configs: Default::default(),
             parts: Default::default(),
             links: Default::default(),
+            param_sources: Vec::new(),
             body_components: Default::default(),
             body_offsets: Default::default(),
             materials: Default::default(),
@@ -2971,7 +3013,8 @@ impl Document {
     /// Read a design file's JSON (any format this build knows; older ones are upgraded).
     pub fn from_json(s: &str) -> Result<Document> {
         let d = crate::format::read(s)?;
-        if d.features.len() > MAX_FEATURES || d.params.len() > MAX_PARAMS {
+        let linked = d.param_sources.iter().fold(0usize, |n, s| n.saturating_add(s.params.len()));
+        if d.features.len() > MAX_FEATURES || d.params.len() > MAX_PARAMS || linked > MAX_PARAMS {
             return Err(DocError::Invalid("document too large".into()));
         }
         Ok(d)
@@ -3272,6 +3315,7 @@ impl Document {
     /// Add or change a parameter. Fails if the result would not evaluate. A new parameter
     /// without a unit takes the unit of its value (mm, deg or none).
     pub fn set_param(&mut self, name: &str, expr_s: &str, unit: Option<&str>, comment: Option<&str>) -> Result<()> {
+        self.refuse_linked(name)?;
         if let Some(p) = Self::param_name_problem(name) {
             return Err(DocError::Invalid(p));
         }

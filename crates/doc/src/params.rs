@@ -89,11 +89,14 @@ pub struct ParamRow {
     pub value: Option<f64>,
     pub error: Option<String>,
     pub comment: String,
-    /// "user", "sketch" (a dimension) or "feature".
+    /// "user", "sketch" (a dimension), "feature" or "linked" (from another design).
     pub source: &'static str,
     /// For feature inputs: the feature and the input's label.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub feature: Option<String>,
+    /// For linked parameters: the linked design's path as stored.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub link: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub input: Option<&'static str>,
     pub favorite: bool,
@@ -111,10 +114,11 @@ fn unit_of(k: Kind) -> &'static str {
 }
 
 impl Document {
-    /// Every (name, expression, kind) the expressions can refer to: stored parameters and the
-    /// named feature inputs.
+    /// Every (name, expression, kind) the expressions can refer to: stored parameters, linked
+    /// parameters and the named feature inputs.
     pub fn all_param_exprs(&self) -> Vec<(String, String, Kind)> {
         let mut v: Vec<(String, String, Kind)> = self.params.iter().map(|p| (p.name.clone(), p.expr.clone(), p.kind())).collect();
+        v.extend(self.linked_params().map(|(_, p)| (p.name.clone(), p.expr.clone(), Kind::from_unit(&p.unit))));
         for f in &self.features {
             for (name, (_, e, k)) in f.param_names.iter().zip(f.kind.inputs()) {
                 if !name.is_empty() {
@@ -126,15 +130,41 @@ impl Document {
     }
 
     pub(crate) fn name_taken(&self, n: &str) -> bool {
-        self.param(n).is_some() || self.features.iter().any(|f| f.param_names.iter().any(|x| x == n))
+        self.param(n).is_some() || self.linked_param(n).is_some() || self.features.iter().any(|f| f.param_names.iter().any(|x| x == n))
+    }
+
+    /// Every linked parameter with the design it comes from.
+    pub fn linked_params(&self) -> impl Iterator<Item = (&crate::ParamSource, &crate::LinkedParam)> {
+        self.param_sources.iter().flat_map(|s| s.params.iter().map(move |p| (s, p)))
+    }
+
+    /// A linked parameter by name, with the design it comes from.
+    pub fn linked_param(&self, name: &str) -> Option<(&crate::ParamSource, &crate::LinkedParam)> {
+        self.linked_params().find(|(_, p)| p.name == name)
+    }
+
+    /// Refuses to edit a linked parameter: its value belongs to the design it comes from.
+    pub(crate) fn refuse_linked(&self, name: &str) -> Result<()> {
+        match self.linked_param(name) {
+            Some((s, _)) => Err(DocError::Invalid(format!(
+                "`{name}` comes from the linked design `{}`: change it there and update the parameter links, or break the link",
+                s.path
+            ))),
+            None => Ok(()),
+        }
     }
 
     /// The next free `dN` name.
     pub fn next_d_name(&self) -> String {
         // Every taken name at once: asking `name_taken` for d1, d2, … searched the whole
         // design once per number, quadratic in the number of named inputs.
-        let taken: std::collections::HashSet<&str> =
-            self.params.iter().map(|p| p.name.as_str()).chain(self.features.iter().flat_map(|f| f.param_names.iter().map(String::as_str))).collect();
+        let taken: std::collections::HashSet<&str> = self
+            .params
+            .iter()
+            .map(|p| p.name.as_str())
+            .chain(self.linked_params().map(|(_, p)| p.name.as_str()))
+            .chain(self.features.iter().flat_map(|f| f.param_names.iter().map(String::as_str)))
+            .collect();
         let mut n = 1;
         loop {
             let c = format!("d{n}");
@@ -175,6 +205,10 @@ impl Document {
         let mut taken: BTreeMap<String, usize> = BTreeMap::new();
         for name in self.params.iter().map(|p| &p.name).chain(self.features.iter().flat_map(|f| &f.param_names)) {
             *taken.entry(name.clone()).or_default() += 1;
+        }
+        // Linked names are never freed here (only feature names are counted down).
+        for (_, p) in self.linked_params() {
+            *taken.entry(p.name.clone()).or_default() += 1;
         }
         let mut next = 1usize;
         for f in &mut self.features {
@@ -249,6 +283,7 @@ impl Document {
     }
 
     pub fn change_param(&mut self, name: &str, expr_s: &str, unit: Option<&str>, comment: Option<&str>) -> Result<()> {
+        self.refuse_linked(name)?;
         let hit = self.features.iter().enumerate().find_map(|(i, f)| f.param_names.iter().position(|n| n == name).map(|k| (i, k)));
         let Some((i, k)) = hit else { return self.set_param(name, expr_s, unit, comment) };
         if expr_s.len() > 4096 {
@@ -287,6 +322,7 @@ impl Document {
             if !names.insert(name.clone()) {
                 return Err(DocError::Invalid(format!("duplicate parameter `{name}`")));
             }
+            next.refuse_linked(name)?;
             if expression.len() > 4096 || expression.trim().is_empty() {
                 return Err(DocError::Expr("expression is empty or too long".into()));
             }
@@ -346,9 +382,27 @@ impl Document {
                 comment: p.comment.clone(),
                 source: if p.model { "sketch" } else { "user" },
                 feature: None,
+                link: None,
                 input: None,
                 favorite: self.favorites.contains(&p.name),
                 uses: refs.get(&p.name).cloned().unwrap_or_default(),
+                used_by: used_by(&p.name),
+            });
+        }
+        for (s, p) in self.linked_params() {
+            rows.push(ParamRow {
+                name: p.name.clone(),
+                expression: p.expr.clone(),
+                unit: p.unit.clone(),
+                value: self.param_display_value(&vals, &p.name),
+                error: errs.get(&p.name).cloned(),
+                comment: p.comment.clone(),
+                source: "linked",
+                feature: None,
+                link: Some(s.path.clone()),
+                input: None,
+                favorite: self.favorites.contains(&p.name),
+                uses: Vec::new(),
                 used_by: used_by(&p.name),
             });
         }
@@ -366,6 +420,7 @@ impl Document {
                     comment: self.param_comments.get(name).cloned().unwrap_or_default(),
                     source: "feature",
                     feature: Some(f.name.clone()),
+                    link: None,
                     input: Some(label),
                     favorite: self.favorites.contains(name),
                     uses: refs.get(name).cloned().unwrap_or_default(),
@@ -482,6 +537,7 @@ impl Document {
     /// `set_param` (a user parameter, a new one taking the unit of its value) without evaluating
     /// every parameter. `vals` are the values so far, for the units of the rows after it.
     fn import_row(&mut self, name: &str, expr_s: &str, unit: Option<&str>, comment: Option<&str>, vals: &mut BTreeMap<String, Value>) -> Result<()> {
+        self.refuse_linked(name)?;
         if expr_s.len() > 4096 {
             return Err(DocError::Expr("expression too long".into()));
         }
@@ -593,11 +649,12 @@ fn doc_len(units: &str) -> f64 {
 }
 
 impl Document {
-    /// Every parameter with its unit, for evaluation: stored parameters and named feature
-    /// inputs (mm / deg / none by their kind).
+    /// Every parameter with its unit, for evaluation: stored parameters, linked parameters and
+    /// named feature inputs (mm / deg / none by their kind).
     pub fn param_defs(&self) -> Vec<ParamDef> {
         let mut v: Vec<ParamDef> =
             self.params.iter().map(|p| ParamDef { name: p.name.clone(), expr: p.expr.clone(), unit: p.unit.clone() }).collect();
+        v.extend(self.linked_params().map(|(_, p)| ParamDef { name: p.name.clone(), expr: p.expr.clone(), unit: p.unit.clone() }));
         for f in &self.features {
             for (name, (_, e, k)) in f.param_names.iter().zip(f.kind.inputs()) {
                 if !name.is_empty() {
@@ -626,9 +683,10 @@ impl Document {
     /// A parameter's value in its own unit (e.g. 2 for a 50.8 mm parameter in inches).
     pub fn param_display_value(&self, vals: &BTreeMap<String, Value>, name: &str) -> Option<f64> {
         let v = vals.get(name)?;
-        let unit = match self.param(name) {
-            Some(p) => p.unit.clone(),
-            None => v.kind().map(|k| unit_of(k).to_string()).unwrap_or_default(),
+        let unit = match (self.param(name), self.linked_param(name)) {
+            (Some(p), _) => p.unit.clone(),
+            (None, Some((_, p))) => p.unit.clone(),
+            (None, None) => v.kind().map(|k| unit_of(k).to_string()).unwrap_or_default(),
         };
         Some(expr::value_in_unit(*v, &unit))
     }
@@ -712,6 +770,7 @@ impl Document {
 
     /// Remove a stored parameter; refused while something uses it (the error lists the users).
     pub fn remove_param(&mut self, name: &str) -> Result<()> {
+        self.refuse_linked(name)?;
         if self.param(name).is_none() {
             if self.features.iter().any(|f| f.param_names.iter().any(|n| n == name)) {
                 return Err(DocError::Invalid(format!("`{name}` is a feature's input: delete or edit the feature instead")));
@@ -736,6 +795,7 @@ impl Document {
         if !self.name_taken(old) {
             return Err(DocError::Unknown(format!("parameter `{old}`")));
         }
+        self.refuse_linked(old)?;
         if old == new {
             return Ok(0);
         }
@@ -829,6 +889,7 @@ impl Document {
         if comment.len() > 4096 {
             return Err(DocError::Invalid("comment too long".into()));
         }
+        self.refuse_linked(name)?;
         if let Some(p) = self.params.iter_mut().find(|p| p.name == name) {
             p.comment = comment.to_string();
             return Ok(());
@@ -891,6 +952,7 @@ impl Document {
 
     /// Add a user parameter (refused when the name exists).
     pub fn add_user_param(&mut self, name: &str, expr_s: &str, unit: Option<&str>, comment: Option<&str>) -> Result<()> {
+        self.refuse_linked(name.trim())?;
         if self.name_taken(name.trim()) {
             return Err(DocError::Invalid(format!("there is already a parameter `{}`", name.trim())));
         }

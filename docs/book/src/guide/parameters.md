@@ -48,6 +48,21 @@ unit-less parameter, which is read in the design's units, the number stays bare 
 with it.
 
 Parameters export to and import from CSV or JSON (`parameters.export`, `parameters.import`).
+
+**Linked parameters** let several designs share one set of sizes. Keep the shared sizes as user
+parameters in one design, then use **Link Parameters** (`parameters.link_design`) in each design
+that needs them. By default the other design's favourite user parameters come in; give `scope`
+`all` for all of its user parameters. Linked parameters are used by name in any expression, keep
+their own units and can't be changed, renamed or deleted in the design that links them: change
+them in the design they come from, save it, and run **Update Parameter Links**
+(`parameters.update_links`) to rebuild with the new values. **List Parameter Links**
+(`parameters.links`) shows whether each linked design is found and up to date, and opening a
+design warns when one is missing or has changed. The design keeps the values it last read, so it
+still opens when the linked design is missing. A link is refused when a name is already used
+here, when it would link a design to itself or close a loop of links, and an update is refused
+when it would remove a parameter that is still in use. **Break Parameter Link**
+(`parameters.break_link`) turns the linked parameters into ordinary user parameters. Paths are
+kept relative to the design's folder once it is saved, as for linked components.
 **Configurations** (`config.*`) keep a table of rows, each with its own parameter values and
 suppressed features, physical materials and body appearances, switched with `config.activate`.
 The table's Library picker selects material or appearance values. Choose **Follow material**

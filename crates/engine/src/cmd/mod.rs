@@ -62,6 +62,7 @@ pub(crate) use measure_sel::measure_items;
 #[cfg(test)]
 mod kernel_heal_tests;
 mod parameters;
+mod parameters_link;
 mod plastic;
 mod render;
 #[cfg(test)]
@@ -292,6 +293,7 @@ pub fn command_specs() -> Vec<&'static CommandSpec> {
     v.extend(sketch_clipboard::COMMANDS.iter());
     v.extend(script::COMMANDS.iter());
     v.extend(parameters::COMMANDS.iter());
+    v.extend(parameters_link::COMMANDS.iter());
     v.extend(file::COMMANDS.iter());
     v.extend(metadata::COMMANDS.iter());
     v.extend(inspect::COMMANDS.iter());
