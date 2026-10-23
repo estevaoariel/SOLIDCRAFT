@@ -253,8 +253,10 @@ fn show_manual(app: &mut SolveApp, ui: &mut egui::Ui) {
     };
     let mut draft = state.draft.clone();
     let title = draft.kind.label().to_string();
-    let (closed, action) =
-        crate::ui_kit::Window::new(egui::Id::new("mfg_manual_inspection_dialog"), "settings", &title).fields().cards(1.5).show(ui.ctx(), true, |ui| {
+    let (closed, action) = crate::ui_kit::Window::new(egui::Id::new("mfg_manual_inspection_dialog"), "settings", &title).fields().cards(1.5).show(
+        ui.ctx(),
+        true,
+        |ui| {
             ui.label(RichText::new(draft.kind.label()).strong());
             match draft.kind {
                 ManualInspectionKind::Create => {
@@ -319,7 +321,8 @@ fn show_manual(app: &mut SolveApp, ui: &mut egui::Ui) {
             if ui.button("Add item").clicked() {
                 draft.items.push(ManualInspectionItem { label: format!("Item {}", draft.items.len() + 1), ..Default::default() });
             }
-        });
+        },
+    );
     let commit = action == crate::ui_kit::Action::Ok;
     let cancel = closed || action == crate::ui_kit::Action::Cancel;
     if cancel {
