@@ -194,6 +194,11 @@ completed drawings publish atomically. The browser still exports synchronously.
 
 ## Dimensioning and error reporting
 
+- Operation length fields share design-unit defaults and input evaluation, including secondary
+  distances, thin walls, blend controls, sheet/plastic rules, joints and motion keys. Canvas
+  handles and sketch previews use the same lengths as committed geometry. Existing stored
+  millimetre values retain their size when edited in a design using another unit (#3271).
+
 - MCP `execute` accepts `verbose: false`, sharing the compact reply helper used by
   `batch`: body changes and created sketch IDs stay, while repeated lists are omitted.
   Both tools retain full replies by default.

@@ -395,6 +395,20 @@ pub(crate) fn length_field(ui: &mut Ui, value: &mut f64, units: &str, decimals: 
     response
 }
 
+/// A model-space length with tool-specific bounds and drag step, shown in design units.
+pub(crate) fn bounded_length_field(
+    ui: &mut Ui,
+    value: &mut f64,
+    units: &str,
+    decimals: u8,
+    range: std::ops::RangeInclusive<f64>,
+    speed: f64,
+) -> Response {
+    let response = ui.add(length_drag(value, units, decimals).range(range).speed(speed));
+    scenario::publish_target(&format!("dialog:length:{}", label(ui)), response.rect);
+    response
+}
+
 /// Angle in degrees, dragged or typed. Tokens: control_height, scope control/font tokens.
 pub(crate) fn angle_field(ui: &mut Ui, value: &mut f64) -> Response {
     let response = ui.add(egui::DragValue::new(value).speed(1.0).suffix(" deg").custom_parser(crate::prefs::parse_number));

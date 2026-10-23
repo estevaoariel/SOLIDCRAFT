@@ -171,7 +171,7 @@ pub(super) fn rows(app: &mut SolveApp, ctx: &egui::Context, d: &mut Dialog, ui: 
     if let Some(key) = manage_hint {
         ui_kit::text(ui, tr(key), ui_kit::Text::Hint("manage"));
     }
-    placement_row(d, ui);
+    placement_row(d, ui, &app.session);
     input_rows(d, ui, &app.session);
     match &mut d.kind {
         Kind::Material { index } => {
@@ -306,7 +306,7 @@ pub(super) fn rows(app: &mut SolveApp, ctx: &egui::Context, d: &mut Dialog, ui: 
                     if st != old {
                         set_object(&mut d.inputs, &mut d.active, FROM_OBJECT, st == 2);
                         if st == 1 && start.is_empty() {
-                            *start = "5 mm".into();
+                            *start = length_default(&app.session, "5");
                         }
                         if st == 0 {
                             start.clear();
@@ -372,7 +372,7 @@ pub(super) fn rows(app: &mut SolveApp, ctx: &egui::Context, d: &mut Dialog, ui: 
                         }
                         if rtype == 2 {
                             form_row(ui, "End Radius", |ui| {
-                                enter |= extra_field(ui, &mut d.extra, "radius2", "1 mm");
+                                enter |= extra_field(ui, &mut d.extra, "radius2", &length_default(&app.session, "1"));
                             });
                             // Which end of the first edge takes the start radius.
                             form_row(ui, "Swap Ends", |ui| {
@@ -727,7 +727,7 @@ fn additional_rows(app: &mut SolveApp, d: &mut Dialog, ui: &mut egui::Ui) -> boo
                 d.extra.insert("modeled".into(), json!(modeled));
             }
             if full != was_full {
-                *length = if full { String::new() } else { "10 mm".into() };
+                *length = if full { String::new() } else { length_default(&app.session, "10") };
             }
             enter |= submitted;
             if reset {
