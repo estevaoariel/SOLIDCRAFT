@@ -142,7 +142,7 @@ impl Server {
                 Ok(json!({
                     "protocolVersion": version,
                     "capabilities": {"tools": {"listChanged": false}, "resources": {"listChanged": false}},
-                    "serverInfo": {"name": "solidcraft", "title": "SolidCraft", "version": env!("CARGO_PKG_VERSION")},
+                    "serverInfo": {"name": "solidcraft", "title": "SolidCraft", "version": env!("CARGO_PKG_VERSION"), "commit": env!("SOLIDCRAFT_COMMIT")},
                     "instructions": format!("{INSTRUCTIONS} Backend: {}.", self.backend.describe()),
                 }))
             }

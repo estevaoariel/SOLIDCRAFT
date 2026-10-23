@@ -68,6 +68,57 @@ fn rel(a: f64, b: f64) -> f64 {
     (a - b).abs() / b.abs().max(1e-12)
 }
 
+/// #4906: the server says which SolidCraft it drives: the version, the commit, and whether it is
+/// the app or a headless session.
+#[test]
+fn the_version_says_which_solidcraft_this_is() {
+    let mut s = server();
+    let v = tool(&mut s, "version", json!({}));
+    assert_eq!(v["version"], env!("CARGO_PKG_VERSION"), "{v}");
+    assert!(!v["commit"].as_str().unwrap_or_default().is_empty(), "{v}");
+    assert!(!v["built"].as_str().unwrap_or_default().is_empty(), "{v}");
+    assert_eq!(v["mode"], "headless", "{v}");
+    // The design inspection says it too.
+    let d = tool(&mut s, "inspect_design", json!({}));
+    assert_eq!(d["version"]["version"], v["version"], "{d}");
+    assert_eq!(d["version"]["mode"], "headless", "{d}");
+    // The handshake names the build as well.
+    let init = call(&mut s, 1, "initialize", json!({"protocolVersion": PROTOCOL_VERSION, "capabilities": {}}));
+    assert_eq!(init["result"]["serverInfo"]["version"], env!("CARGO_PKG_VERSION"));
+    assert!(!init["result"]["serverInfo"]["commit"].as_str().unwrap_or_default().is_empty(), "{init}");
+}
+
+/// A backend that answers like the running app: it has a window and knows its own build.
+struct App {
+    version: String,
+}
+
+impl crate::Backend for App {
+    fn call(&mut self, method: &str, _params: Value) -> Result<Value, String> {
+        match method {
+            "ui.help" => Ok(json!({"version": self.version, "commit": "abc1234", "built": "2026-10-22"})),
+            other => Err(format!("no {other}")),
+        }
+    }
+    fn has_ui(&self) -> bool {
+        true
+    }
+    fn describe(&self) -> String {
+        "the SolidCraft app".into()
+    }
+}
+
+/// #4906: bridged to the app, the server reports the app's own version (that binary may be older
+/// than the server), and says it is the app.
+#[test]
+fn the_app_s_version_is_the_one_reported() {
+    let mut s = Server::new(Box::new(App { version: "0.10.0".into() }));
+    let v = tool(&mut s, "version", json!({}));
+    assert_eq!(v["version"], "0.10.0", "{v}");
+    assert_eq!(v["commit"], "abc1234", "{v}");
+    assert_eq!(v["mode"], "app", "{v}");
+}
+
 #[test]
 fn handshake_and_tools_list() {
     let mut s = server();
