@@ -32,6 +32,12 @@ pub static COMMANDS: &[CommandSpec] = &[
         .doc_only()
         .at("MANUFACTURE", "MANAGE")
         .params("Opens the document tool library for the active Manufacture setup."),
+    CommandSpec::new("manufacture.2d.contour", "Contour", twod_open)
+        .icon("settings")
+        .noundo()
+        .doc_only()
+        .at("MANUFACTURE", "2D")
+        .params("Opens a 2D Contour operation on the active Manufacture setup. Document writes go through manufacture.settings.set."),
     CommandSpec::new("manufacture.2d.face", "Face", twod_open)
         .icon("settings")
         .noundo()
@@ -242,6 +248,7 @@ mod tests {
     #[test]
     fn twod_commands_are_display_only() {
         const IDS: &[&str] = &[
+            "manufacture.2d.contour",
             "manufacture.2d.face",
             "manufacture.2d.adaptive",
             "manufacture.2d.pocket",

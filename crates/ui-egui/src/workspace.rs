@@ -269,6 +269,7 @@ pub const SECTIONS: &[Section] = &[
         panel: "2D",
         promoted: 4,
         ids: &[
+            "manufacture.2d.contour",
             "manufacture.2d.face",
             "manufacture.2d.adaptive",
             "manufacture.2d.pocket",
@@ -330,6 +331,7 @@ pub const RIBBON_LABELS: &[(&str, &str)] = &[
     ("manufacture.2d.bore", "Bore"),
     ("manufacture.2d.chamfer", "Chamfer"),
     ("manufacture.2d.circular", "Circular"),
+    ("manufacture.2d.contour", "Contour"),
     ("manufacture.2d.engrave", "Engrave"),
     ("manufacture.2d.face", "Face"),
     ("manufacture.2d.pocket", "Pocket"),
