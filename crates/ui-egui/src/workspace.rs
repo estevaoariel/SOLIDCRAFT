@@ -349,6 +349,12 @@ pub const SECTIONS: &[Section] = &[
     Section { tab: "MANUFACTURE", panel: "CUTTING", promoted: 2, ids: &["manufacture.fabrication.nest", "manufacture.fabrication.profile"] },
     Section {
         tab: "MANUFACTURE",
+        panel: "ADDITIVE",
+        promoted: 3,
+        ids: &["manufacture.additive.toolpath", "manufacture.additive.from_gcode", "manufacture.additive.simulate"],
+    },
+    Section {
+        tab: "MANUFACTURE",
         panel: "INSPECT",
         promoted: 2,
         ids: &[
@@ -409,6 +415,9 @@ pub const RIBBON_LABELS: &[(&str, &str)] = &[
     ("manufacture.3d.parallel", "Parallel"),
     ("manufacture.3d.scallop", "Scallop"),
     ("manufacture.3d.steep", "Steep"),
+    ("manufacture.additive.from_gcode", "From G-code"),
+    ("manufacture.additive.simulate", "Simulate"),
+    ("manufacture.additive.toolpath", "Additive"),
     ("manufacture.drill", "Drill"),
     ("manufacture.fabrication.nest", "Nest"),
     ("manufacture.fabrication.profile", "2D Profile"),

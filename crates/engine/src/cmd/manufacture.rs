@@ -290,6 +290,24 @@ pub static COMMANDS: &[CommandSpec] = &[
         .doc_only()
         .at("MANUFACTURE", "CUTTING")
         .params("Opens a 2D Profile cutting operation on the active Manufacture setup. Document writes go through manufacture.settings.set."),
+    CommandSpec::new("manufacture.additive.toolpath", "Additive", twod_open)
+        .icon("settings")
+        .noundo()
+        .doc_only()
+        .at("MANUFACTURE", "ADDITIVE")
+        .params("Opens an Additive Toolpath operation on the active Manufacture setup. Document writes go through manufacture.settings.set."),
+    CommandSpec::new("manufacture.additive.from_gcode", "From G-code", twod_open)
+        .icon("settings")
+        .noundo()
+        .doc_only()
+        .at("MANUFACTURE", "ADDITIVE")
+        .params("Opens From G-code import on the active Manufacture setup. Document writes go through manufacture.settings.set."),
+    CommandSpec::new("manufacture.additive.simulate", "Simulate", twod_open)
+        .icon("settings")
+        .noundo()
+        .doc_only()
+        .at("MANUFACTURE", "ADDITIVE")
+        .params("Simulates the Additive toolpath on the active Manufacture setup without a companion runtime."),
 ];
 
 // ── Settings get ───────────────────────────────────────────────────────────────
@@ -567,6 +585,17 @@ mod tests {
     #[test]
     fn fabrication_commands_are_display_only() {
         const IDS: &[&str] = &["manufacture.fabrication.nest", "manufacture.fabrication.profile"];
+        for id in IDS {
+            let mut s = Session::default();
+            let r = s.execute(id, &json!({})).unwrap();
+            assert_eq!(r["opened"], true, "{id}");
+            assert!(s.doc.manufacture.setups.is_empty(), "{id}");
+        }
+    }
+
+    #[test]
+    fn additive_commands_are_display_only() {
+        const IDS: &[&str] = &["manufacture.additive.toolpath", "manufacture.additive.from_gcode", "manufacture.additive.simulate"];
         for id in IDS {
             let mut s = Session::default();
             let r = s.execute(id, &json!({})).unwrap();

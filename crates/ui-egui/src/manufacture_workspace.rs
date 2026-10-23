@@ -22,6 +22,7 @@ pub enum MfgTab {
     PartHandling,
     Inspection,
     Fabrication,
+    Additive,
 }
 
 /// Manufacture process family for a new setup.
@@ -63,6 +64,8 @@ pub struct State {
     pub manual_inspection_dialog: Option<crate::manufacture_inspection::ManualInspectionDialogState>,
     pub fabrication_dialog: Option<crate::manufacture_fabrication::FabricationDialogState>,
     pub nest_dialog: Option<crate::manufacture_fabrication::NestDialogState>,
+    pub additive_dialog: Option<crate::manufacture_additive::AdditiveDialogState>,
+    pub from_gcode_dialog: Option<crate::manufacture_additive::FromGcodeState>,
 }
 
 pub fn active(app: &SolveApp) -> bool {
@@ -115,6 +118,8 @@ pub fn close_floating_dialogs(app: &mut SolveApp) {
     app.manufacture_workspace.manual_inspection_dialog = None;
     app.manufacture_workspace.fabrication_dialog = None;
     app.manufacture_workspace.nest_dialog = None;
+    app.manufacture_workspace.additive_dialog = None;
+    app.manufacture_workspace.from_gcode_dialog = None;
     app.ui.pick_bodies = false;
 }
 
@@ -168,6 +173,7 @@ pub fn start_hook(app: &mut SolveApp, id: &str) -> bool {
             crate::manufacture_hole_recognition::open_new(app);
             false
         }
+        id if id.starts_with("manufacture.additive.") => crate::manufacture_additive::open_from_command(app, id),
         id if id.starts_with("manufacture.fabrication.") => crate::manufacture_fabrication::open_from_command(app, id),
         id if id.starts_with("manufacture.inspection.") => crate::manufacture_inspection::open_from_command(app, id),
         id if id.starts_with("manufacture.part_handling.") => crate::manufacture_part_handling::open_from_command(app, id),
@@ -212,6 +218,7 @@ pub fn panel(app: &mut SolveApp, ui: &mut egui::Ui) {
     crate::manufacture_part_handling::show_dialogs(app, ui);
     crate::manufacture_inspection::show_dialogs(app, ui);
     crate::manufacture_fabrication::show_dialogs(app, ui);
+    crate::manufacture_additive::show_dialogs(app, ui);
 }
 
 pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
