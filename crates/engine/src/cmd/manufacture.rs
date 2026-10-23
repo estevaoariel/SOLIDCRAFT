@@ -278,6 +278,18 @@ pub static COMMANDS: &[CommandSpec] = &[
         .doc_only()
         .at("MANUFACTURE", "PROBE")
         .params("Opens Record Manual Inspection on the active Manufacture setup. Document writes go through manufacture.settings.set."),
+    CommandSpec::new("manufacture.fabrication.nest", "Nest", twod_open)
+        .icon("settings")
+        .noundo()
+        .doc_only()
+        .at("MANUFACTURE", "CUTTING")
+        .params("Opens Nest planning on the active Manufacture setup. Document writes go through manufacture.settings.set."),
+    CommandSpec::new("manufacture.fabrication.profile", "2D Profile", twod_open)
+        .icon("settings")
+        .noundo()
+        .doc_only()
+        .at("MANUFACTURE", "CUTTING")
+        .params("Opens a 2D Profile cutting operation on the active Manufacture setup. Document writes go through manufacture.settings.set."),
 ];
 
 // ── Settings get ───────────────────────────────────────────────────────────────
@@ -544,6 +556,17 @@ mod tests {
             "manufacture.inspection.manual",
             "manufacture.inspection.record",
         ];
+        for id in IDS {
+            let mut s = Session::default();
+            let r = s.execute(id, &json!({})).unwrap();
+            assert_eq!(r["opened"], true, "{id}");
+            assert!(s.doc.manufacture.setups.is_empty(), "{id}");
+        }
+    }
+
+    #[test]
+    fn fabrication_commands_are_display_only() {
+        const IDS: &[&str] = &["manufacture.fabrication.nest", "manufacture.fabrication.profile"];
         for id in IDS {
             let mut s = Session::default();
             let r = s.execute(id, &json!({})).unwrap();

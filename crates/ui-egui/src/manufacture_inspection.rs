@@ -126,6 +126,8 @@ fn clear_other(app: &mut SolveApp) {
     app.manufacture_workspace.part_handling_dialog = None;
     app.manufacture_workspace.inspection_dialog = None;
     app.manufacture_workspace.manual_inspection_dialog = None;
+    app.manufacture_workspace.fabrication_dialog = None;
+    app.manufacture_workspace.nest_dialog = None;
 }
 
 pub fn show_dialogs(app: &mut SolveApp, ui: &mut egui::Ui) {
