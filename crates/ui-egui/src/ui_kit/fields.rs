@@ -27,6 +27,87 @@ pub(crate) fn hint_field(ui: &mut Ui, value: &mut String, hint: &str) -> bool {
     editor(ui, value, hint, true).0
 }
 
+/// The whole numbers a count field may hold, and how its text evaluates (parameters and
+/// expressions included). `eval` returns None for text that is not a value.
+pub(crate) struct Count<'a> {
+    pub min: i64,
+    pub max: i64,
+    pub eval: &'a dyn Fn(&str) -> Option<f64>,
+}
+
+/// Expression editor for a whole-number count (a pattern's quantity), with up and down step
+/// arrows at its right edge. An arrow steps the evaluated count by one and stays within the
+/// limits: a plain number is replaced, an expression keeps its parameters and gains or adjusts
+/// a trailing `+ n`. The text changes as if typed, so previews follow. Returns accepted Enter.
+/// Tokens: field tokens, `control_border`, `selected_bg`, `form_ink`, `form_dim`.
+pub(crate) fn count_field(ui: &mut Ui, value: &mut String, limits: &Count<'_>) -> bool {
+    let t = Tokens::get();
+    let reserve = (t.control_height * 0.75).round();
+    let (enter, _, response) = editor_reserving(ui, value, "", true, reserve);
+    let rect = response.rect;
+    let column = egui::Rect::from_min_max(egui::pos2((rect.right() - reserve).max(rect.left()), rect.top()), rect.max);
+    let painter = ui.painter_at(rect);
+    painter.vline(column.left(), column.y_range().shrink(t.space_4), egui::Stroke::new(1.0, t.control_border));
+    let row = label(ui).to_owned();
+    for (delta, half, name) in [(1, column.split_top_bottom_at_fraction(0.5).0, "up"), (-1, column.split_top_bottom_at_fraction(0.5).1, "down")] {
+        let next = step_count(value, delta, limits);
+        let arrow = ui.interact(half, ui.id().with(("sc_count_step", &row, name)), egui::Sense::click());
+        let enabled = ui.is_enabled() && next.is_some();
+        if enabled && arrow.hovered() {
+            painter.rect_filled(half.shrink(1.0), t.control_radius, t.selected_bg);
+        }
+        let ink = if enabled { t.form_ink } else { t.form_dim };
+        let (c, w, h) = (half.center(), (reserve * 0.18).max(2.0), (half.height() * 0.2).max(2.0));
+        let tip = if delta > 0 { -h } else { h };
+        painter.add(egui::Shape::convex_polygon(
+            vec![egui::pos2(c.x, c.y + tip * 0.5), egui::pos2(c.x + w, c.y - tip * 0.5), egui::pos2(c.x - w, c.y - tip * 0.5)],
+            ink,
+            egui::Stroke::NONE,
+        ));
+        let sign = if delta > 0 { "+1" } else { "−1" };
+        arrow.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, format!("{} {sign}", crate::i18n::tr_label(&row))));
+        scenario::publish_handle(&format!("dialog:{row} {name}"), half.center());
+        if let (true, true, Some(next)) = (enabled, arrow.clicked(), next) {
+            *value = next;
+        }
+    }
+    enter
+}
+
+/// `text` stepped by `delta` whole numbers within `limits`, or None when it does not evaluate
+/// or the step would leave the limits. A typed number between whole numbers steps to the next
+/// one; an expression that evaluates between them is left alone.
+fn step_count(text: &str, delta: i64, limits: &Count<'_>) -> Option<String> {
+    const SAFE: f64 = 1e15;
+    let trimmed = text.trim();
+    let now = (limits.eval)(trimmed).filter(|v| v.is_finite() && v.abs() < SAFE)?;
+    let from = if delta > 0 { now.floor() } else { now.ceil() } as i64;
+    let target = from.saturating_add(delta).clamp(limits.min, limits.max);
+    let moves = if delta > 0 { target as f64 > now } else { (target as f64) < now };
+    if !moves {
+        return None;
+    }
+    if trimmed.parse::<f64>().is_ok() {
+        return Some(target.to_string());
+    }
+    // An expression: adjust its trailing `+ n` / `- n`, or add one, and check that it now says `target`.
+    let offset = |base: &str, n: i64| match n {
+        0 => base.to_owned(),
+        n if n > 0 => format!("{base} + {n}"),
+        n => format!("{base} - {}", n.unsigned_abs()),
+    };
+    let tail = trimmed.rfind(['+', '-']).and_then(|at| {
+        let (base, number) = (trimmed[..at].trim_end(), trimmed[at + 1..].trim());
+        let n: i64 = number.bytes().all(|b| b.is_ascii_digit()).then(|| number.parse().ok()).flatten()?;
+        let base_ok = !base.is_empty() && !base.ends_with(['+', '-', '*', '/', '^', '(', ',']);
+        base_ok.then(|| (base, if trimmed[at..].starts_with('-') { -n } else { n }))
+    });
+    let step = target - now.round() as i64;
+    let candidates =
+        [tail.map(|(base, n)| offset(base, n.saturating_add(step))), Some(offset(trimmed, step)), Some(offset(&format!("({trimmed})"), step))];
+    candidates.into_iter().flatten().find(|c| (limits.eval)(c).is_some_and(|v| (v - target as f64).abs() < 1e-9))
+}
+
 /// Names, thread designations and plain numeric counts do not accept expression completion.
 /// Plain text editor without expression completion; returns (Enter, changed). Tokens: `same as field`.
 pub(crate) fn text_field(ui: &mut Ui, value: &mut String, hint: &str) -> (bool, bool) {
@@ -141,13 +222,20 @@ pub(crate) fn searchable_dropdown(
 
 /// Completion/focus implementation shared by field variants. Tokens: `same as field`.
 fn editor(ui: &mut Ui, value: &mut String, hint: &str, completion: bool) -> (bool, bool, Response) {
+    editor_reserving(ui, value, hint, completion, 0.0)
+}
+
+/// `editor` whose text stops `reserve` points short of its right edge, for controls drawn there.
+fn editor_reserving(ui: &mut Ui, value: &mut String, hint: &str, completion: bool, reserve: f32) -> (bool, bool, Response) {
     let t = Tokens::get();
     let width = dimension(ui.available_width());
     let font = egui::FontId::monospace(t.font_label);
-    let response = ui.add_sized(
-        vec2(width, row_height()),
-        text_input(egui::TextEdit::singleline(value)).hint_text(hint).font(font).background_color(t.control_fill).clip_text(true),
-    );
+    let mut edit = text_input(egui::TextEdit::singleline(value)).hint_text(hint).font(font).background_color(t.control_fill).clip_text(true);
+    if reserve > 0.0 {
+        let inset = t.form_inset.round() as i8;
+        edit = edit.margin(egui::Margin { left: inset, right: inset.saturating_add(reserve.round() as i8), top: 0, bottom: 0 });
+    }
+    let response = ui.add_sized(vec2(width, row_height()), edit);
     crate::theme::TabAccent::number_focus(ui, &response);
     let label = crate::i18n::tr_label(label(ui));
     response.widget_info(|| {

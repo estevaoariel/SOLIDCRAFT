@@ -66,6 +66,11 @@ pub(crate) fn expr_row(ui: &mut Ui, label: &str, value: &mut String) -> bool {
     row(ui, label, |ui| super::field(ui, value))
 }
 
+/// Whole-number count row with step arrows; retains completion and accepted Enter. Tokens: `row, count_field`.
+pub(crate) fn count_row(ui: &mut Ui, label: &str, value: &mut String, limits: &super::Count<'_>) -> bool {
+    row(ui, label, |ui| super::count_field(ui, value, limits))
+}
+
 /// Expression row with an empty-value hint. Tokens: `row, hint_field`.
 pub(crate) fn hint_row(ui: &mut Ui, label: &str, value: &mut String, hint: &str) -> bool {
     row(ui, label, |ui| super::hint_field(ui, value, hint))

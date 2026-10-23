@@ -774,6 +774,16 @@ const ELEMENTS: &[Element] = &[
     element!("expr_row", "dialog:row:Gallery", Some("dialog:Gallery"), |ui, s| {
         expr_row(ui, "Gallery", &mut s.value);
     }),
+    element!("count_row", "dialog:row:Gallery", Some("dialog:Gallery up"), |ui, _| {
+        let mut count = "6".to_owned();
+        count_row(ui, "Gallery", &mut count, &Count { min: 1, max: 10, eval: &|text: &str| text.trim().parse().ok() });
+    }),
+    element!("count_field", "dialog:row:Gallery", Some("dialog:Gallery down"), |ui, _| {
+        row(ui, "Gallery", |ui| {
+            let mut count = "1".to_owned();
+            count_field(ui, &mut count, &Count { min: 1, max: 10, eval: &|text: &str| text.trim().parse().ok() });
+        });
+    }),
     element!("hint_row", "dialog:row:Gallery", Some("dialog:Gallery"), |ui, s| {
         hint_row(ui, "Gallery", &mut s.value, "Value");
     }),

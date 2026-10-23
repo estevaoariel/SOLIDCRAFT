@@ -105,6 +105,16 @@ const FILLET_TYPES: [(&str, &str); 5] = [
     ("Spline", "spline"),
 ];
 
+/// The most instances a solid pattern makes in one direction (the document's own limit).
+const MAX_PATTERN_INSTANCES: i64 = 1000;
+
+/// A solid pattern's quantity row, with step arrows from 1 to `MAX_PATTERN_INSTANCES`. The
+/// count goes to the command as typed, so it is evaluated as the document evaluates it.
+fn quantity_row(ui: &mut egui::Ui, doc: &solidcraft_engine::doc::Document, label: &str, value: &mut String) -> bool {
+    let eval = |text: &str| doc.eval(text.trim(), solidcraft_engine::doc::expr::Kind::Unitless).ok();
+    ui_kit::count_row(ui, label, value, &ui_kit::Count { min: 1, max: MAX_PATTERN_INSTANCES, eval: &eval })
+}
+
 fn fillet_type(extra: &serde_json::Map<String, Value>) -> usize {
     let value = extra.get("type").and_then(Value::as_str).unwrap_or("constant");
     if value == "g2" { 3 } else { FILLET_TYPES.iter().position(|(_, key)| *key == value).unwrap_or(0) }
@@ -197,7 +207,7 @@ pub(super) fn rows(app: &mut SolveApp, ctx: &egui::Context, d: &mut Dialog, ui: 
                 }
             }
         }
-        Kind::SketchModify(k) => enter |= crate::sketch_modify_ui::rows(ui, k),
+        Kind::SketchModify(k) => enter |= crate::sketch_modify_ui::rows(ui, k, &app.session.doc),
         Kind::Text(k) => enter |= crate::sketch_text::rows(ui, k, &mut d.inputs, &mut d.active),
         Kind::TextMove(k) => enter |= crate::sketch_text_move::rows(ui, k),
         Kind::EditParam { name, expr } => {
@@ -468,18 +478,18 @@ pub(super) fn rows(app: &mut SolveApp, ctx: &egui::Context, d: &mut Dialog, ui: 
             }
         }
         Kind::PatternRect { count, spacing, count2, spacing2 } => {
-            for (l, v) in [("Quantity", count), ("Spacing", spacing), ("Quantity 2", count2), ("Spacing 2", spacing2)] {
-                enter |= expr_row(ui, l, v);
-            }
+            enter |= quantity_row(ui, &app.session.doc, "Quantity", count);
+            enter |= expr_row(ui, "Spacing", spacing);
+            enter |= quantity_row(ui, &app.session.doc, "Quantity 2", count2);
+            enter |= expr_row(ui, "Spacing 2", spacing2);
             if d.inputs.first().is_some_and(|i| i.accept == selection::FEATURES) {
                 feature_pattern_alignment_row(ui, &mut d.extra, 0);
                 feature_pattern_alignment_row(ui, &mut d.extra, 1);
             }
         }
         Kind::PatternCirc { count, angle } => {
-            for (l, v) in [("Quantity", count), ("Total angle", angle)] {
-                enter |= expr_row(ui, l, v);
-            }
+            enter |= quantity_row(ui, &app.session.doc, "Quantity", count);
+            enter |= expr_row(ui, "Total angle", angle);
             if d.inputs.first().is_some_and(|i| i.accept == selection::FEATURES) {
                 feature_pattern_alignment_row(ui, &mut d.extra, 0);
             }
@@ -700,9 +710,8 @@ fn additional_rows(app: &mut SolveApp, d: &mut Dialog, ui: &mut egui::Ui) -> boo
             extra_options(ui, "boundary_options", &mut d.extra, &[("Remove Tools", "remove_tools")]);
         }
         Kind::PathPattern { count, spacing } => {
-            for (l, v) in [("Quantity", count), ("Spacing", spacing)] {
-                enter |= expr_row(ui, l, v);
-            }
+            enter |= quantity_row(ui, &app.session.doc, "Quantity", count);
+            enter |= expr_row(ui, "Spacing", spacing);
         }
         Kind::Pipe { diameter, wall } => {
             enter |= expr_row(ui, "Diameter", diameter);
