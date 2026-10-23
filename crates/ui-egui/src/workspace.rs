@@ -282,7 +282,7 @@ pub const SECTIONS: &[Section] = &[
             "manufacture.2d.chamfer",
         ],
     },
-    Section { tab: "MANUFACTURE", panel: "DRILLING", promoted: 1, ids: &["manufacture.drill"] },
+    Section { tab: "MANUFACTURE", panel: "DRILLING", promoted: 2, ids: &["manufacture.drill", "manufacture.hole_recognition"] },
     Section {
         tab: "MANUFACTURE",
         panel: "INSPECT",
@@ -340,6 +340,7 @@ pub const RIBBON_LABELS: &[(&str, &str)] = &[
     ("manufacture.2d.thread", "Thread"),
     ("manufacture.2d.trace", "Trace"),
     ("manufacture.drill", "Drill"),
+    ("manufacture.hole_recognition", "Hole Rec."),
     ("manufacture.setup.new", "New Setup"),
     ("manufacture.tools.library", "Tool Library"),
     ("parameters.change", "Parameters"),

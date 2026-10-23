@@ -32,6 +32,12 @@ pub static COMMANDS: &[CommandSpec] = &[
         .doc_only()
         .at("MANUFACTURE", "MANAGE")
         .params("Opens the document tool library for the active Manufacture setup."),
+    CommandSpec::new("manufacture.hole_recognition", "Hole Recognition", twod_open)
+        .icon("settings")
+        .noundo()
+        .doc_only()
+        .at("MANUFACTURE", "DRILLING")
+        .params("Opens Hole Recognition on the active Manufacture setup. Document writes go through manufacture.settings.set."),
     CommandSpec::new("manufacture.drill", "Drill", twod_open)
         .icon("settings")
         .noundo()
@@ -255,6 +261,14 @@ mod tests {
     fn drill_is_display_only() {
         let mut s = Session::default();
         let r = s.execute("manufacture.drill", &json!({})).unwrap();
+        assert_eq!(r["opened"], true);
+        assert!(s.doc.manufacture.setups.is_empty());
+    }
+
+    #[test]
+    fn hole_recognition_is_display_only() {
+        let mut s = Session::default();
+        let r = s.execute("manufacture.hole_recognition", &json!({})).unwrap();
         assert_eq!(r["opened"], true);
         assert!(s.doc.manufacture.setups.is_empty());
     }

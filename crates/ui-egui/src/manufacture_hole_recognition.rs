@@ -1,5 +1,5 @@
 //! Hole Recognition dialog (Hole Groups / Tool Libraries / Options).
-//! Manufacture → Milling → Drilling → Hole Recognition.
+//! Document writes go through manufacture.settings.set; not companion HTTP or GPL CAM.
 
 use egui::RichText;
 use serde_json::json;
@@ -32,36 +32,56 @@ pub fn open(app: &mut SolveApp, setup_name: &str, op_index: usize) {
         return;
     };
     app.manufacture_workspace.selected_op = Some(op_index);
+    app.manufacture_workspace.tool_library_dialog = None;
+    app.manufacture_workspace.edit_tool_dialog = None;
+    app.manufacture_workspace.manage_stub_dialog = None;
+    app.manufacture_workspace.setup_dialog = None;
     app.manufacture_workspace.drill_dialog = None;
     app.manufacture_workspace.contour_dialog = None;
     app.manufacture_workspace.twod_dialog = None;
-    app.manufacture_workspace.threed_dialog = None;
-    app.manufacture_workspace.multiaxis_dialog = None;
     app.manufacture_workspace.hole_rec_dialog =
         Some(HoleRecDialogState { setup_name: setup_name.to_string(), op_index, draft: op, tab: HoleRecTab::HoleGroups, selected_group: None });
-    app.manufacture_workspace.tab = crate::manufacture_workspace::MfgTab::Operations;
+    app.manufacture_workspace.tab = crate::manufacture_workspace::MfgTab::HoleRecognition;
 }
 
-pub fn show_dialog(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
+/// Create a default Hole Recognition op on the active setup and open its inspector.
+pub fn open_new(app: &mut SolveApp) {
+    crate::manufacture_workspace::ensure_setup(app);
+    let setup_name = app.manufacture_workspace.active_setup.clone();
+    if setup_name.is_empty() {
+        return;
+    }
+    let Some(mut setup) = app.session.doc.manufacture.setups.get(&setup_name).cloned() else {
+        return;
+    };
+    setup.operations.push(Operation::HoleRecognition(HoleRecognitionOperation::default()));
+    let op_index = setup.operations.len() - 1;
+    match serde_json::to_value(&setup.operations) {
+        Ok(ops) => match app.run("manufacture.settings.set", json!({"name": setup_name, "set": {"operations": ops}})) {
+            Ok(_) => {
+                app.manufacture_workspace.revision = u64::MAX;
+                app.manufacture_workspace.last_issues = app.session.doc.manufacture.issues();
+                open(app, &setup_name, op_index);
+            }
+            Err(e) => app.set_status(e, true),
+        },
+        Err(e) => app.set_status(e.to_string(), true),
+    }
+}
+
+pub fn show_dialogs(app: &mut SolveApp, ui: &mut egui::Ui) {
+    let _ = ui;
     let Some(state) = app.manufacture_workspace.hole_rec_dialog.clone() else {
-        return false;
+        return;
     };
 
-    let mut open = true;
-    let mut commit = false;
-    let mut cancel = false;
     let mut draft = state.draft.clone();
     let mut tab = state.tab;
     let mut selected_group = state.selected_group;
     let title = if draft.name.is_empty() { "HOLE RECOGNITION".to_string() } else { format!("HOLE RECOGNITION : {}", draft.name.to_uppercase()) };
 
-    crate::frame::window(ui.ctx(), title, crate::frame::Width::Normal)
-        .id(egui::Id::new("mfg_hole_rec_dialog"))
-        .open(&mut open)
-        .collapsible(false)
-        .resizable(true)
-        .default_width(420.0)
-        .show(ui.ctx(), |ui| {
+    let (closed, action) =
+        crate::ui_kit::Window::new(egui::Id::new("mfg_hole_rec_dialog"), "settings", &title).fields().cards(1.6).show(ui.ctx(), true, |ui| {
             ui.horizontal(|ui| {
                 for (v, l) in
                     [(HoleRecTab::HoleGroups, "Hole Groups"), (HoleRecTab::ToolLibraries, "Tool Libraries"), (HoleRecTab::Options, "Options")]
@@ -78,33 +98,23 @@ pub fn show_dialog(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
                 HoleRecTab::ToolLibraries => libraries_tab(ui, &mut draft),
                 HoleRecTab::Options => options_tab(ui, &mut draft),
             });
-            ui.separator();
-            ui.horizontal(|ui| {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("OK").clicked() {
-                        commit = true;
-                    }
-                    if ui.button("Cancel").clicked() {
-                        cancel = true;
-                    }
-                });
-            });
         });
+    let commit = action == crate::ui_kit::Action::Ok;
+    let cancel = closed || action == crate::ui_kit::Action::Cancel;
 
-    if !open || cancel {
+    if cancel {
         app.manufacture_workspace.hole_rec_dialog = None;
-        return false;
+        return;
     }
     if commit && save(app, &state.setup_name, state.op_index, draft.clone()) {
         app.manufacture_workspace.hole_rec_dialog = None;
-        return false;
+        return;
     }
     if let Some(d) = &mut app.manufacture_workspace.hole_rec_dialog {
         d.draft = draft;
         d.tab = tab;
         d.selected_group = selected_group;
     }
-    true
 }
 
 fn groups_tab(ui: &mut egui::Ui, draft: &mut HoleRecognitionOperation, selected: &mut Option<usize>) {
@@ -326,16 +336,10 @@ fn save(app: &mut SolveApp, setup_name: &str, op_index: usize, draft: HoleRecogn
     }
 }
 
-pub fn paint_overlays(app: &SolveApp, ui: &egui::Ui) {
+pub fn paint_overlays(app: &SolveApp, painter: &egui::Painter, proj: &viewport::Proj) {
     let Some(state) = &app.manufacture_workspace.hole_rec_dialog else {
         return;
     };
-    let rect = match app.viewport.rect {
-        Some(r) if r.area() > 0.0 => r,
-        _ => return,
-    };
-    let proj = viewport::projection(app, rect);
-    let painter = ui.painter();
     let color = egui::Color32::from_rgb(255, 170, 60);
     let sel = state.selected_group;
     for (gi, g) in state.draft.groups.iter().enumerate() {
