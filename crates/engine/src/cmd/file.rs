@@ -120,7 +120,7 @@ fn add_step(s: &mut Session, path: &str, name: Option<&str>, options: &StepOptio
     let turned = if options.y_up { turn_up(s, &placed)? } else { None };
     let created = created_bodies(s, id);
     let fname = s.doc.feature(id).map(|f| f.name.clone()).unwrap_or_default();
-    let mut out = json!({"path": path, "feature": id, "name": fname, "bodies": created, "created_bodies": created, "warnings": sf.warnings});
+    let mut out = json!({"path": path, "feature": id, "name": fname, "bodies": created, "created_bodies": created, "warnings": sf.warnings, "system": sf.import.system});
     placed.report(&mut out);
     if let Some(turned) = turned {
         out["stand_up"] = json!(turned);
@@ -261,7 +261,7 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
         s.replace_design(fresh);
         let errors = s.model.results.iter().filter(|r| r.error.is_some()).count();
         let mut out = json!({"path": path, "features": s.doc.features.len(), "errors": errors, "bodies": r["bodies"], "warnings": r["warnings"]});
-        for k in ["component", "component_name", "occurrence", "subcomponents", "rigid_joints", "stand_up"] {
+        for k in ["component", "component_name", "occurrence", "subcomponents", "rigid_joints", "stand_up", "system"] {
             if let Some(v) = r.get(k) {
                 out[k] = v.clone();
             }

@@ -274,3 +274,24 @@ fn automatic_part_names_and_assembly_survive_reopening() {
     assert!(near(extent(&again).0, [0.0, 0.0, 0.0]) && near(extent(&again).1, [40.0, 34.0, 20.0]));
     assert!((total_volume(&mut again) - (40.0 * 4.0 * 20.0 + 2.0 * 4.0 * 30.0 * 4.0)).abs() < 1e-6);
 }
+
+#[test]
+fn step_replies_include_originating_system() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let dir = std::env::temp_dir().join(format!("solidcraft-step-system-{}", std::process::id()));
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join("box.step");
+    let mut source = Session::default();
+    source.execute("solid.box", &json!({"length": 10, "width": 40, "height": 5}))?;
+    source.execute("file.export", &json!({"path": path.to_string_lossy()}))?;
+    let text = std::fs::read_to_string(&path)?;
+    assert!(text.contains("'SolidCraft','SolidCraft'"));
+    for system in ["SolidCraft", "Example CAD"] {
+        std::fs::write(&path, text.replace("'SolidCraft','SolidCraft'", &format!("'SolidCraft','{system}'")))?;
+        for command in ["file.insert_step", "doc.open"] {
+            let reply = Session::default().execute(command, &json!({"path": path.to_string_lossy()}))?;
+            assert_eq!(reply.get("system").and_then(Value::as_str), Some(system), "{command}: {reply}");
+        }
+    }
+    std::fs::remove_dir_all(dir)?;
+    Ok(())
+}

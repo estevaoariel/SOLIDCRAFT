@@ -2251,6 +2251,11 @@ mod tests {
 
         let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
         app.open_path(&path);
+        assert!(app.stand_up.is_none(), "SolidCraft's own exports already have Z up");
+        // Another originating system keeps the offer.
+        let text = std::fs::read_to_string(&path).unwrap();
+        std::fs::write(&path, text.replace("'SolidCraft','SolidCraft'", "'SolidCraft','Example CAD'")).unwrap();
+        app.open_path(&path);
         let offered = app.stand_up.clone().unwrap_or_default();
         assert_eq!(offered.len(), 1, "the file's body is offered");
         let size = |app: &SolveApp| solidcraft_engine::view::bounds(&app.session);

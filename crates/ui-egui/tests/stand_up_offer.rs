@@ -10,6 +10,9 @@ fn opened() -> Harness {
     let path = src.dir.join("tall_in_y.step").to_string_lossy().into_owned();
     src.app.run("solid.box", json!({"length": 10, "width": 40, "height": 5})).unwrap();
     src.app.run("file.export", json!({"path": path})).unwrap();
+    // Another program's file: SolidCraft's own exports already have Z up (#5150).
+    let text = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(&path, text.replace("'SolidCraft','SolidCraft'", "'SolidCraft','Example CAD'")).unwrap();
     let mut h = Harness::new();
     h.app.open_path(&path);
     h.frames(3);
