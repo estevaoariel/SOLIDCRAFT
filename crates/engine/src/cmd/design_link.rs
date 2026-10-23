@@ -8,7 +8,7 @@ use std::path::{Component as PathPart, Path, PathBuf};
 use solidcraft_doc::{DesignLink, Document};
 
 /// The folder relative link paths are kept against: the design's own, once it has a file.
-pub(super) fn base_dir(path: Option<&str>) -> Option<PathBuf> {
+fn base_dir(path: Option<&str>) -> Option<PathBuf> {
     path.and_then(|p| absolute(Path::new(p)).parent().map(Path::to_path_buf))
 }
 
@@ -29,7 +29,7 @@ pub(super) fn absolute(p: &Path) -> PathBuf {
 }
 
 /// `target` relative to the folder `base` (both absolute), when they share a root.
-pub(super) fn relative(base: &Path, target: &Path) -> Option<PathBuf> {
+fn relative(base: &Path, target: &Path) -> Option<PathBuf> {
     let (b, t): (Vec<_>, Vec<_>) = (base.components().collect(), target.components().collect());
     let root = |c: &[PathPart]| c.iter().take_while(|x| matches!(x, PathPart::Prefix(_) | PathPart::RootDir)).count();
     if root(&b) == 0 || b.get(..root(&b)) != t.get(..root(&b)) {
