@@ -1528,6 +1528,50 @@ fn offset_driver_edits_reopens_and_undoes_without_moving_sources() {
 }
 
 #[test]
+fn an_offset_leaves_its_source_lines_free_to_turn() {
+    // #4464: the Parallel between each source line and its offset line pinned the source to the
+    // offset's held direction: 8 degrees of freedom became 6, Horizontal and angle edits conflicted.
+    let mut s = new_sketch();
+    let points = json!([[-2, 38.9], [36.7, 17.1], [-5, 0], [57.7, -17.7], [-7.6, -25.7], [-22, 21.3]]);
+    run(&mut s, "sketch.line", json!({"points": points, "closed": true, "ids": ["l1", "l2", "l3", "l4", "l5", "l6"]}));
+    let mut angle = String::new();
+    for pair in [["l6", "l1"], ["l1", "l2"], ["l2", "l3"], ["l4", "l5"]] {
+        let d = run(&mut s, "sketch.dimension", json!({"entities": pair, "type": "angle"}));
+        angle = d["param"].as_str().unwrap().to_string();
+    }
+    let o = run(&mut s, "sketch.offset", json!({"curves": ["l1"], "distance": 2, "side": [5, 5]}));
+    assert_eq!(o["sketch"]["dof"], 8, "the offset follows its source and takes no freedom away: {o}");
+    let outputs = ids(&o["curves"]);
+    let line = |sk: &solidcraft_sketch::Sketch, id: &str| match sk.curves[sk.curve_index(id).unwrap()].kind {
+        CurveKind::Line { a, b } => (sk.points[a].pos, sk.points[b].pos),
+        ref other => panic!("{id} is {other:?}"),
+    };
+    let follows = |s: &Session| {
+        let sk = sketch(s);
+        for (source, output) in ["l1", "l2", "l3", "l4", "l5", "l6"].iter().zip(&outputs) {
+            let ((a, b), (c, d)) = (line(&sk, source), line(&sk, output));
+            let u = (b - a).normalized().unwrap();
+            assert!(u.cross((d - c).normalized().unwrap()).abs() < 1e-7, "{output} is parallel to {source}");
+            assert!(close(u.cross(c - a).abs(), 2.0) && close(u.cross(d - a).abs(), 2.0), "{output} is 2 mm from {source}");
+        }
+    };
+    follows(&s);
+    let h = run(&mut s, "sketch.constraint.horizontal_vertical", json!({"line": "l4", "mode": "horizontal"}));
+    assert_eq!(h["sketch"]["dof"], 7, "{h}");
+    follows(&s);
+    let (a, b) = line(&sketch(&s), "l4");
+    assert!((a.y - b.y).abs() < 1e-7, "l4 is horizontal");
+    run(&mut s, "parameters.change", json!({"name": angle, "expression": "90 deg"}));
+    follows(&s);
+    // A rounded boundary takes the convex path, whose lines pair with the association's roles.
+    let polygon = run(&mut s, "sketch.line", json!({"points": [[100, 0], [130, 5], [125, 30], [105, 25]], "closed": true}));
+    let corners = run(&mut s, "sketch.fillet", json!({"points": polygon["created"]["points"], "radius": "1 mm"}));
+    let o = run(&mut s, "sketch.offset", json!({"curves": [ids(&polygon["curves"])[0]], "distance": 1, "side": [115, 15]}));
+    assert!(o["association"].is_string(), "{o}");
+    assert_eq!(o["sketch"]["dof"], corners["sketch"]["dof"], "{o}");
+}
+
+#[test]
 fn offset_driver_covers_disconnected_selections_and_refuses_bad_values_atomically() {
     let mut s = new_sketch();
     run(&mut s, "sketch.line", json!({"points":[[0,0],[10,0]]}));
