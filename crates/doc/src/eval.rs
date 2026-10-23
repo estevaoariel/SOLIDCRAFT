@@ -1906,6 +1906,7 @@ impl Model {
                     append_warning(&mut warning, note);
                 }
                 track_altered_sheets(&state, &mut next, f, &mut warning);
+                note_join_apart(&state, &next, f, &mut warning);
             } else {
                 boolean_diagnostics = Default::default();
             }
@@ -2261,6 +2262,59 @@ fn track_altered_sheets(before: &ModelState, after: &mut ModelState, f: &Feature
                 ),
             );
         }
+    }
+}
+
+/// A Join whose material meets none of its targets still joins it, to the first target as a
+/// separate piece (see `apply_traced`): a valid body in several pieces, but rarely what was meant
+/// when Join was left on by mistake. Says so when a feature's Join leaves the bodies it changed
+/// in more pieces than they had (#4434). Combine joins the bodies it is given, apart or not.
+fn note_join_apart(before: &ModelState, after: &ModelState, f: &Feature, warning: &mut Option<String>) {
+    let operation = match &f.kind {
+        FeatureKind::Extrude { operation, .. }
+        | FeatureKind::Revolve { operation, .. }
+        | FeatureKind::Box { operation, .. }
+        | FeatureKind::Cylinder { operation, .. }
+        | FeatureKind::Sphere { operation, .. }
+        | FeatureKind::Torus { operation, .. }
+        | FeatureKind::Loft { operation, .. }
+        | FeatureKind::Sweep { operation, .. }
+        | FeatureKind::Pipe { operation, .. }
+        | FeatureKind::Coil { operation, .. }
+        | FeatureKind::BoundaryFill { operation, .. }
+        | FeatureKind::Thicken { operation, .. }
+        | FeatureKind::SurfaceNetwork { operation, .. } => *operation,
+        _ => return,
+    };
+    if operation != Operation::Join {
+        return;
+    }
+    let pieces = |b: &Body| b.lumps().map_or(1, |l| l.len());
+    // Pieces of the bodies the join changed or absorbed before it, and of those it kept after.
+    let (mut had, mut have) = (0usize, 0usize);
+    let mut grown: Vec<(&str, usize)> = Vec::new();
+    for was in &before.bodies {
+        match after.body(&was.name) {
+            Some(now) if now.body.same_shape(&was.body) => {}
+            Some(now) => {
+                let (old, new) = (pieces(&was.body), pieces(&now.body));
+                had += old;
+                have += new;
+                if new > old {
+                    grown.push((now.name.as_str(), new));
+                }
+            }
+            None => had += pieces(&was.body),
+        }
+    }
+    if have <= had {
+        return;
+    }
+    for (name, n) in grown {
+        append_warning(
+            warning,
+            format!("the joined piece doesn't touch `{name}`, so `{name}` is now in {n} separate pieces (New Body makes it a body of its own)"),
+        );
     }
 }
 

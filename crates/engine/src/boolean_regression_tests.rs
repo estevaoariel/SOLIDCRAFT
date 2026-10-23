@@ -1223,3 +1223,64 @@ fn extrude_cut_into_a_rounded_block_top() {
     let v = before - volume(&cut, "Body1");
     assert!((v - taken).abs() < 0.05, "took {v}, expected {taken}");
 }
+
+/// #4434: a Join whose profile stands apart from the body still joins it, as a second piece of
+/// `Body1`, and says so; scripts read it from the reply as History shows it. A join that meets
+/// the body, one that closes a cavity (a void is not a piece) and a Combine of bodies chosen
+/// apart say nothing.
+#[test]
+fn join_that_meets_no_body_keeps_the_piece_and_says_so() {
+    let apart = "`Body1` is now in 2 separate pieces";
+    let two_squares = || {
+        let mut s = Session::default();
+        s.execute("sketch.create", &json!({"plane": "XY", "name": "Sketch1"})).unwrap();
+        s.execute("sketch.rectangle.two_point", &json!({"p0": [0, 0], "p1": [20, 20]})).unwrap();
+        s.execute("sketch.rectangle.two_point", &json!({"p0": [40, 0], "p1": [60, 20]})).unwrap();
+        s.execute(
+            "solid.extrude",
+            &json!({"sketch": "Sketch1", "profiles": [{"point": [10, 10]}], "distance": 10, "operation": "new", "name": "Extrude1"}),
+        )
+        .unwrap();
+        s
+    };
+    let mut s = two_squares();
+    let join = s
+        .execute(
+            "solid.extrude",
+            &json!({"sketch": "Sketch1", "profiles": [{"point": [50, 10]}], "distance": 10, "operation": "join", "name": "Extrude2"}),
+        )
+        .unwrap();
+    assert!(join["warning"].as_str().is_some_and(|w| w.contains(apart)), "{join}");
+    assert_eq!(s.model.results.last().and_then(|r| r.warning.as_deref()), join["warning"].as_str());
+    assert_eq!(s.model.state().bodies.iter().map(|b| b.name.as_str()).collect::<Vec<_>>(), ["Body1"]);
+    assert!((volume(&s, "Body1") - 8000.0).abs() < 1e-6, "{}", volume(&s, "Body1"));
+
+    // Both profiles at once, one on the body and one apart: joined as one tool, still told.
+    let mut s = two_squares();
+    let both = s
+        .execute("solid.extrude", &json!({"sketch": "Sketch1", "profiles": [{"point": [10, 10]}, {"point": [50, 10]}], "distance": 5, "start_offset": 10, "operation": "join"}))
+        .unwrap();
+    assert!(both["warning"].as_str().is_some_and(|w| w.contains(apart)), "{both}");
+
+    // A box joined apart from the body, then one bridging both pieces: only the first is told.
+    let mut s = two_squares();
+    let box_apart = s.execute("solid.box", &json!({"length": 10, "width": 10, "height": 10, "center": [10, 40, 5], "operation": "join"})).unwrap();
+    assert!(box_apart["warning"].as_str().is_some_and(|w| w.contains(apart)), "{box_apart}");
+    let bridge = s.execute("solid.box", &json!({"length": 10, "width": 30, "height": 10, "center": [10, 25, 5], "operation": "join"})).unwrap();
+    assert!(bridge["warning"].is_null(), "{bridge}");
+
+    // A lid joined on a cup closes a cavity: one piece with a void, nothing to say.
+    let mut s = Session::default();
+    s.execute("solid.box", &json!({"length": 20, "width": 20, "height": 10, "center": [0, 0, 5], "operation": "new"})).unwrap();
+    s.execute("solid.box", &json!({"length": 16, "width": 16, "height": 10, "center": [0, 0, 6], "operation": "cut"})).unwrap();
+    let lid = s.execute("solid.box", &json!({"length": 20, "width": 20, "height": 2, "center": [0, 0, 11], "operation": "join"})).unwrap();
+    assert_eq!(s.model.state().body("Body1").map(|b| b.body.shell_count()), Some(2));
+    assert!(lid["warning"].is_null(), "{lid}");
+
+    // Combine joins the bodies it is given, apart or not.
+    let mut s = Session::default();
+    s.execute("solid.box", &json!({"length": 10, "width": 10, "height": 10, "center": [0, 0, 5], "operation": "new", "body_name": "A"})).unwrap();
+    s.execute("solid.box", &json!({"length": 10, "width": 10, "height": 10, "center": [30, 0, 5], "operation": "new", "body_name": "B"})).unwrap();
+    let combine = s.execute("solid.combine", &json!({"target": "A", "tools": ["B"], "operation": "join"})).unwrap();
+    assert!(combine["warning"].is_null(), "{combine}");
+}

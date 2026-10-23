@@ -16,7 +16,10 @@ Extrude automatically selects **Join** for additions when the active component a
 solid, including sideways elbow connections and screw bosses that meet only part of a face.
 Extruding into existing material selects **Cut**. In an empty component it selects **New Body**;
 choose **New Body** explicitly to keep an addition separate. Changing the default does not alter
-operations already saved in a design.
+operations already saved in a design. A Join (of an extrude, revolve, sweep, loft, primitive…)
+whose material touches none of its target bodies still joins it, to the first one as a separate
+piece, and the feature's warning says so: "`Body1` is now in 2 separate pieces". Combine joins
+the bodies it is given without that warning.
 
 A taper slopes the sides of any profile, sketch text included: lines, arcs and spline or conic
 curves move in or out together, and a flat tip shorter than the taper closes to a point. On
