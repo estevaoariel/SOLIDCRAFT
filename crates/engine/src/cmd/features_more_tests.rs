@@ -59,6 +59,107 @@ fn grouped_face_auto_operation_keeps_implicit_and_explicit_participants() {
     assert_eq!(crate::auto_operation(&s, &params), Some("join"));
 }
 
+/// A part inserted into a new design (a STEP file) sits in its own component under the empty
+/// root. A sketch on its face must join it going out and cut it going in, never make a
+/// separate body beside it.
+#[test]
+fn sketch_on_a_part_in_another_component_joins_and_cuts_it() {
+    let mut s = Session::default();
+    run(&mut s, "component.create", json!({"name":"Part"}));
+    run(&mut s, "solid.box", json!({"length":10,"width":10,"height":10,"body_name":"Stock"}));
+    run(&mut s, "component.activate", json!({"component":0}));
+    run(&mut s, "sketch.create", json!({"plane":{"face":[5,5,10]},"project_edges":false}));
+    run(&mut s, "sketch.rectangle.center", json!({"center":[5,5],"corner":[6,6]}));
+    run(&mut s, "sketch.circle.center", json!({"center":[2,2],"radius":1}));
+    run(&mut s, "sketch.finish", json!({}));
+    let added = 3. * (4. + std::f64::consts::PI);
+    for (params, expected, volume) in [
+        (json!({"distance":3}), "join", 1000. + added),
+        (json!({"distance":-3}), "cut", 1000. - added),
+        (json!({"distance":3,"direction":"negative"}), "cut", 1000. - added),
+        // Through All with no distance cut nothing and made a separate body.
+        (json!({"through_all":true,"direction":"negative"}), "cut", 1000. - 10. / 3. * added),
+    ] {
+        assert_eq!(crate::auto_operation(&s, &params), Some(expected), "{params}");
+        for operation in ["auto", expected] {
+            let mut t = s.scratch();
+            let mut p = params.clone();
+            p["operation"] = json!(operation);
+            p["profiles"] = json!("all");
+            run(&mut t, "solid.extrude", p);
+            let st = t.model.state();
+            assert_eq!(st.bodies.len(), 1, "{params} {operation}: no separate body");
+            let got = solidcraft_kernel::measure(&st.body("Stock").unwrap().body).unwrap().volume;
+            assert!((got - volume).abs() < 1e-2, "{params} {operation}: volume {got}, expected {volume}");
+        }
+    }
+}
+
+/// Every way an extrude can go into a part inserted in its own component (negative distance,
+/// negative direction, Through All, symmetric, To Object, a start offset, past the far side,
+/// a face instead of a sketch) cuts that part, with `auto` and with an explicit Cut; going
+/// out joins it. None makes a separate body.
+#[test]
+fn every_inward_extrude_into_a_part_in_another_component_cuts_it() {
+    let mut s = Session::default();
+    run(&mut s, "component.create", json!({"name":"Part"}));
+    run(&mut s, "solid.box", json!({"length":10,"width":10,"height":10,"body_name":"Stock"}));
+    run(&mut s, "component.activate", json!({"component":0}));
+    let mut sketched = s.scratch();
+    run(&mut sketched, "sketch.create", json!({"plane":{"face":[5,5,10]},"project_edges":false}));
+    run(&mut sketched, "sketch.rectangle.center", json!({"center":[5,5],"corner":[6,6]}));
+    run(&mut sketched, "sketch.circle.center", json!({"center":[2,2],"radius":1}));
+    run(&mut sketched, "sketch.finish", json!({}));
+    let area = 4. + std::f64::consts::PI;
+    let sketch = |p: Value, depth: f64, op: &'static str| (p, depth, op, true);
+    let face = |p: Value, depth: f64, op: &'static str| (p, depth, op, false);
+    let cases = [
+        sketch(json!({"distance":-3}), 3., "cut"),
+        sketch(json!({"distance":3,"direction":"negative"}), 3., "cut"),
+        sketch(json!({"distance":"-3 mm"}), 3., "cut"),
+        sketch(json!({"distance":-25}), 10., "cut"),
+        sketch(json!({"through_all":true,"direction":"negative"}), 10., "cut"),
+        sketch(json!({"extent":"through_all","direction":"negative"}), 10., "cut"),
+        sketch(json!({"distance":6,"direction":"symmetric"}), 3., "cut"),
+        sketch(json!({"distance":-3,"start_offset":-2}), 3., "cut"),
+        sketch(json!({"to":[5,5,0]}), 10., "cut"),
+        sketch(json!({"to":[5,5,4]}), 6., "cut"),
+        sketch(json!({"distance":3}), -3., "join"),
+        sketch(json!({"distance":-3,"direction":"negative"}), -3., "join"),
+        face(json!({"face":[5,5,10],"distance":-3}), 3., "cut"),
+        face(json!({"face":[5,5,10],"distance":3,"direction":"negative"}), 3., "cut"),
+        face(json!({"face":[5,5,10],"distance":3}), -3., "join"),
+    ];
+    let mut wrong = Vec::new();
+    for (params, depth, expected, from_sketch) in cases {
+        // A face extrude moves the whole 10 x 10 face; a sketch only its two profiles.
+        let volume = 1000. - depth * if from_sketch { area } else { 100. };
+        for operation in ["auto", expected] {
+            let mut t = if from_sketch { sketched.scratch() } else { s.scratch() };
+            let mut p = params.clone();
+            p["operation"] = json!(operation);
+            if from_sketch {
+                p["profiles"] = json!("all");
+            }
+            let auto = crate::auto_operation(&t, &p);
+            if operation == "auto" && auto != Some(expected) {
+                wrong.push(format!("{params}: auto reads {auto:?}, expected {expected}"));
+            }
+            if let Err(e) = t.execute("solid.extrude", &p) {
+                wrong.push(format!("{params} {operation}: {e}"));
+                continue;
+            }
+            let st = t.model.state();
+            let names: Vec<_> = st.bodies.iter().map(|b| b.name.to_string()).collect();
+            let got = st.body("Stock").and_then(|b| solidcraft_kernel::measure(&b.body).ok()).map(|m| m.volume);
+            if names != ["Stock"] || got.is_none_or(|v| (v - volume).abs() > 1e-2) {
+                wrong.push(format!("{params} {operation}: bodies {names:?}, Stock volume {got:?}, expected {volume:.3}"));
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{} wrong:\n{}", wrong.len(), wrong.join("\n"));
+}
+
 fn run(s: &mut Session, id: &str, p: Value) -> Value {
     match s.execute(id, &p) {
         Ok(v) => v,
