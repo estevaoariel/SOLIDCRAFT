@@ -500,6 +500,42 @@ fn unknown_tools_and_bad_arguments_are_clean_errors() {
     assert_eq!(serde_json::from_str::<Value>(&both).unwrap().as_array().unwrap().len(), 1);
 }
 
+#[test]
+fn tool_unknown_command_errors_suggest_close_ids() {
+    let mut s = server();
+    for id in ["solid.bxo", "SOLID_BOX", "solid-box", "solid box", "madeup.box"] {
+        for name in ["execute", "batch"] {
+            let step = json!({"command": id});
+            let args = if name == "batch" { json!({"commands": [step]}) } else { step };
+            let r = raw_tool(&mut s, name, args);
+            assert_eq!(r["result"]["isError"], true, "{r}");
+            let text = r["result"]["content"][0]["text"].as_str().unwrap();
+            assert!(text.contains("closest: `solid.box`"), "{text}");
+        }
+    }
+    let r = raw_tool(&mut s, "execute", json!({"command": "solid.box"}));
+    let text = r["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("solid.box") && text.contains("length"), "{text}");
+}
+
+#[test]
+fn tool_unknown_command_errors_explain_packed_params() {
+    let mut s = server();
+    for id in ["solid.cube {side: 20}", "solid.box(20)"] {
+        for name in ["execute", "batch"] {
+            let step = json!({"command": id});
+            let args = if name == "batch" { json!({"commands": [step]}) } else { step };
+            let r = raw_tool(&mut s, name, args);
+            assert_eq!(r["result"]["isError"], true, "{r}");
+            assert!(r["result"]["content"][0]["text"].as_str().unwrap().contains("command ids have no parameters; pass them in `params`"), "{r}");
+        }
+    }
+    let reply = json!({"completed": 0, "results": [], "failed": {"index": 0, "command": "solid.cube {side: 20}", "error": "unknown command `solid.cube {side: 20}`"}, "undone": 0});
+    let (_, body, error) = recorded_batch(Ok(reply), json!({"commands": [{"command": "solid.cube {side: 20}"}]}));
+    assert!(error);
+    assert!(body["failed"]["error"].as_str().unwrap().contains("command ids have no parameters; pass them in `params`"), "{body}");
+}
+
 fn hostile_values() -> Vec<Value> {
     vec![
         Value::Null,
