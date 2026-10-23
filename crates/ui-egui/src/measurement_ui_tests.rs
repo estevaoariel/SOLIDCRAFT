@@ -51,7 +51,7 @@ fn measurement_axis_distances_follow_the_upstream_centre_min_and_max_choices() {
     let mut items = Vec::new();
     for (center, radius) in [([0, 0], 3), ([30, 40], 5)] {
         let made = h.app.run("sketch.circle.center", json!({"center":center,"radius":radius})).unwrap();
-        items.push(Sel::SketchCurve { id: made["curves"][0].as_str().unwrap().into() });
+        items.push(Sel::SketchCurve { id: made["curves"][0].as_str().unwrap().into(), sketch: None });
     }
     h.app.session.selection = items;
     h.app.start("inspect.measure");
