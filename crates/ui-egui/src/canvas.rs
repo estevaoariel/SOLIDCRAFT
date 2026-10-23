@@ -552,7 +552,8 @@ fn draw(app: &SolveApp, ui: &mut egui::Ui, painter: &egui::Painter, proj: &Proj,
             box_at = ts + vec2(14.0, -12.0);
         }
     }
-    value_box(ui, label, value, box_at, focus || *value != before);
+    let note = crate::drag_extrude::step_note(app);
+    value_box_with(ui, label, value, box_at, focus || *value != before, note.as_deref());
     if *value != before
         && let Kind::Extrude { all, .. } = &mut d.kind
     {
@@ -567,6 +568,11 @@ fn draw(app: &SolveApp, ui: &mut egui::Ui, painter: &egui::Painter, proj: &Proj,
 /// text (e.g. "4 mm" -> "15 mm") would leave the stale, shorter selection from the pick in place,
 /// covering only part of the new text.
 fn value_box(ui: &mut egui::Ui, label: &str, value: &mut String, at: Pos2, select_all: bool) {
+    value_box_with(ui, label, value, at, select_all, None);
+}
+
+/// [`value_box`] with a short dimmed note after the field (a pull's step size).
+fn value_box_with(ui: &mut egui::Ui, label: &str, value: &mut String, at: Pos2, select_all: bool, note: Option<&str>) {
     let t = Tokens::get();
     let id = egui::Id::new("sc_canvas_value");
     Container::new(ui.ctx(), Surface::Canvas).area(egui::Id::new("sc_canvas_area")).fixed_pos(at).order(egui::Order::Foreground).show(
@@ -584,6 +590,9 @@ fn value_box(ui: &mut egui::Ui, label: &str, value: &mut String, at: Pos2, selec
                         st.cursor
                             .set_char_range(Some(egui::text_selection::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(n))));
                         st.store(ui.ctx(), id);
+                    }
+                    if let Some(note) = note {
+                        ui.label(egui::RichText::new(note).color(t.text_dim).size(crate::theme::Tokens::get().font_caption));
                     }
                 });
             });
