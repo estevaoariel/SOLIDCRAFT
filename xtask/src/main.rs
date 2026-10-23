@@ -13,6 +13,7 @@ mod layers;
 mod licences;
 mod lists;
 mod test;
+mod test_nextest;
 mod ui_containers;
 mod web_offline;
 mod web_offline_test;
@@ -382,7 +383,7 @@ fn cmd_ci() -> Result<(), String> {
     c.args(["clippy", "--workspace", "--all-targets", "--profile", "ci", "--", "-D", "warnings"]);
     run(c, "cargo clippy -D warnings")?;
     let (wasm, n) = wasm_check()?;
-    test::run(&[], &[], vec![(format!("wasm32-unknown-unknown check ({n} crates)"), wasm), test::doc_tests(&[], &[])])?;
+    test_nextest::run_selected(vec![(format!("wasm32-unknown-unknown check ({n} crates)"), wasm), test::doc_tests(&[], &[])])?;
     web_offline_test::run(&root(), None, false)?;
     eprintln!("ci: all gates passed");
     Ok(())
