@@ -29,6 +29,9 @@ pub struct ParamsDialog {
     pub comments: std::collections::BTreeMap<String, String>,
     /// A parameter being renamed: (old name, new name).
     pub renaming: Option<(String, String)>,
+    /// The table the rename was started in. A favourite is listed twice (Favourites and User),
+    /// and two editors on one name took each other's focus, so the rename closed at once (#4952).
+    pub rename_table: String,
     pub new_name: String,
     pub adding: bool,
     pub focus_new: bool,
@@ -339,9 +342,10 @@ fn table(app: &mut SolveApp, ui: &mut egui::Ui, d: &mut ParamsDialog, rows: &[&R
                         }
                     }
                 });
+                let renaming_here = d.rename_table == salt;
                 row.cell(|ui| match &mut d.renaming {
-                    Some((old, new)) if *old == r.name => {
-                        let id = ui.make_persistent_id(("rename", &r.name));
+                    Some((old, new)) if *old == r.name && renaming_here => {
+                        let id = ui.make_persistent_id(("rename", salt, &r.name));
                         let focused = ui.memory(|m| m.has_focus(id) || m.had_focus_last_frame(id));
                         let response = ui_kit::cell_editor(ui, id, new, "Name", false);
                         let entered = enter_for(ui, focused);
@@ -361,6 +365,7 @@ fn table(app: &mut SolveApp, ui: &mut egui::Ui, d: &mut ParamsDialog, rows: &[&R
                         crate::scenario::publish_handle(&format!("param:name:{}", r.name), response.rect.center());
                         if response.double_clicked() {
                             d.renaming = Some((r.name.clone(), r.name.clone()));
+                            d.rename_table = salt.to_string();
                         }
                     }
                 });
