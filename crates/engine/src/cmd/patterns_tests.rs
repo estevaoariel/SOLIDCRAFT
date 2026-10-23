@@ -604,3 +604,47 @@ fn copies_of_a_join_that_merged_its_targets_join_the_merged_body() {
         assert!(rel(volume(&mut s), v0 + n * (v1 - v0)) < 1e-3, "{id}: {} vs {}", volume(&mut s), v0 + n * (v1 - v0));
     }
 }
+
+/// #4593: a rib is the source of a pattern or mirror. Each copy is built again where it is, its
+/// walls run until they meet the body there. An 80 × 80 × 5 plate with a 16 × 16 × 30 boss in the
+/// middle; the rib's triangle (8, 5)-(8, 25)-(30, 5) in the XZ plane, 4 thick, is 880 mm³.
+#[test]
+fn patterns_and_mirrors_of_a_rib() {
+    use solidcraft_geom::Vec3;
+    let rib = 0.5 * 22.0 * 20.0 * 4.0;
+    let ribbed = || {
+        let mut s = Session::default();
+        run(&mut s, "solid.box", json!({"length": 80, "width": 80, "height": 5, "corner": [-40, -40, 0]}));
+        run(&mut s, "solid.box", json!({"length": 16, "width": 16, "height": 30, "corner": [-8, -8, 0], "operation": "join"}));
+        run(&mut s, "sketch.create", json!({"plane": {"origin": [0, 0, 0], "x_dir": [1, 0, 0], "y_dir": [0, 0, 1]}, "name": "RibSketch"}));
+        run(&mut s, "sketch.line", json!({"points": [[8, 25], [30, 5]], "ids": ["l1"]}));
+        run(&mut s, "sketch.finish", json!({}));
+        let before = volume(&mut s);
+        run(&mut s, "solid.rib", json!({"sketch": "RibSketch", "curves": ["l1"], "thickness": 4, "name": "Rib"}));
+        assert!(rel(volume(&mut s), before + rib) < 1e-6, "the rib itself");
+        (s, before)
+    };
+    // The issue's step: a circular pattern of the rib (here four, a quarter turn apart).
+    let (mut s, before) = ribbed();
+    run(&mut s, "solid.pattern.circular", json!({"features": ["Rib"], "axis": {"origin": [0, 0, -100], "dir": [0, 0, 1]}, "count": 4, "angle": 360}));
+    let ribs = [Vec3::new(12.0, 0.0, 8.0), Vec3::new(0.0, 12.0, 8.0), Vec3::new(-12.0, 0.0, 8.0), Vec3::new(0.0, -12.0, 8.0)];
+    let check = |s: &Session, inside: &[Vec3]| {
+        let st = s.world_state();
+        assert!(s.model.results.iter().all(|r| r.error.is_none()), "{:?}", s.model.results.iter().map(|r| &r.error).collect::<Vec<_>>());
+        assert_eq!(st.bodies.len(), 1);
+        let body = &st.bodies[0].body;
+        for p in inside {
+            assert!(body.contains(*p), "a rib at {p:?}");
+            // Beside it, across its thickness: no material (clear of the boss too).
+            let side = if p.y == 0.0 { Vec3::new(0.0, 3.0, 0.0) } else { Vec3::new(3.0, 0.0, 0.0) };
+            assert!(!body.contains(*p + side), "nothing beside the rib at {p:?}");
+        }
+    };
+    check(&s, &ribs);
+    assert!(rel(volume(&mut s), before + 4.0 * rib) < 1e-6, "four ribs: {} vs {}", volume(&mut s), before + 4.0 * rib);
+    // A mirror of the rib across YZ.
+    let (mut s, before) = ribbed();
+    run(&mut s, "solid.mirror", json!({"features": ["Rib"], "plane": {"origin": [0, 0, 0], "normal": [1, 0, 0]}}));
+    check(&s, &[ribs[0], ribs[2]]);
+    assert!(rel(volume(&mut s), before + 2.0 * rib) < 1e-6, "two ribs: {} vs {}", volume(&mut s), before + 2.0 * rib);
+}

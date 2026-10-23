@@ -69,27 +69,8 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
             }
             apply_op(st, f, tools, if *deboss { Operation::Cut } else { Operation::Join }, &crate::plain(targets))
         }
-        FeatureKind::Rib { sketch, curves, thickness, depth, flip, web, normal } => {
-            let ss = st.sketch(sketch.0).ok_or_else(|| DocError::Unknown(format!("sketch {sketch}")))?.clone();
-            let t = val(vals, thickness, Kind::Length)?;
-            if !(t > 0.0) {
-                return Err(DocError::Invalid("the rib thickness must be positive".into()));
-            }
-            let depth = match depth {
-                Some(e) => Some(val(vals, e, Kind::Length)?)
-                    .filter(|d| *d > 0.0)
-                    .ok_or_else(|| DocError::Invalid("the rib depth must be positive".into()))
-                    .map(Some)?,
-                None => None,
-            };
-            let groups: Vec<Vec<String>> = if *web { curves.iter().map(|c| vec![c.clone()]).collect() } else { vec![curves.clone()] };
-            if groups.is_empty() || curves.is_empty() || curves.len() > 1000 {
-                return Err(DocError::Invalid("a rib needs 1…1000 sketch curves".into()));
-            }
-            let mut tools = Vec::new();
-            for g in &groups {
-                tools.push(if *normal { rib_tool_normal(st, &ss, g, t, depth, *flip)? } else { rib_tool(st, &ss, g, t, depth, *flip)? });
-            }
+        FeatureKind::Rib { .. } => {
+            let tools = rib_tools(vals, st, f, None)?;
             apply_op(st, f, tools, Operation::Join, &[])
         }
         FeatureKind::ReplaceFace { faces, target, body } => {
@@ -174,6 +155,41 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
         }
         _ => Err(DocError::Invalid(format!("{} is not evaluated here", f.name))),
     }
+}
+
+/// The walls of rib `f` (one per curve for a web), each run until it meets the bodies. `at`
+/// moves the rib's sketch first: a pattern's or mirror's copy of the rib is built again where
+/// the copy is, against the bodies there (#4593), as a hole is drilled again at each copy.
+pub(super) fn rib_tools(vals: &BTreeMap<String, Value>, st: &ModelState, f: &Feature, at: Option<&crate::Mat>) -> Result<Vec<Body>> {
+    let FeatureKind::Rib { sketch, curves, thickness, depth, flip, web, normal } = &f.kind else {
+        return Err(DocError::Invalid(format!("{} is not a rib", f.name)));
+    };
+    let mut ss = st.sketch(sketch.0).ok_or_else(|| DocError::Unknown(format!("sketch {sketch}")))?.clone();
+    if let Some(m) = at {
+        let p = ss.plane;
+        ss.plane = Plane::new(apply_point(m, p.origin), crate::apply_vector(m, p.x), crate::apply_vector(m, p.y))
+            .ok_or_else(|| DocError::Invalid("the rib's sketch plane at the copy".into()))?;
+    }
+    let t = val(vals, thickness, Kind::Length)?;
+    if !(t > 0.0) {
+        return Err(DocError::Invalid("the rib thickness must be positive".into()));
+    }
+    let depth = match depth {
+        Some(e) => Some(val(vals, e, Kind::Length)?)
+            .filter(|d| *d > 0.0)
+            .ok_or_else(|| DocError::Invalid("the rib depth must be positive".into()))
+            .map(Some)?,
+        None => None,
+    };
+    let groups: Vec<Vec<String>> = if *web { curves.iter().map(|c| vec![c.clone()]).collect() } else { vec![curves.clone()] };
+    if groups.is_empty() || curves.is_empty() || curves.len() > 1000 {
+        return Err(DocError::Invalid("a rib needs 1…1000 sketch curves".into()));
+    }
+    let mut tools = Vec::new();
+    for g in &groups {
+        tools.push(if *normal { rib_tool_normal(st, &ss, g, t, depth, *flip)? } else { rib_tool(st, &ss, g, t, depth, *flip)? });
+    }
+    Ok(tools)
 }
 
 /// Unit outward normal of the planar face through `p`: of the planar faces whose plane runs
