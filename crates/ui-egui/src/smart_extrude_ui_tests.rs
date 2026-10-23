@@ -129,6 +129,7 @@ fn an_explicit_reverse_keeps_the_operation() {
 #[test]
 fn pulling_a_face_up_extrudes_it() {
     let mut h = Harness::new();
+    h.app.preferences.pull_to_extrude = true;
     h.app.run("solid.box", json!({"length":20,"width":20,"height":10,"corner":[0,0,0]})).unwrap();
     h.step(&json!({"call":"ui.view","params":{"view":"home"}})).unwrap();
     h.step(&json!({"call":"ui.view","params":{"view":"fit"}})).unwrap();
@@ -143,10 +144,27 @@ fn pulling_a_face_up_extrudes_it() {
     assert!(lo.abs() < 1e-6 && hi > 10.5, "the box grew upward: z {lo}..{hi}");
 }
 
+/// Pulling is a setting, off until someone turns it on: a pull then does nothing.
+#[test]
+fn pulling_a_face_does_nothing_until_the_setting_is_on() {
+    let mut h = Harness::new();
+    assert!(!h.app.preferences.pull_to_extrude);
+    h.app.run("solid.box", json!({"length":20,"width":20,"height":10,"corner":[0,0,0]})).unwrap();
+    h.step(&json!({"call":"ui.view","params":{"view":"home"}})).unwrap();
+    h.step(&json!({"call":"ui.view","params":{"view":"fit"}})).unwrap();
+    h.settle();
+    let before = volume(&h);
+    h.step(&json!({"drag":[{"world":[10,10,10]},{"world":[10,10,20]}]})).unwrap();
+    h.frames(4);
+    assert!(h.app.dialog.is_none(), "no extrude window");
+    assert!((volume(&h) - before).abs() < 1e-6);
+}
+
 /// A press on a face that moves sideways is still a box selection: nothing is extruded.
 #[test]
 fn dragging_sideways_over_a_face_does_not_extrude() {
     let mut h = Harness::new();
+    h.app.preferences.pull_to_extrude = true;
     h.app.run("solid.box", json!({"length":20,"width":20,"height":10,"corner":[0,0,0]})).unwrap();
     h.step(&json!({"call":"ui.view","params":{"view":"home"}})).unwrap();
     h.step(&json!({"call":"ui.view","params":{"view":"fit"}})).unwrap();
@@ -162,6 +180,7 @@ fn dragging_sideways_over_a_face_does_not_extrude() {
 #[test]
 fn pulling_a_face_down_into_the_body_cuts() {
     let mut h = Harness::new();
+    h.app.preferences.pull_to_extrude = true;
     h.app.run("solid.box", json!({"length":20,"width":20,"height":10,"corner":[0,0,0]})).unwrap();
     h.step(&json!({"call":"ui.view","params":{"view":"home"}})).unwrap();
     h.step(&json!({"call":"ui.view","params":{"view":"fit"}})).unwrap();

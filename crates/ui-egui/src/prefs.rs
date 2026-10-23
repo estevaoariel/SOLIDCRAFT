@@ -385,6 +385,8 @@ preference_settings! {
     navigator_style: NavigatorStyle = NavigatorStyle::default(), 1;
     /// Show the radial ring and enable hold/flick gestures for viewport context menus.
     radial_context_menu: bool = false, 1 => check("Radial context menu");
+    /// Press a face or profile and pull it to extrude (down into a body to cut); off by default.
+    pull_to_extrude: bool = false, 1 => check("Pull a face to extrude", "Press a flat face or a profile and pull: up extrudes, down into a body cuts. Sideways movement while pulling sets the step size");
     /// Mouse gestures: a ring of tools on the right button.
     mouse_gestures: crate::mouse_gesture::Config = Default::default(), 1;
     /// The wheel zooms out when turned forward.
@@ -1247,6 +1249,7 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                 ui_kit::text(ui, crate::i18n::tr("nav.free_orbit.help"), ui_kit::Text::Note("free_orbit"));
             }
             setting::radial_context_menu(app, ui);
+            setting::pull_to_extrude(app, ui);
             crate::mouse_gesture::nav_rows(app, ui, t);
             ui_kit::row(ui, app.tr_label("View navigator"), |ui| {
                 let picker =
