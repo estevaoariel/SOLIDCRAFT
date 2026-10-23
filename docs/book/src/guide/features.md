@@ -91,6 +91,14 @@ offers the face where you clicked. The corners of text outlines don't count, nor
 points while the sketch hides projected geometry. The hole keeps that place on the face; to have
 holes follow later edits of the sketch, place them with **Multiple**.
 
+Tapped holes and **Thread** features have a **Thread direction** choice: **Right-hand**
+(the default) or **Left-hand**. Editing and reopening keep the chosen direction. Tapped
+holes carry a cosmetic thread; the separate Thread feature can also cut a **Modeled**
+left-hand helix. Cosmetic direction is recorded with the thread annotation and does not
+change the body. Scripts use `handedness: "left"` or `"right"` on `solid.hole` (with `thread`)
+and `solid.thread`. Existing designs and omitted values remain right-handed. Changing the
+direction keeps the pitch, thread length and axis; it does not change a hole's drill size.
+
 Fillets and chamfers handle straight edges between planar faces, whole smooth loops, runs of
 neighbouring edges with mitred or spherical corners, and closed chains of curved edges (a rolling
 ball). See the roadmap's known limitations for the rest.
